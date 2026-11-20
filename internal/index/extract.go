@@ -39,6 +39,7 @@ type indexedElem struct {
 	// the element's text with the word heuristic.
 	seeds  []goSeed
 	seeded bool
+	spec   bool // a Go interface method spec (indexDef.Spec)
 }
 
 // Package-level compiled regexes (documented ceiling: regex extraction,
@@ -226,7 +227,7 @@ func indexDefsToElements(rel, lang string, defs []indexDef) fileElements {
 		}
 		e := indexedElem{
 			name: d.Name, etype: d.Kind, lang: lang,
-			start: d.StartLine, end: end, parent: -1,
+			start: d.StartLine, end: end, parent: -1, spec: d.Spec,
 		}
 		switch d.Kind {
 		case "method", "constructor", "constant":
@@ -277,6 +278,9 @@ func (fe fileElements) toStore() []store.Element {
 			QualifiedName: e.qn, ElementType: e.etype, Name: e.name,
 			FilePath: fe.rel, LineStart: e.start, LineEnd: e.end,
 			Language: e.lang, Content: e.content,
+		}
+		if e.spec {
+			out[i].Metadata = map[string]any{"interface_spec": true}
 		}
 		if e.parent >= 0 {
 			out[i].ParentQualified = fe.elements[e.parent].qn

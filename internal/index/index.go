@@ -292,9 +292,11 @@ func checkRoot(ctx context.Context, st store.KV, dir string, hasFiles bool) erro
 // edges that no v12 store has. v14 (receivers typed by an inline interface
 // literal dispatch like a named local interface) adds call edges that no v13
 // store has. v15 is the merge of both: a store recorded under v12, v13 or v14
-// re-extracts every file once. A store recorded under another version
-// re-extracts every file once.
-const extractorVersion = "15"
+// re-extracts every file once. v16 (every call site of a Go edge kept in its
+// "lines" metadata; interface method specs as method elements, linked from the
+// interface-typed call sites) adds elements and metadata no v15 store has. A
+// store recorded under another version re-extracts every file once.
+const extractorVersion = "16"
 
 const extractorKVKey = "extractor_version"
 

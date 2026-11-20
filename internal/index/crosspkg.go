@@ -19,8 +19,9 @@ import (
 //     up among that directory's exported non-method elements, confidence 0.8;
 //   - typed receiver of a module type T: the method T.Name, at 0.4 (method-by-name).
 //     When T has no such method but is an interface of the module that declares
-//     Name, the module's methods named Name are its implementers, at 0.3
-//     (interface-dispatch). An implementer must have every method of the
+//     Name, the interface's own spec of Name (the method element it declares or
+//     embeds, at 0.3, "interface-spec") and the module's methods named Name are
+//     its implementers (at 0.3, "interface-dispatch"). An implementer must have every method of the
 //     interface (its own and its embedded ones, as far as the run knows them).
 //     A stdlib or external type links to nothing;
 //   - unknown receiver: no edge. The unique-name rule (one module method of the
@@ -334,20 +335,14 @@ func (cx *crossIndex) typedTargets(file, dir string, t typeRef, name string) []m
 	if tdir == "" {
 		return nil
 	}
+	// An interface is checked first: its declared method specs are method
+	// elements owned by it, so methodOf would otherwise return a spec as if it
+	// were a concrete method and drop the implementers.
+	if slices.Contains(cx.ifaceMethods(tdir, t.Name, 0), name) {
+		return cx.ifaceTargets(file, dir, tdir, t.Name, name)
+	}
 	if qn, ok := cx.methodOf(tdir, t.Name, name); ok {
 		return []methodTarget{{qn: qn, conf: methodConf, resolution: "method-by-name"}}
-	}
-	if slices.Contains(cx.ifaceMethods(tdir, t.Name, 0), name) {
-		// An inline literal is local to its file but has no declared name, so it
-		// takes no same-package exemption for a stdlib-common method name.
-		if stdlibCommonMethods[name] && (tdir != dir || isIfaceLiteral(t.Name)) {
-			return nil
-		}
-		var out []methodTarget
-		for _, qn := range cx.implementers(name, file, tdir, t.Name) {
-			out = append(out, methodTarget{qn: qn, conf: dispatchConf, resolution: "interface-dispatch"})
-		}
-		return out
 	}
 	for _, e := range cx.decls[tdir].structs[t.Name].embedded {
 		if qn, ok := cx.methodOf(cx.typeDir(e, tdir), e.Name, name); ok {
@@ -355,6 +350,44 @@ func (cx *crossIndex) typedTargets(file, dir string, t typeRef, name string) []m
 		}
 	}
 	return nil
+}
+
+// ifaceTargets resolves name on a receiver of interface type iface of tdir, written
+// in file of directory dir: the spec the interface declares (or embeds), and the
+// implementers the run holds for it. Both are links at 0.3.
+func (cx *crossIndex) ifaceTargets(file, dir, tdir, iface, name string) []methodTarget {
+	// An inline literal is local to its file but has no declared name, so it
+	// takes no same-package exemption for a stdlib-common method name.
+	if stdlibCommonMethods[name] && (tdir != dir || isIfaceLiteral(iface)) {
+		return nil
+	}
+	var out []methodTarget
+	if qn, ok := cx.specOf(tdir, iface, name, 0); ok {
+		out = append(out, methodTarget{qn: qn, conf: dispatchConf, resolution: "interface-spec"})
+	}
+	for _, qn := range cx.implementers(name, file, tdir, iface) {
+		out = append(out, methodTarget{qn: qn, conf: dispatchConf, resolution: "interface-dispatch"})
+	}
+	return out
+}
+
+// specOf is the spec element of method name that interface iface of dir declares,
+// or that an interface it embeds declares (followed to maxEmbedDepth, as
+// ifaceMethods follows embeds).
+func (cx *crossIndex) specOf(dir, iface, name string, depth int) (string, bool) {
+	decl, ok := cx.decls[dir].ifaces[iface]
+	if !ok || depth > maxEmbedDepth {
+		return "", false
+	}
+	if slices.Contains(decl.methods, name) {
+		return cx.methodOf(dir, iface, name)
+	}
+	for _, e := range decl.embeds {
+		if qn, ok := cx.specOf(cx.typeDir(e, dir), e.Name, name, depth+1); ok {
+			return qn, true
+		}
+	}
+	return "", false
 }
 
 // ifaceMethods is the method set of interface name of dir as far as the run knows

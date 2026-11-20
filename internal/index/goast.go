@@ -104,7 +104,9 @@ func (d *goDecls) merge(o goDecls) {
 // line and ends on its last token, so a comment or a string that merely looks
 // like a declaration is never an element. Methods are owned by their receiver's
 // bare type name ("*Set[T]" -> "Set"). Interfaces and structs are one element
-// each; their members are not separate elements.
+// each. An interface's declared method specs are method elements owned by it
+// (Spec), and an embedded interface is not an element; struct members are not
+// separate elements.
 func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[string]string, decls goDecls, ok bool) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "", src, parser.SkipObjectResolution)
@@ -140,6 +142,19 @@ func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[s
 				for _, s := range d.Specs {
 					ts := s.(*ast.TypeSpec)
 					add("type", ts.Name.Name, ts.Pos(), ts.End(), "", w.seeds(ts))
+					if it, ok := ts.Type.(*ast.InterfaceType); ok && it.Methods != nil {
+						// Each declared method spec is a method owned by its interface.
+						// An embedded interface (a field with no name) is not one. The
+						// spec has no seeds of its own: the names in its signature are
+						// the interface's references, already held by its type element,
+						// and an empty seed list still keeps the spec off the word heuristic.
+						for _, field := range it.Methods.List {
+							for _, n := range field.Names {
+								defs = append(defs, indexDef{Kind: "method", Name: n.Name, StartLine: line(field.Pos()), EndLine: line(field.End()), Owner: ts.Name.Name, Spec: true})
+								seeds = append(seeds, nil)
+							}
+						}
+					}
 					w.tparams = tparamsOf(ts)
 					w.typeDecl(&decls, ts)
 				}

@@ -181,13 +181,15 @@ func TestGoInterfaceDispatchToOneImplementer(t *testing.T) {
 }
 
 // TestGoInterfaceDispatchCapsAtSixCandidates: seven implementers of Replace are
-// too many to name a target, so the call links to none of them.
+// too many to name a target, so the call links to none of them. The call still
+// links to the interface's own spec, which its static receiver type names.
 func TestGoInterfaceDispatchCapsAtSixCandidates(t *testing.T) {
 	st, dir := newCrossTree(t)
 	putFiles(t, dir, implementerTree(7))
 	indexTree(t, st, dir)
-	if got := targetsFrom(t, st, "internal/idx/use.go::use", "calls"); len(got) != 0 {
-		t.Fatalf("seven candidates still linked: %v", got)
+	got := targetsFrom(t, st, "internal/idx/use.go::use", "calls")
+	if !slices.Equal(got, []string{"internal/idx/use.go::Replacer.Replace"}) {
+		t.Fatalf("seven candidates: calls targets = %v, want only the Replacer.Replace spec", got)
 	}
 }
 

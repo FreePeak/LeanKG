@@ -87,12 +87,62 @@ func (nt nameTable) forFile(cx *crossIndex, fe fileElements) nameTable {
 	return out
 }
 
-// qualifiedEdges resolves a file's qualified seeds (alias.Name) to the exported
-// elements of the imported directory, at confidence 0.8 with the use line. The
-// caps of relationships() do not apply to them: each is an exact import use.
-func qualifiedEdges(quals []qualifiedSeed, names nameTable) []store.Relationship {
-	var out []store.Relationship
-	seen := map[[3]string]bool{}
+// edgeSet is one file's relationship batch under construction. It holds one
+// edge per (source, target, rel_type) and never a self edge. Every use line an
+// edge is added with (its "line" metadata) is collected, so rels() can write
+// all of them.
+type edgeSet struct {
+	out   []store.Relationship
+	at    map[[3]string]int // edge key -> index in out
+	sites [][]int           // use lines of out[i]
+}
+
+func newEdgeSet() *edgeSet { return &edgeSet{at: map[[3]string]int{}} }
+
+// add records r, or the use line it carries, and reports whether r is a new edge.
+// The first edge's metadata is kept.
+func (s *edgeSet) add(r store.Relationship) bool {
+	if r.Source == r.Target {
+		return false
+	}
+	key := [3]string{r.Source, r.Target, r.RelType}
+	i, seen := s.at[key]
+	if !seen {
+		i = len(s.out)
+		s.at[key] = i
+		s.out = append(s.out, r)
+		s.sites = append(s.sites, nil)
+	}
+	if line, ok := r.Metadata["line"].(int); ok {
+		s.sites[i] = append(s.sites[i], line)
+	}
+	return !seen
+}
+
+// count is the number of edges added so far.
+func (s *edgeSet) count() int { return len(s.out) }
+
+// rels returns the batch. An edge with use lines gets line = its smallest line
+// and lines = every use line, sorted and de-duplicated.
+func (s *edgeSet) rels() []store.Relationship {
+	for i, sites := range s.sites {
+		if len(sites) == 0 {
+			continue
+		}
+		slices.Sort(sites)
+		sites = slices.Compact(sites)
+		m := s.out[i].Metadata
+		m["line"] = sites[0]
+		m["lines"] = sites
+	}
+	return s.out
+}
+
+// addQualifiedEdges adds a file's qualified seeds (alias.Name) as edges to the
+// exported elements of the imported directory, at confidence 0.8 with the use
+// line. The caps of addRelationships do not apply to them: each is an exact
+// import use.
+func addQualifiedEdges(set *edgeSet, quals []qualifiedSeed, names nameTable) {
 	for _, q := range quals {
 		dir, ok := names.imports[q.Alias]
 		if !ok {
@@ -103,25 +153,22 @@ func qualifiedEdges(quals []qualifiedSeed, names nameTable) []store.Relationship
 			rel = "calls"
 		}
 		for _, tqn := range names.cross.qualifiedTargets(dir, q.Name) {
-			key := [3]string{q.Source, tqn, rel}
-			if q.Source == tqn || seen[key] {
-				continue
-			}
-			seen[key] = true
-			out = append(out, store.Relationship{
+			set.add(store.Relationship{
 				Source: q.Source, Target: tqn, RelType: rel, Confidence: qualifiedConf,
 				Metadata: map[string]any{"line": q.Line},
 			})
 		}
 	}
-	return out
 }
 
 // fileRelationships is the whole relationship batch of one Go or other file:
-// relationships() for its elements plus the cross-package edges of its
-// qualified seeds. names must come from forFile for a Go file.
+// the edges of its elements plus the cross-package edges of its qualified seeds.
+// names must come from forFile for a Go file.
 func fileRelationships(fe fileElements, names nameTable) []store.Relationship {
-	return append(relationships(fe.elements, names), qualifiedEdges(fe.qualified, names)...)
+	set := newEdgeSet()
+	addRelationships(set, fe.elements, names)
+	addQualifiedEdges(set, fe.qualified, names)
+	return set.rels()
 }
 
 // relationships computes the relationship batch for one file's elements:
@@ -131,10 +178,10 @@ func fileRelationships(fe fileElements, names nameTable) []store.Relationship {
 //     elements (calls for a call site, references otherwise; confidence 0.5). An
 //     x.Name method seed (called or taken as a value) resolves through the
 //     receiver's static type in crossIndex.methodTargets (confidence 0.4,
-//     "method-by-name"; 0.3 for "interface-dispatch"). Every
-//     such edge carries its first use line as
-//     metadata {"line": N}. Qualified seeds (alias.Name) make their edges in
-//     qualifiedEdges, outside these caps;
+//     "method-by-name"; 0.3 for "interface-dispatch" and "interface-spec"). Every
+//     such edge carries its first use line as metadata {"line": N} and every
+//     use line of that edge as {"lines": [...]} (sorted, de-duplicated). Qualified
+//     seeds (alias.Name) make their edges in addQualifiedEdges, outside these caps;
 //   - other elements: a whole-word identifier in the element's content matching
 //     another element's name (confidence 0.5, self-calls dropped, one row per
 //     (source, target) pair), plus the grammar-derived call seeds carried by
@@ -158,15 +205,15 @@ const (
 )
 
 func relationships(els []indexedElem, names nameTable) []store.Relationship {
-	var out []store.Relationship
-	seen := map[[3]string]bool{}
-	add := func(src, dst, typ string, conf float64, meta map[string]any) {
-		key := [3]string{src, dst, typ}
-		if src == dst || seen[key] {
-			return
-		}
-		seen[key] = true
-		out = append(out, store.Relationship{
+	set := newEdgeSet()
+	addRelationships(set, els, names)
+	return set.rels()
+}
+
+// addRelationships adds the element edges of one file to set (see relationships).
+func addRelationships(set *edgeSet, els []indexedElem, names nameTable) {
+	add := func(src, dst, typ string, conf float64, meta map[string]any) bool {
+		return set.add(store.Relationship{
 			Source: src, Target: dst, RelType: typ, Confidence: conf, Metadata: meta,
 		})
 	}
@@ -260,9 +307,7 @@ func relationships(els []indexedElem, names nameTable) []store.Relationship {
 					if linked[target] {
 						continue // the grammar already linked this pair exactly
 					}
-					before := len(out)
-					add(e.qn, target, rel, 0.5, nil)
-					if len(out) > before {
+					if add(e.qn, target, rel, 0.5, nil) {
 						outgoing++
 					}
 				}
@@ -271,11 +316,10 @@ func relationships(els []indexedElem, names nameTable) []store.Relationship {
 				}
 			}
 		}
-		if len(out) >= maxEdgesPerFile {
+		if set.count() >= maxEdgesPerFile {
 			break // per-file ceiling: stop scanning further elements
 		}
 	}
-	return out
 }
 
 // splitSignature separates a declaration's signature (its first line up to
