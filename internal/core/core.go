@@ -1171,6 +1171,103 @@ func (e *Engine) resolveGraphSeeds(ctx context.Context, seed string) ([]string, 
 	}
 }
 
+// didYouMeanLimit caps the candidate names an unknown seed is offered.
+const didYouMeanLimit = 5
+
+// didYouMean offers qualified names for a seed that did not resolve. Exact
+// name matches come first (shortest qualified name first, as FindExact ranks
+// them), then names within a small edit distance of the seed's last segment,
+// nearest first. The list holds at most didYouMeanLimit names.
+func (e *Engine) didYouMean(ctx context.Context, seed string) ([]string, error) {
+	out := []string{}
+	name := seedName(seed)
+	if name == "" {
+		return out, nil
+	}
+	els, err := e.st.Elements(ctx)
+	if err != nil {
+		return nil, err
+	}
+	type candidate struct {
+		qn    string
+		exact bool
+		dist  int
+	}
+	var cands []candidate
+	for _, el := range els {
+		if strings.EqualFold(el.Name, name) {
+			cands = append(cands, candidate{qn: el.QualifiedName, exact: true})
+		} else if d, ok := nearName(name, el.Name); ok {
+			cands = append(cands, candidate{qn: el.QualifiedName, dist: d})
+		}
+	}
+	sort.SliceStable(cands, func(i, j int) bool {
+		a, b := cands[i], cands[j]
+		if a.exact != b.exact {
+			return a.exact
+		}
+		if a.dist != b.dist {
+			return a.dist < b.dist
+		}
+		if len(a.qn) != len(b.qn) {
+			return len(a.qn) < len(b.qn)
+		}
+		return a.qn < b.qn
+	})
+	for _, c := range cands {
+		if len(out) == didYouMeanLimit {
+			break
+		}
+		out = append(out, c.qn)
+	}
+	return out, nil
+}
+
+// nearName reports whether an indexed name is a near miss for the seed's name:
+// within max(2, len/4) edits, case-insensitively. Names shorter than four
+// characters are never near misses, so a short name cannot pull in noise.
+func nearName(seed, name string) (int, bool) {
+	a, b := strings.ToLower(seed), strings.ToLower(name)
+	if len(a) < 4 || len(b) < 4 {
+		return 0, false
+	}
+	d := editDistance(a, b)
+	return d, d <= max(2, len(a)/4)
+}
+
+// editDistance is the Levenshtein distance between a and b.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
+}
+
+// seedName is the last segment of a seed: the part after the "::" that ends a
+// file path, then the part after the last "." (Type.Method) or "/" (a path).
+func seedName(seed string) string {
+	if i := strings.LastIndex(seed, "::"); i >= 0 {
+		seed = seed[i+2:]
+	}
+	if i := strings.LastIndexAny(seed, "./"); i >= 0 {
+		seed = seed[i+1:]
+	}
+	return seed
+}
+
 // markBounds reports the effective depth of a traversal and, only when the node
 // budget stopped it, truncated: true (decision D9). A complete walk keeps its
 // payload unchanged apart from the depth.

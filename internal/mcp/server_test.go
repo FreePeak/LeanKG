@@ -101,6 +101,7 @@ func TestServerAdvertisesAgentProtocol(t *testing.T) {
 		"leankg-embed",
 		"per-project",
 		"callers",
+		"did_you_mean",
 		"context",
 		"history",
 		"rg is fine",

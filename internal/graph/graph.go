@@ -64,9 +64,10 @@ type graphStore interface {
 	Incoming(ctx context.Context, target string) ([]store.Relationship, error)
 }
 
-// hasNode reports whether qn is known to the graph: an element with that
-// qualified name exists, or at least one edge touches it.
-func hasNode(ctx context.Context, st graphStore, qn string) (bool, error) {
+// Known reports whether qn is known to the graph: an element with that
+// qualified name exists, or at least one edge touches it. It is the seed test
+// every verb shares, so an answer can say whether a seed resolved.
+func Known(ctx context.Context, st graphStore, qn string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -96,7 +97,7 @@ func hasNode(ctx context.Context, st graphStore, qn string) (bool, error) {
 func Impact(ctx context.Context, st graphStore, qn string, depth int) ([]Hit, Bounds, error) {
 	depth = clampDepth(depth)
 	bounds := Bounds{Depth: depth}
-	ok, err := hasNode(ctx, st, qn)
+	ok, err := Known(ctx, st, qn)
 	if err != nil {
 		return nil, Bounds{}, err
 	}
@@ -151,7 +152,7 @@ func ShortestPath(ctx context.Context, st graphStore, from, to string, maxDepth 
 	maxDepth = clampDepth(maxDepth)
 	bounds := Bounds{Depth: maxDepth}
 	for _, seed := range []string{from, to} {
-		ok, err := hasNode(ctx, st, seed)
+		ok, err := Known(ctx, st, seed)
 		if err != nil {
 			return nil, Bounds{}, err
 		}
@@ -249,6 +250,7 @@ func reconstruct(parent map[string]string, to string) []string {
 const (
 	relCalls      = "calls"
 	relReferences = "references"
+	relImports    = "imports"
 )
 
 // nonCallable are the element types no call can target (the index's type,
@@ -294,57 +296,32 @@ func callEdges(ctx context.Context, st graphStore, qn string, incoming bool, kee
 	return kept, nil
 }
 
-// CallSites returns one Site per edge touching any seed, deduplicated and
-// sorted by QN, file, line and rel type. incoming selects callers (QN is the
-// caller) or callees (QN is the callee). The use sits in the element that makes
-// it: the caller for incoming edges, the seed for outgoing ones. Its line is
-// the edge's metadata "line" when present, else that element's line_start.
+// CallSites returns one Site per call line of every edge touching any seed,
+// deduplicated and sorted by QN, file, line and rel type. incoming selects
+// callers (QN is the caller) or callees (QN is the callee). The use sits in the
+// element that makes it: the caller for incoming edges, the seed for outgoing
+// ones. Its lines are the edge's "lines" metadata when present, else its "line",
+// else that element's line_start (see callLines).
 //
 // relType is an explicit filter and wins when set. When empty, a callee walk
 // reads "calls", and a caller walk reads "calls" plus "references" (see
 // siteEdges). A caller that is a method of the seed type itself is not an
 // external user and is dropped.
 func CallSites(ctx context.Context, st graphStore, seeds []string, incoming bool, relType string) ([]Site, error) {
-	holders := map[string]store.Element{}
-	locateOnce := func(qn string) (store.Element, error) {
-		if el, ok := holders[qn]; ok {
-			return el, nil
-		}
-		el, err := locate(ctx, st, qn)
-		if err != nil {
-			return store.Element{}, err
-		}
-		holders[qn] = el
-		return el, nil
+	bySeed, err := SitesBySeed(ctx, st, seeds, incoming, relType)
+	if err != nil {
+		return nil, err
 	}
+	return UnionSites(seeds, bySeed), nil
+}
+
+// UnionSites merges the per-seed sites of SitesBySeed into one list over the
+// seeds, deduplicated and sorted by QN, file, line and rel type.
+func UnionSites(seeds []string, bySeed map[string][]Site) []Site {
 	seen := map[Site]bool{}
 	var sites []Site
 	for _, seed := range seeds {
-		keep, err := siteEdges(seed, incoming, relType, locateOnce)
-		if err != nil {
-			return nil, err
-		}
-		rels, err := callEdges(ctx, st, seed, incoming, keep)
-		if err != nil {
-			return nil, err
-		}
-		for _, r := range rels {
-			site := Site{QN: r.Target, Confidence: r.Confidence, RelType: r.RelType}
-			holder := seed
-			if incoming {
-				site.QN, holder = r.Source, r.Source
-			}
-			el, err := locateOnce(holder)
-			if err != nil {
-				return nil, err
-			}
-			if incoming && el.ElementType == "method" && methodOwner(el) == seed {
-				continue
-			}
-			site.File, site.Line = el.FilePath, el.LineStart
-			if line, ok := callLine(r.Metadata); ok {
-				site.Line = line
-			}
+		for _, site := range bySeed[seed] {
 			if !seen[site] {
 				seen[site] = true
 				sites = append(sites, site)
@@ -364,7 +341,69 @@ func CallSites(ctx context.Context, st graphStore, seeds []string, incoming bool
 		}
 		return a.RelType < b.RelType
 	})
-	return sites, nil
+	return sites
+}
+
+// SitesBySeed answers CallSites one seed at a time: the sites of each seed
+// alone, keyed by seed and deduplicated within it, in edge order. A caller uses
+// it for per-seed counts; CallSites is its union over the seeds.
+func SitesBySeed(ctx context.Context, st graphStore, seeds []string, incoming bool, relType string) (map[string][]Site, error) {
+	holders := map[string]store.Element{}
+	locateOnce := func(qn string) (store.Element, error) {
+		if el, ok := holders[qn]; ok {
+			return el, nil
+		}
+		el, err := locate(ctx, st, qn)
+		if err != nil {
+			return store.Element{}, err
+		}
+		holders[qn] = el
+		return el, nil
+	}
+	out := map[string][]Site{}
+	for _, seed := range seeds {
+		if _, done := out[seed]; done {
+			continue
+		}
+		keep, err := siteEdges(seed, incoming, relType, locateOnce)
+		if err != nil {
+			return nil, err
+		}
+		rels, err := callEdges(ctx, st, seed, incoming, keep)
+		if err != nil {
+			return nil, err
+		}
+		seen := map[Site]bool{}
+		var sites []Site
+		for _, r := range rels {
+			site := Site{QN: r.Target, Confidence: r.Confidence, RelType: r.RelType}
+			holder := seed
+			if incoming {
+				site.QN, holder = r.Source, r.Source
+			}
+			el, err := locateOnce(holder)
+			if err != nil {
+				return nil, err
+			}
+			if incoming && el.ElementType == "method" && methodOwner(el) == seed {
+				continue
+			}
+			site.File = el.FilePath
+			lines := callLines(r.Metadata)
+			if len(lines) == 0 {
+				lines = []int{el.LineStart}
+			}
+			for _, line := range lines {
+				site.Line = line
+				if !seen[site] {
+					seen[site] = true
+					sites = append(sites, site)
+				}
+			}
+		}
+		out[seed] = sites
+	}
+	return out, nil
 }
 
 // siteEdges is the edge filter of one seed's site query. The explicit filter
@@ -393,8 +432,7 @@ func siteEdges(seed string, incoming bool, filter string, locateOnce func(string
 		if r.RelType == relCalls {
 			return true
 		}
-		_, valueUse := callLine(r.Metadata)
-		return r.RelType == relReferences && valueUse
+		return r.RelType == relReferences && len(callLines(r.Metadata)) > 0
 	}, nil
 }
 
@@ -447,13 +485,41 @@ func locate(ctx context.Context, st graphStore, qn string) (store.Element, error
 	return store.Element{}, nil
 }
 
-// callLine reads the call-site line an edge carries in its metadata.
-func callLine(meta map[string]any) (int, bool) {
-	switch v := meta["line"].(type) {
+// callLines reads the call-site lines an edge carries. The "lines" metadata
+// (every use line of the edge, written by the AST tier) wins when it holds any
+// line; otherwise the single "line" metadata. The result is sorted and unique,
+// and nil when the edge carries neither.
+func callLines(meta map[string]any) []int {
+	if raw, ok := meta["lines"]; ok {
+		var out []int
+		switch v := raw.(type) {
+		case []any:
+			for _, x := range v {
+				if n, ok := metaInt(x); ok {
+					out = append(out, n)
+				}
+			}
+		case []int:
+			out = append(out, v...)
+		}
+		if len(out) > 0 {
+			sort.Ints(out)
+			return slices.Compact(out)
+		}
+	}
+	if n, ok := metaInt(meta["line"]); ok {
+		return []int{n}
+	}
+	return nil
+}
+
+// metaInt reads one numeric metadata value (JSON numbers decode as float64).
+func metaInt(v any) (int, bool) {
+	switch t := v.(type) {
 	case float64:
-		return int(v), true
+		return int(t), true
 	case int:
-		return v, true
+		return t, true
 	}
 	return 0, false
 }
@@ -480,11 +546,48 @@ func Context(ctx context.Context, st graphStore, qn string, limit int) (map[stri
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{
+	res := map[string]any{
 		"element":  els[0],
 		"incoming": groupByRelType(in, limit, relSource),
 		"outgoing": groupByRelType(out, limit, relTarget),
-	}, nil
+	}
+	if summary, testOnly := importerSplit(in); summary != nil {
+		res["incoming_imports_summary"] = summary
+		res["incoming_imports_test_only"] = testOnly
+	}
+	return res, nil
+}
+
+// importerSplit splits the importers of an element into those that import it
+// from non-test code and those whose every import is test-only (the edge
+// metadata test_only). It returns nil when nothing imports the element.
+func importerSplit(in []store.Relationship) (map[string]int, []string) {
+	testOnlyBy := map[string]bool{}
+	for _, r := range in {
+		if r.RelType != relImports {
+			continue
+		}
+		t, _ := r.Metadata["test_only"].(bool)
+		if prev, ok := testOnlyBy[r.Source]; ok {
+			t = prev && t
+		}
+		testOnlyBy[r.Source] = t
+	}
+	if len(testOnlyBy) == 0 {
+		return nil, nil
+	}
+	summary := map[string]int{"non_test": 0, "test_only": 0}
+	testOnly := []string{}
+	for src, t := range testOnlyBy {
+		if t {
+			summary["test_only"]++
+			testOnly = append(testOnly, src)
+		} else {
+			summary["non_test"]++
+		}
+	}
+	sort.Strings(testOnly)
+	return summary, testOnly
 }
 
 func relSource(r store.Relationship) string { return r.Source }

@@ -9,10 +9,16 @@
   "rel_types": [
     "calls"
   ],
+  "resolved": true,
+  "seed_counts": {
+    "src/beta.go::Beta": 1
+  },
   "seeds": [
     "src/beta.go::Beta"
   ],
+  "site_limit": 50,
   "sites": [
     "src/alpha.go:1 src/alpha.go::Alpha 0.5"
-  ]
+  ],
+  "total_sites": 1
 }
