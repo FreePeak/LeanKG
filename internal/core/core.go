@@ -1056,7 +1056,7 @@ func shapeElement(el store.Element, limit int) map[string]any {
 	}
 	content := el.Content
 	if len(content) > hitSnippetBytes {
-		content = content[:hitSnippetBytes] + "…"
+		content = store.ClipUTF8(content, hitSnippetBytes) + "…"
 	}
 	m["content"] = content
 	return m
