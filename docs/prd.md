@@ -10,6 +10,22 @@
 
 ## Changelog
 
+### graph-accuracy: callers and callees answer per call site; the Go extractor reads the AST (2026-11-20)
+
+**Trigger:** callers returned a name list with no call lines, a bare name shared by several functions answered for one of them only, and the Go regex tier missed package-level constants, variables and interface methods.
+
+- **callers / callees** (`internal/core/actions.go`, `graphCallSites`). A bare name walks every callable it resolves to (`seeds`, `seed_counts`). `sites` holds one `"<file>:<line> <caller_qn> <confidence>"` line per call site, production callers first, capped at 50 or `limit` (`total_sites`, `truncated`, `site_limit`, `rel_types`). `args.rel_type` filters the edge type (callers and callees only). `args.scope` (`all|code|prod`) drops sites by file and reports `filtered_out`. An unknown seed answers `resolved: false` with `did_you_mean`.
+- **Seeds** (`internal/core/core.go`, `seedAliases`). `pkg.Name`, `pkg.Type.Method` and `dir/file.go::Name` resolve when the element's directory (or path) matches; `resolved_from` echoes the text as written. `Type.Method` without a package does not resolve.
+- **Types, constants, variables.** Their callers read `references` edges as well as `calls`. A callable seed reads only references that carry a use line.
+- **Interface specs.** An interface method is a `method` element with `interface_spec: true`. A caller walk on a spec also walks its implementers (`internal/graph/specseeds.go`, `ExpandSpecSeeds`).
+- **Package context.** `context` on a package directory reports `incoming_imports_summary` (`non_test`, `test_only` counts) and `incoming_imports_test_only`.
+- **Search scope.** `scope=code` drops markdown (`.md`, `.mdx`), `docs/archive/` and test fixtures; `scope=prod` drops fixtures and `_test.go`. Graph verbs apply the file rule to their sites (markdown for code, test files for prod).
+- **Commit lookup.** A query of 7 to 40 hex characters is looked up by its first 7 characters and admits `git:` rows without `include_git`.
+- **Compact hits.** The content snippet is capped at 200 bytes; `language` and `line_end` are omitted when `limit` is above 5.
+- **Go extractor** (`internal/index/goast.go`, `crosspkg.go`, `packages.go`). Package-level `const`, `var` and every `type` kind come from `go/parser`, with exact line ranges. Call-site lines are kept in each edge's `lines` metadata. Cross-package calls resolve through the import alias (confidence 0.8), a typed receiver's method by name (0.4), or interface dispatch and interface specs (0.3); an unknown receiver makes no edge. Each directory is a `package` element, and `imports` edges link package directories with `test_only` metadata.
+- **Store hygiene.** Same-named elements of one file get distinct qualified names (the n-th repeat is `name (n)`). The index sweeps orphan edges next to the orphan vectors, and its summary prints the stored totals, which equal `leankg status`.
+- **extractorVersion 4 to 16.** Stores recorded under another version re-extract every file once. The version history is the comment at `internal/index/index.go:259`.
+
 ### route-roles: every route declares its role; isWritePath is gone (CX-38, CX-49) (2026-11-15)
 
 The gate resolves the caller once and stores its role in the request context. Each route on a gated listener declares its access at registration: `auth.Require(role, h)` or `auth.Public(h)`. `TestRouteRegistrationsDeclareRole` fails on a route without a declaration, so a route with no role cannot ship. The path lists (`isWritePath`, `writePrefixes`, `memoryWritePrefixes`) are deleted.

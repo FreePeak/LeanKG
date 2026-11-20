@@ -49,10 +49,12 @@ ranks; the top ranks keep the server's order.
 
 ## Only extractable symbols are labelled
 
-The indexer's Go extractor emits types, functions, methods and consts it can see;
-unexported helpers, interface methods and named constants are **not**
-`code_elements` rows, so a label pointing at one could never be retrieved by any
-arm and would measure nothing but the indexer's extractor. Every label below was
+The indexer's Go extractor (`go/parser`, `internal/index/goast.go`) emits the
+package-level types, functions, methods, constants and variables, unexported ones
+included, and interface method specs as `method` elements flagged
+`interface_spec`. A label pointing at an element the store does not hold could
+never be retrieved by any arm and would measure nothing but the indexer's
+extractor. Every label below was
 checked against the live store with `select count(*) from code_elements where
 qualified_name=...` — a label that returns 0 is replaced, not tolerated.
 

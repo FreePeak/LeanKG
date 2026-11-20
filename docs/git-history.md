@@ -61,7 +61,12 @@ enumerate file rows without a full element scan.
 
 History rows are answered by `history`, `cochange` and `churn`. The search
 rungs (`search` ladder, `exact`, `fuzzy`, `semantic`) and `element` hide them
-unless the caller sets `args.include_git: true`. The rule is one predicate
+unless the caller sets `args.include_git: true`. A query that is a commit
+reference (7 to 40 hex characters) is the exception: the git filter does not
+apply to it, and it is looked up by its first 7 characters, the short sha in the
+commit row's name (`searchPrelude` in `internal/core/actions.go`, `commitLookup`
+in `internal/core/core.go`; the prefix rule is `TestCommitLookupIsHexOnly`). The
+rule is one predicate
 (`searchKeep` in `internal/core/core.go`): a row is history when its qualified
 name starts with `git:`, which no code qualified name does. Keyword rungs read
 a wider window (3x the limit, at least 50) before the predicate trims it to the

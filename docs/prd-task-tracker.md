@@ -508,6 +508,16 @@ and keeps it, and removes nothing: a healthy registry is untouched.
 |----|-------|--------|----------|
 | FR-SELF-05 | The repository ships an ontology of its own surfaces, loadable with `import {action: "ontology"}` | **DONE** (branch `feat/leankg-ontology`, unmerged) | `ontology/concepts.yaml` (19 concepts), `ontology/workflows.yaml` (5 workflows, 15 steps, 17 failure modes). Test `TestRepoOntologyLoads` (`internal/ontology/repo_ontology_test.go`) loads both through the real loaders and fails on a missing code_refs/entry_points/docs path. Scratch import on a throwaway store: `concepts 19, workflows 5`; `concept_search` "git history" matches Git history, "search ladder" matches Search ladder. Open limit: import is explicit, no boot or file-change sync (`internal/ontology/sync.go` `SyncForProject` has no caller). |
 
+## graph-accuracy — callers answer per call site; the Go extractor reads the AST (2026-11-20, branch integration/leankg-accuracy)
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| FR-GRAPH-01 | callers and callees list every call site as `<file>:<line> <caller_qn> <confidence>`, production first, capped at 50 or `limit`; `rel_type` and `scope` filter | **DONE** | `internal/core/actions.go` (`graphCallSites`, `siteLines`, `productionFirst`). Tests `internal/core/graphsites_test.go`, golden `internal/core/testdata/golden/actions/query_callers.json`. |
+| FR-GRAPH-02 | Bare names walk every callable they match; `pkg.Name`, `pkg.Type.Method` and `dir/file.go::Name` seeds resolve; unknown seeds answer `resolved: false` with `did_you_mean` | **DONE** | `internal/core/core.go` (`resolveGraphSeeds`, `seedAliases`). Tests `internal/core/graphseed_test.go`. Open limit: `Type.Method` without a package does not resolve. |
+| FR-GRAPH-03 | Interface method specs are `method` elements flagged `interface_spec`; a caller walk on a spec also walks its implementers | **DONE** | `internal/index/crosspkg.go`, `internal/graph/specseeds.go` (`ExpandSpecSeeds`). Tests `internal/graph/specseeds_test.go`, `internal/core/graphspec_test.go`. |
+| FR-GRAPH-04 | Go files are extracted by the `go/parser` AST tier: constants, variables, types, exact ranges, call-site lines, cross-package edges (0.8 / 0.4 / 0.3), `package` elements with `imports` edges | **DONE** | `internal/index/goast.go`, `internal/index/crosspkg.go`, `internal/index/packages.go`. Tests `internal/index/goast_test.go`, `goast_cross_test.go`, `goast_calls_test.go`, `packages_test.go`. |
+| FR-GRAPH-05 | The index keeps stored counts equal to `status`: same-named elements get `name (n)`, orphan edges are swept | **DONE** | `internal/index/index.go` (orphan sweep next to `DeleteOrphanVectors`), `internal/index/extract.go` (`uniqueQNs`). Test `internal/index/count_parity_test.go`. |
+
 ## Repo hygiene (non-PRD)
 
 | Item | Detail |
