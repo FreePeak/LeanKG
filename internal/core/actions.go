@@ -343,14 +343,26 @@ func graphFanQuery(verb graphFanVerb) actionHandler[QueryRequest] {
 		if err != nil {
 			return nil, err
 		}
-		seeds, err := e.resolveGraphSeeds(ctx, req.Query)
+		seeds, aliased, err := e.resolveGraphSeeds(ctx, req.Query)
 		if err != nil {
 			return nil, err
 		}
 		if seeds[0] != req.Query {
 			s.resp["resolved_query"] = seeds[0]
 		}
-		return verb(e, ctx, req, a, seeds, s.resp)
+		if aliased {
+			s.resp["resolved_from"] = req.Query
+		}
+		out, err := verb(e, ctx, req, a, seeds, s.resp)
+		if err != nil || !aliased || len(seeds) < 2 {
+			return out, err
+		}
+		note := fmt.Sprintf("The seed %q matched %d elements (%s); retry with one qualified name to narrow it.", req.Query, len(seeds), strings.Join(seeds, ", "))
+		if prev, _ := out["guidance"].(string); prev != "" {
+			note += " " + prev
+		}
+		out["guidance"] = note
+		return out, nil
 	})
 }
 
@@ -409,7 +421,7 @@ func (e *Engine) graphPath(ctx context.Context, req QueryRequest, a graphArgs, s
 	if toRaw == "" {
 		return nil, fmt.Errorf("query path requires args.to (target qualified name)")
 	}
-	tos, err := e.resolveGraphSeeds(ctx, toRaw)
+	tos, _, err := e.resolveGraphSeeds(ctx, toRaw)
 	if err != nil {
 		return nil, err
 	}

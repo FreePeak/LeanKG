@@ -1136,20 +1136,23 @@ func looksLikeIdentifier(s string) bool {
 // verb call answers for every same-named function or method. Any other bare
 // name resolves to the shortest match, as FindExact ranks it. Unknown seeds
 // pass through unchanged so graph.ErrUnknownNode still fires for true misses.
-// The result is never empty; index 0 is the seed the single-seed verbs use.
-func (e *Engine) resolveGraphSeeds(ctx context.Context, seed string) ([]string, error) {
+// When neither the exact nor the bare-name lookup finds anything, the package
+// and path-suffix forms of seedAliases are tried; aliased reports that they
+// resolved the seed. The result is never empty; index 0 is the seed the
+// single-seed verbs use.
+func (e *Engine) resolveGraphSeeds(ctx context.Context, seed string) (seeds []string, aliased bool, err error) {
 	seed = strings.TrimSpace(seed)
 	if seed == "" {
-		return []string{seed}, nil
+		return []string{seed}, false, nil
 	}
 	els, err := e.st.FindExact(ctx, seed)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var callables []string
 	for _, el := range els {
 		if el.QualifiedName == seed {
-			return []string{el.QualifiedName}, nil
+			return []string{el.QualifiedName}, false, nil
 		}
 		if strings.EqualFold(el.Name, seed) && (el.ElementType == "function" || el.ElementType == "method") {
 			callables = append(callables, el.QualifiedName)
@@ -1163,12 +1166,67 @@ func (e *Engine) resolveGraphSeeds(ctx context.Context, seed string) ([]string, 
 			}
 			return callables[i] < callables[j]
 		})
-		return callables, nil
+		return callables, false, nil
 	case len(els) > 0:
-		return []string{els[0].QualifiedName}, nil
-	default:
-		return []string{seed}, nil
+		return []string{els[0].QualifiedName}, false, nil
 	}
+	alias, err := e.seedAliases(ctx, seed)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(alias) > 0 {
+		return alias, true, nil
+	}
+	return []string{seed}, false, nil
+}
+
+// aliasElementTypes are the element kinds a package or path seed may name: the
+// callables, types, constants and variables an agent writes as seeds.
+var aliasElementTypes = map[string]bool{
+	"function": true, "method": true, "constructor": true, "type": true,
+	"class": true, "constant": true, "variable": true,
+}
+
+// seedAliases resolves a seed written without its exact qualified name to the
+// elements it names, sorted by qualified name. Two forms are accepted:
+//   - pkg.Name or pkg.Type.Method: the element's file directory is named pkg
+//     (its last path element), and it is named Name, or its qualified name ends
+//     in Type.Method;
+//   - a path suffix such as dir/file.go::Name or file.go::Name: the element's
+//     qualified name ends in the seed at a path-segment boundary.
+//
+// Both look the element up by its last name segment (FindExact), so no new
+// store lookup is needed. It returns nil when no element matches.
+func (e *Engine) seedAliases(ctx context.Context, seed string) ([]string, error) {
+	name := seedName(seed)
+	if name == "" {
+		return nil, nil
+	}
+	els, err := e.st.FindExact(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	pkg, tail, dotted := strings.Cut(seed, ".")
+	pathSuffix := strings.Contains(seed, "::")
+	var out []string
+	for _, el := range els {
+		if !aliasElementTypes[el.ElementType] {
+			continue
+		}
+		ok := false
+		switch {
+		case pathSuffix:
+			ok = el.QualifiedName == seed || strings.HasSuffix(el.QualifiedName, "/"+seed)
+		case dotted:
+			ok = filepath.Base(filepath.Dir(el.FilePath)) == pkg &&
+				(el.Name == tail || strings.HasSuffix(el.QualifiedName, "::"+tail))
+		}
+		if ok {
+			out = append(out, el.QualifiedName)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // didYouMeanLimit caps the candidate names an unknown seed is offered.
