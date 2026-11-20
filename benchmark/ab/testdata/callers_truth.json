@@ -426,6 +426,12 @@
      "line": 16
     },
     {
+     "file": "internal/graph/specseeds_test.go",
+     "func": "newSpecFixture",
+     "test": true,
+     "line": 32
+    },
+    {
      "file": "internal/httpx/budget_parity_test.go",
      "func": "newSeededParityEngine",
      "test": true,
