@@ -17,6 +17,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -466,23 +468,153 @@ func (e *Engine) graphCallees(ctx context.Context, req QueryRequest, a graphArgs
 	return e.graphCallSites(ctx, req, seeds, false, a.RelType, "callees", resp)
 }
 
+// graphSiteLimit is the default cap on the sites a caller or callee answer
+// lists. An explicit top-level limit replaces it. total_sites counts every site
+// found, so a cut answer says how much it left out.
+const graphSiteLimit = 50
+
+// graphSeedLead is how many seeds the guidance names, by caller count, when a
+// bare name resolves to more seeds than this.
+const graphSeedLead = 3
+
 // graphCallSites answers callers (incoming) or callees (outgoing) over every
-// seed: the names under key, the seeds walked, one "<file>:<line> <qn>
-// <confidence>" line per site so no follow-up lookup is needed for locations,
-// and rel_types, the relationship types those sites were read through.
+// seed. An unknown seed is an answer with resolved=false and did_you_mean. A
+// known one lists the names under key, the seeds walked with their caller
+// counts, and one "<file>:<line> <qn> <confidence>" line per call site. Sites
+// list production callers before test callers and are capped at graphSiteLimit
+// (or the caller's limit); total_sites and truncated say what the cap left out.
 func (e *Engine) graphCallSites(ctx context.Context, req QueryRequest, seeds []string, incoming bool, relType, key string, resp map[string]any) (map[string]any, error) {
-	sites, err := graph.CallSites(ctx, e.st, seeds, incoming, relType)
+	resolved, err := e.seedsResolved(ctx, seeds)
+	if err != nil {
+		return nil, err
+	}
+	if !resolved {
+		return e.graphUnknownSeed(ctx, req, seeds, key, resp)
+	}
+	bySeed, err := graph.SitesBySeed(ctx, e.st, seeds, incoming, relType)
+	if err != nil {
+		return nil, err
+	}
+	sites := graph.UnionSites(seeds, bySeed)
+	callers := graph.SiteEnds(sites)
+	counts := seedCounts(seeds, bySeed)
+	limit := graphSiteLimit
+	if req.Limit > 0 {
+		limit = req.Limit
+	}
+	shown := productionFirst(sites)
+	if len(shown) > limit {
+		shown = shown[:limit]
+	}
+	resp["seeds"] = seeds
+	resp["resolved"] = true
+	resp["seed_counts"] = counts
+	resp[key] = callers
+	resp["sites"] = siteLines(shown)
+	resp["total_sites"] = len(sites)
+	resp["site_limit"] = limit
+	resp["rel_types"] = graph.SiteRelTypes(sites)
+	if len(shown) < len(sites) {
+		resp["truncated"] = true
+	}
+	if len(sites) == 0 {
+		resp["guidance"] = graphEmptyGuidance(key, strings.Join(seeds, ", "))
+	} else if g := graphSitesGuidance(seeds, counts, len(shown), len(sites)); g != "" {
+		resp["guidance"] = g
+	}
+	return graphDone(resp, req)
+}
+
+// graphUnknownSeed answers a seed that names no indexed element and no edge.
+// It says so, offers up to didYouMeanLimit qualified names found by its last
+// segment, and keeps every list key empty so the answer has the usual shape.
+func (e *Engine) graphUnknownSeed(ctx context.Context, req QueryRequest, seeds []string, key string, resp map[string]any) (map[string]any, error) {
+	candidates, err := e.didYouMean(ctx, seeds[0])
 	if err != nil {
 		return nil, err
 	}
 	resp["seeds"] = seeds
-	resp[key] = graph.SiteEnds(sites)
-	resp["sites"] = siteLines(sites)
-	resp["rel_types"] = graph.SiteRelTypes(sites)
-	if len(sites) == 0 {
-		resp["guidance"] = graphEmptyGuidance(key, strings.Join(seeds, ", "))
+	resp["resolved"] = false
+	resp[key] = []string{}
+	resp["sites"] = []string{}
+	resp["total_sites"] = 0
+	resp["rel_types"] = []string{}
+	resp["did_you_mean"] = candidates
+	guidance := fmt.Sprintf("The seed %q did not resolve to an indexed element; %s returned no answer for it.", seeds[0], key)
+	if len(candidates) > 0 {
+		guidance += fmt.Sprintf(" Did you mean %s? Retry %s with one of those qualified names.", strings.Join(candidates, ", "), req.Action)
+	} else {
+		guidance += fmt.Sprintf(" Resolve it with query (action empty) to a qualified_name, then retry %s with that exact QN.", req.Action)
 	}
+	resp["guidance"] = guidance
 	return graphDone(resp, req)
+}
+
+// seedsResolved reports whether every seed is known to the graph (graph.Known).
+func (e *Engine) seedsResolved(ctx context.Context, seeds []string) (bool, error) {
+	for _, seed := range seeds {
+		ok, err := graph.Known(ctx, e.st, seed)
+		if err != nil || !ok {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// productionFirst orders sites with production callers before test callers,
+// each group keeping its order, so a cut keeps production sites.
+func productionFirst(sites []graph.Site) []graph.Site {
+	out := make([]graph.Site, 0, len(sites))
+	for _, s := range sites {
+		if !isTestPath(s.File) {
+			out = append(out, s)
+		}
+	}
+	for _, s := range sites {
+		if isTestPath(s.File) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// seedCounts is the distinct-caller count of each seed.
+func seedCounts(seeds []string, bySeed map[string][]graph.Site) map[string]int {
+	counts := make(map[string]int, len(seeds))
+	for _, seed := range seeds {
+		distinct := map[string]bool{}
+		for _, s := range bySeed[seed] {
+			distinct[s.QN] = true
+		}
+		counts[seed] = len(distinct)
+	}
+	return counts
+}
+
+// graphSitesGuidance names what a site answer left out. A bare name that
+// resolved to more than graphSeedLead seeds gets the top seeds by caller count
+// as the qualified names to retry with. A cut answer says how many sites it
+// shows of how many it found.
+func graphSitesGuidance(seeds []string, counts map[string]int, shown, total int) string {
+	var parts []string
+	if len(seeds) > graphSeedLead {
+		ranked := slices.Clone(seeds)
+		sort.SliceStable(ranked, func(i, j int) bool { return counts[ranked[i]] > counts[ranked[j]] })
+		var top []string
+		for _, seed := range ranked {
+			if len(top) == graphSeedLead || counts[seed] == 0 {
+				break
+			}
+			top = append(top, fmt.Sprintf("%s (%d)", seed, counts[seed]))
+		}
+		if len(top) > 0 {
+			parts = append(parts, fmt.Sprintf("The name resolves to %d seeds; retry with a qualified name, the top %d by caller count: %s.", len(seeds), len(top), strings.Join(top, ", ")))
+		}
+	}
+	if shown < total {
+		parts = append(parts, fmt.Sprintf("Showing %d of %d sites (production callers first); raise limit or pass a qualified name to narrow.", shown, total))
+	}
+	return strings.Join(parts, " ")
 }
 
 // siteLines renders each call site as "<file>:<line> <qn> <confidence>".

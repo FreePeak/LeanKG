@@ -405,3 +405,87 @@ func TestCallersOfTypeExcludeOwnMethods(t *testing.T) {
 		t.Fatalf("Callers(T) = %v, want %v (T.Clone is the type's own method and must not appear)", got, want)
 	}
 }
+
+// A caller that uses a callee on several lines carries every use line in the
+// edge's "lines" metadata (unsorted, with a repeat). CallSites emits one site per
+// distinct line, all at the caller, in ascending line order.
+func TestCallSitesOnePerCallLine(t *testing.T) {
+	st := newSiteFixture(t)
+	ctx := context.Background()
+	if err := st.UpsertElements(ctx, []store.Element{
+		{QualifiedName: "m.go::M", ElementType: "function", Name: "M", FilePath: "m.go", LineStart: 50},
+	}); err != nil {
+		t.Fatalf("upsert elements: %v", err)
+	}
+	if err := st.UpsertRelationships(ctx, []store.Relationship{
+		{Source: "m.go::M", Target: "h.go::H", RelType: "calls", Confidence: 0.5,
+			Metadata: map[string]any{"line": float64(40), "lines": []any{float64(40), float64(25), float64(31), float64(25)}}},
+	}); err != nil {
+		t.Fatalf("upsert relationships: %v", err)
+	}
+
+	sites, err := CallSites(ctx, st, []string{"h.go::H"}, true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Site{
+		{QN: "g.go::G", File: "g.go", Line: 22, Confidence: 0.5, RelType: "calls"},
+		{QN: "m.go::M", File: "m.go", Line: 25, Confidence: 0.5, RelType: "calls"},
+		{QN: "m.go::M", File: "m.go", Line: 31, Confidence: 0.5, RelType: "calls"},
+		{QN: "m.go::M", File: "m.go", Line: 40, Confidence: 0.5, RelType: "calls"},
+	}
+	if !reflect.DeepEqual(sites, want) {
+		t.Fatalf("Callers(H) sites = %+v, want one site per call line %+v", sites, want)
+	}
+	if got, want := SiteEnds(sites), []string{"g.go::G", "m.go::M"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Callers(H) = %v, want %v (callers stay unique by caller)", got, want)
+	}
+}
+
+// Context on a package lists its importers as before. The summary splits them
+// into non-test and test-only importers, and names the test-only ones. A package
+// with no incoming imports carries neither key.
+func TestContextSplitsTestOnlyImporters(t *testing.T) {
+	st := newFixture(t)
+	ctx := context.Background()
+	if err := st.UpsertElements(ctx, []store.Element{
+		{QualifiedName: "p/store", ElementType: "package", Name: "store", FilePath: "p/store", Language: "go"},
+		{QualifiedName: "cmd/app", ElementType: "package", Name: "app", FilePath: "cmd/app", Language: "go"},
+		{QualifiedName: "internal/mcp", ElementType: "package", Name: "mcp", FilePath: "internal/mcp", Language: "go"},
+		{QualifiedName: "internal/doctor", ElementType: "package", Name: "doctor", FilePath: "internal/doctor", Language: "go"},
+	}); err != nil {
+		t.Fatalf("upsert elements: %v", err)
+	}
+	if err := st.UpsertRelationships(ctx, []store.Relationship{
+		{Source: "cmd/app", Target: "p/store", RelType: "imports", Confidence: 1},
+		{Source: "internal/mcp", Target: "p/store", RelType: "imports", Confidence: 1, Metadata: map[string]any{"test_only": true}},
+		{Source: "internal/doctor", Target: "p/store", RelType: "imports", Confidence: 1, Metadata: map[string]any{"test_only": true}},
+	}); err != nil {
+		t.Fatalf("upsert relationships: %v", err)
+	}
+
+	out, err := Context(ctx, st, "p/store", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := out["incoming"].(map[string]any)
+	if got, want := in["imports"].([]any), []any{"cmd/app", "internal/doctor", "internal/mcp"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("incoming.imports = %v, want every importer %v", got, want)
+	}
+	if got, want := out["incoming_imports_summary"], map[string]int{"non_test": 1, "test_only": 2}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("incoming_imports_summary = %v, want %v", got, want)
+	}
+	if got, want := out["incoming_imports_test_only"], []string{"internal/doctor", "internal/mcp"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("incoming_imports_test_only = %v, want %v", got, want)
+	}
+
+	plain, err := Context(ctx, st, "a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"incoming_imports_summary", "incoming_imports_test_only"} {
+		if _, ok := plain[key]; ok {
+			t.Fatalf("%s present on an element with no incoming imports: %v", key, plain[key])
+		}
+	}
+}
