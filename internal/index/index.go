@@ -298,9 +298,11 @@ func checkRoot(ctx context.Context, st store.KV, dir string, hasFiles bool) erro
 // store has. v15 is the merge of both: a store recorded under v12, v13 or v14
 // re-extracts every file once. v16 (every call site of a Go edge kept in its
 // "lines" metadata; interface method specs as method elements, linked from the
-// interface-typed call sites) adds elements and metadata no v15 store has. A
-// store recorded under another version re-extracts every file once.
-const extractorVersion = "16"
+// interface-typed call sites) adds elements and metadata no v15 store has. v17
+// (Go imports resolve inside module boundaries, from the go.mod files that cover
+// the run) changes the imports and cross-package edges that v16 resolved by
+// suffix. A store recorded under another version re-extracts every file once.
+const extractorVersion = "17"
 
 const extractorKVKey = "extractor_version"
 
@@ -489,11 +491,15 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 	for _, d := range dirOrder {
 		changedDirs[d] = true
 	}
-	pr, err := refreshPackages(ctx, st, cands, goGone, changedDirs, rd, &res)
+	mods, err := loadGoModules(dir, goPackageDirs(cands), blobs, rd)
 	if err != nil {
 		return res, err
 	}
-	cx, err := newCrossIndex(ctx, st, dirCands, changedDirs, rd)
+	pr, err := refreshPackages(ctx, st, cands, goGone, changedDirs, mods, rd, &res)
+	if err != nil {
+		return res, err
+	}
+	cx, err := newCrossIndex(ctx, st, dirCands, changedDirs, rd, mods)
 	if err != nil {
 		return res, err
 	}

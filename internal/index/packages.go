@@ -15,8 +15,9 @@ import (
 // included) is one element of type "package": qualified name and file_path are
 // the module-relative directory, so ReplaceFileRelationships(dir, ...) owns its
 // imports edges. Its imports edges name the other package directories its files
-// import, resolved by crossIndex.dirForImport (longest suffix of the import
-// path). Stdlib and external imports resolve to no directory and make no edge.
+// import, resolved by crossIndex.dirForImport (the module table of gomod.go, or
+// the longest suffix of the import path when no go.mod covers the run). Stdlib
+// and external imports resolve to no directory and make no edge.
 //
 // The union of a directory's imports is kept in a KV record (pkgImportsKV), so
 // an incremental run can re-resolve an unchanged importer when a package appears
@@ -76,9 +77,9 @@ type packageResolver struct {
 	pkgs map[string]bool
 }
 
-func newPackageResolver(pkgs map[string]bool) packageResolver {
+func newPackageResolver(pkgs map[string]bool, mods goModules) packageResolver {
 	dirs := slices.Sorted(maps.Keys(pkgs))
-	return packageResolver{cx: &crossIndex{base: indexByLastElement(dirs)}, pkgs: pkgs}
+	return packageResolver{cx: &crossIndex{base: indexByLastElement(dirs), mods: mods, dirSet: pkgs}, pkgs: pkgs}
 }
 
 // edges is the imports edges of package dir: one per package directory the
@@ -149,12 +150,12 @@ func decodePkgRecord(v string) (imps pkgImports, ok bool) {
 // Changed directories are written by writeGoPackage from the directory loop. It
 // returns the resolver the loop uses. goGone lists the directory of every Go file
 // this run deleted; changed is the set of directories with a changed file.
-func refreshPackages(ctx context.Context, st Store, cands []candidate, goGone []string, changed map[string]bool, rd *gitobj.Reader, res *Result) (packageResolver, error) {
+func refreshPackages(ctx context.Context, st Store, cands []candidate, goGone []string, changed map[string]bool, mods goModules, rd *gitobj.Reader, res *Result) (packageResolver, error) {
 	if len(changed) == 0 && len(goGone) == 0 {
 		return packageResolver{}, nil
 	}
 	pkgs := goPackageDirs(cands)
-	r := newPackageResolver(pkgs)
+	r := newPackageResolver(pkgs, mods)
 	goCands := map[string][]candidate{}
 	for _, c := range cands {
 		if d := dirOf(c.rel); c.lang == "go" && pkgs[d] {

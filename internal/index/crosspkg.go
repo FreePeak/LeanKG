@@ -15,7 +15,8 @@ import (
 // resolved by the static type of x, which the AST tier reads from the syntax
 // (goast.go recvOf and callRef); the type decides the target:
 //   - qualified `alias.Name`: the import is mapped to a directory of the run by
-//     longest suffix match of its path (no go.mod parsing), then Name is looked
+//     the module table of the go.mod files that cover the run (gomod.go), or by
+//     longest suffix match of its path when no go.mod covers the run, then Name is looked
 //     up among that directory's exported non-method elements, confidence 0.8;
 //   - typed receiver of a module type T: the method T.Name, at 0.4 (method-by-name).
 //     When T has no such method but is an interface of the module that declares
@@ -72,9 +73,17 @@ import (
 //     TestGoIfaceMethodSetChangeLeavesStaleDispatchUntilImporterChanges). A
 //     re-link would repeat the per-directory call pass of indexDir for every
 //     importer of the interface, which is not a small change.
-//   - The module root is directory ".", which no import path resolves to (it is
-//     not in the last-element index), so an import of the root package gets no
-//     cross-package edge.
+//   - The module root is directory "." in the module table, so an import of the
+//     root package links to it there. The suffix fallback never links it: the
+//     root is not in its last-element index.
+//   - The module table is read per run, but a go.mod change is not an indexed
+//     change. Packages the run does not re-extract keep the edges they got from
+//     the table they were indexed with. The extractor version bump re-resolves
+//     stores once; a later go.mod edit is picked up with the next change to the
+//     packages it covers.
+//   - Dot imports (import . "p") make the imports edge only. The unqualified
+//     calls they bring into scope make no call edge, because a bare identifier is
+//     resolved in its own package and the dot-imported names are not prefetched.
 //   - Testdata directories take no cross-package links: they are not packages of
 //     the module (goPackageDirs), so their declarations are left out of the
 //     name, declaration and import tables.
@@ -159,6 +168,8 @@ type crossIndex struct {
 	byName  map[string][]symRef // elements of the changed directories (pre-pass)
 	decls   map[string]goDecls  // directory -> its type declarations (changed: all files; others: interface sets from KV)
 	all     map[string]nameHits // per name, filled by prefetch
+	mods    goModules           // module table; nil resolves imports by suffix (gomod.go)
+	dirSet  map[string]bool     // the run's package directories, for the module table
 
 	// refsScanned counts the work of the name lookups: one per methodOf or
 	// qualifiedTargets call, one per method ref implementers visits (test seam).
@@ -169,7 +180,7 @@ type crossIndex struct {
 // the Go files of every changed directory: its elements join byName, and its
 // declarations replace the record. dirCands holds the candidates of every
 // directory of the run; changed names the directories with a changed file.
-func newCrossIndex(ctx context.Context, st Store, dirCands map[string][]candidate, changed map[string]bool, rd *gitobj.Reader) (*crossIndex, error) {
+func newCrossIndex(ctx context.Context, st Store, dirCands map[string][]candidate, changed map[string]bool, rd *gitobj.Reader, mods goModules) (*crossIndex, error) {
 	cx := &crossIndex{
 		base:    map[string][]string{},
 		changed: changed,
@@ -177,6 +188,7 @@ func newCrossIndex(ctx context.Context, st Store, dirCands map[string][]candidat
 		byName:  map[string][]symRef{},
 		decls:   map[string]goDecls{},
 		all:     map[string]nameHits{},
+		mods:    mods,
 	}
 	if len(changed) == 0 {
 		return cx, nil
@@ -190,6 +202,10 @@ func newCrossIndex(ctx context.Context, st Store, dirCands map[string][]candidat
 		}
 	}
 	cx.base = indexByLastElement(dirs)
+	cx.dirSet = make(map[string]bool, len(dirs))
+	for _, d := range dirs {
+		cx.dirSet[d] = true
+	}
 	stored := map[string]string{}
 	for _, d := range dirs {
 		v, _, err := st.KVGet(ctx, declKVNamespace, d)
@@ -283,9 +299,14 @@ func (cx *crossIndex) importDirs(imports map[string]string) map[string]string {
 	return out
 }
 
-// dirForImport returns the longest candidate directory that the import path ends
-// with, or "" when none does.
+// dirForImport returns the directory of the run's package that the import path
+// names, or "" when none does. With a module table it is the module-boundary
+// resolution of gomod.go; without one it is the longest candidate directory that
+// the import path ends with (the fallback for a run no go.mod covers).
 func (cx *crossIndex) dirForImport(imp string) string {
+	if cx.mods != nil {
+		return cx.mods.resolve(imp, cx.dirSet)
+	}
 	best := ""
 	for _, d := range cx.base[baseOf(imp)] {
 		if (imp == d || strings.HasSuffix(imp, "/"+d)) && len(d) > len(best) {

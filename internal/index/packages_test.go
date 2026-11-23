@@ -36,50 +36,6 @@ func assertNoPackage(t *testing.T, st store.Backend, qn string) {
 	}
 }
 
-// importEnds returns the sorted far ends of the imports edges leaving dir (out)
-// or entering it.
-func importEnds(t *testing.T, st store.Backend, dir string, out bool) []string {
-	t.Helper()
-	var rels []store.Relationship
-	var err error
-	if out {
-		rels, err = st.Outgoing(context.Background(), dir)
-	} else {
-		rels, err = st.Incoming(context.Background(), dir)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	var ends []string
-	for _, r := range rels {
-		if r.RelType != "imports" {
-			continue
-		}
-		if out {
-			ends = append(ends, r.Target)
-		} else {
-			ends = append(ends, r.Source)
-		}
-	}
-	slices.Sort(ends)
-	return ends
-}
-
-// importEdge returns the imports edge from -> to.
-func importEdge(t *testing.T, st store.Backend, from, to string) (store.Relationship, bool) {
-	t.Helper()
-	rels, err := st.Outgoing(context.Background(), from)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range rels {
-		if r.RelType == "imports" && r.Target == to {
-			return r, true
-		}
-	}
-	return store.Relationship{}, false
-}
-
 // threePackages is the fixture of the package tests: cmd/app imports internal/mcp
 // and internal/store, internal/mcp imports internal/store, and internal/store
 // imports only the standard library and an external module.
