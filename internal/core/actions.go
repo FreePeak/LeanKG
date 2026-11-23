@@ -1114,6 +1114,10 @@ func (e *Engine) importIndex(ctx context.Context, req ImportRequest) (map[string
 	if res.DeletedFiles > 0 {
 		indexed["deleted_files"] = res.DeletedFiles
 	}
+	// Go files the parser rejected and the regex tier indexed instead.
+	if res.ParseFallbacks > 0 {
+		indexed["parse_fallbacks"] = res.ParseFallbacks
+	}
 	return map[string]any{"indexed": indexed, "status": status}, nil
 }
 
