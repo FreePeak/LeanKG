@@ -36,8 +36,9 @@ var redactRules = []struct {
 	{regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`), "[REDACTED:key]"},
 	{regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}`), "[REDACTED:key]"},
 	{regexp.MustCompile(`\bxox[bpaors]-[A-Za-z0-9-]{10,}`), "[REDACTED:key]"},
-	// LeanKG bearer tokens: lkg_<32hex>_<8hex> (internal/auth.NewSecret).
-	{regexp.MustCompile(`\blkg_[0-9a-f]{32}_[0-9a-f]{8}`), "[REDACTED:key]"},
+	// LeanKG bearer tokens: lkg_<32hex>_<8hex> (internal/auth.NewSecret), or the
+	// bare lkg_<32hex> key id a log line may carry without its suffix.
+	{regexp.MustCompile(`\blkg_[0-9a-f]{32}(?:_[0-9a-f]{8})?`), "[REDACTED:key]"},
 	// key=value and JSON "key": "value" pairs whose key names a secret. The
 	// separator stays on one line, and the value must not start with an
 	// operator (so `token := x` and `token == x` are code, not secrets) and

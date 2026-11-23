@@ -24,6 +24,7 @@ func TestRedactSecretShapes(t *testing.T) {
 		{"aws access key", "AKIAIOSFODNN7EXAMPLE", []string{"AKIAIOSFODNN7EXAMPLE"}, ""},
 		{"slack token", "xoxb-1234567890-abcdefghij", []string{"1234567890-abcdefghij"}, ""},
 		{"bare leankg token", "minted lkg_00112233445566778899aabbccddeeff_0a1b2c3d for the job", []string{"00112233445566778899aabbccddeeff", "0a1b2c3d"}, ""},
+		{"bare leankg secret without suffix", "saw lkg_00112233445566778899aabbccddeeff in the log", []string{"00112233445566778899aabbccddeeff"}, ""},
 		{"password kv", "db password=hunter2supersecret&x=1", []string{"hunter2supersecret"}, ""},
 		{"json token", `{"token": "zzSECRETvalue123"}`, []string{"zzSECRETvalue123"}, ""},
 		{"env secret", "API_SECRET=topsecretvalue", []string{"topsecretvalue"}, ""},
