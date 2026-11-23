@@ -301,8 +301,9 @@ func callEdges(ctx context.Context, st graphStore, qn string, incoming bool, kee
 // deduplicated and sorted by QN, file, line and rel type. incoming selects
 // callers (QN is the caller) or callees (QN is the callee). The use sits in the
 // element that makes it: the caller for incoming edges, the seed for outgoing
-// ones. Its lines are the edge's "lines" metadata when present, else its "line",
-// else that element's line_start (see callLines).
+// ones. Its lines are the edge's "lines" metadata when present, else its "line"
+// (see callLines). An edge with neither keeps its caller with Line noUseLine:
+// the caller counts, and LinedSites leaves the site out of a site list.
 //
 // relType is an explicit filter and wins when set. When empty, a callee walk
 // reads "calls", and a caller walk reads "calls" plus "references" (see
@@ -314,6 +315,17 @@ func CallSites(ctx context.Context, st graphStore, seeds []string, incoming bool
 		return nil, err
 	}
 	return UnionSites(seeds, bySeed), nil
+}
+
+// noUseLine is the Site line of an edge that carries no use line. Its caller
+// still counts (SiteEnds lists it), and LinedSites leaves the site out.
+const noUseLine = 0
+
+// LinedSites returns the sites that carry a use line, for listing call sites.
+// A caller whose edge has no use line is still a caller (SiteEnds of the full
+// sites lists it), but it has no line to show.
+func LinedSites(sites []Site) []Site {
+	return slices.DeleteFunc(slices.Clone(sites), func(s Site) bool { return s.Line == noUseLine })
 }
 
 // UnionSites merges the per-seed sites of SitesBySeed into one list over the
@@ -392,7 +404,7 @@ func SitesBySeed(ctx context.Context, st graphStore, seeds []string, incoming bo
 			site.File = el.FilePath
 			lines := callLines(r.Metadata)
 			if len(lines) == 0 {
-				lines = []int{el.LineStart}
+				lines = []int{noUseLine}
 			}
 			for _, line := range lines {
 				site.Line = line

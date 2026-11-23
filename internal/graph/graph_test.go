@@ -456,6 +456,49 @@ func TestCallersOfSameNamedTypeInOtherDirectoryAreKept(t *testing.T) {
 	}
 }
 
+// A call edge with no use line still makes its caller a caller, but there is no
+// use line to list. The site must not take the caller's definition line
+// (x.go::X starts at line 5) as a call line.
+func TestCallersWithoutUseLineCountButListNoSite(t *testing.T) {
+	st := newSiteFixture(t)
+	ctx := context.Background()
+	const caller = "x.go::X"
+	if err := st.UpsertElements(ctx, []store.Element{
+		{QualifiedName: caller, ElementType: "function", Name: "X", FilePath: "x.go", LineStart: 5},
+	}); err != nil {
+		t.Fatalf("upsert elements: %v", err)
+	}
+	if err := st.UpsertRelationships(ctx, []store.Relationship{
+		{Source: caller, Target: "h.go::H", RelType: "calls", Confidence: 0.5},
+	}); err != nil {
+		t.Fatalf("upsert relationships: %v", err)
+	}
+
+	sites, err := CallSites(ctx, st, []string{"h.go::H"}, true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range sites {
+		if s.QN == caller && s.Line != noUseLine {
+			t.Fatalf("CallSites gives %s line %d, want no use line (%d) for an edge with none", caller, s.Line, noUseLine)
+		}
+	}
+	for _, s := range LinedSites(sites) {
+		if s.QN == caller {
+			t.Fatalf("LinedSites lists %s at line %d, want it left out of the site list", caller, s.Line)
+		}
+	}
+
+	seeds := []string{"h.go::H"}
+	bySeed, err := SitesBySeed(ctx, st, seeds, true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := SiteEnds(UnionSites(seeds, bySeed)); !reflect.DeepEqual(got, []string{"g.go::G", caller}) {
+		t.Fatalf("Callers(H) = %v, want %v (the caller counts without a use line)", got, []string{"g.go::G", caller})
+	}
+}
+
 // A caller that uses a callee on several lines carries every use line in the
 // edge's "lines" metadata (unsorted, with a repeat). CallSites emits one site per
 // distinct line, all at the caller, in ascending line order.
