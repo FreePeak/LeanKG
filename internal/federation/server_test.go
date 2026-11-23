@@ -439,6 +439,39 @@ func TestPublishStoreFaultHidesDriverText(t *testing.T) {
 	}
 }
 
+// relationshipsCapped reads a full page and reports more rows than the page
+// holds, the case the publish cap refuses.
+type relationshipsCapped struct{ store.Backend }
+
+func (relationshipsCapped) RelationshipsAll(_ context.Context, limit int) ([]store.Relationship, error) {
+	return make([]store.Relationship, limit), nil
+}
+
+func (relationshipsCapped) RelationshipCount(context.Context) (int, error) {
+	return maxRelationships + 3, nil
+}
+
+// TestPublishRelationshipCapStaysVisible: the cap is an operator-actionable
+// limit, not a driver fault, so its message is sent (500, as before) while
+// driver text stays masked.
+func TestPublishRelationshipCapStaysVisible(t *testing.T) {
+	clearTokenEnv(t)
+	restore := maxRelationships
+	maxRelationships = 2
+	t.Cleanup(func() { maxRelationships = restore })
+	st := openStore(t)
+	h := Receiver(relationshipsCapped{st}, "/srv/local")
+
+	rec := serve(t, h, http.MethodGet, GraphPath, "", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	want := "local graph has 5 relationships, above the 2 publish cap"
+	if msg := decodeError(t, rec); !strings.Contains(msg, want) {
+		t.Fatalf("error = %q, want it to carry %q", msg, want)
+	}
+}
+
 // TestReceiverPublishesGraph pins the read envelope a pull consumes: the same
 // keys a push sends, never null arrays, and the serving project's identity.
 func TestReceiverPublishesGraph(t *testing.T) {

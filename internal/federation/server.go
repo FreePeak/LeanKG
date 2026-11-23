@@ -143,7 +143,12 @@ func (h *receiver) publish(w http.ResponseWriter, req *http.Request) {
 	}
 	relationships, err := readRelationships(req.Context(), h.st)
 	if err != nil {
-		httpx.WriteError(w, store.Fail("publish", err))
+		var capped *publishCapError
+		if errors.As(err, &capped) {
+			httpx.WriteMessage(w, http.StatusInternalServerError, err.Error())
+		} else {
+			httpx.WriteError(w, store.Fail("publish", err))
+		}
 		return
 	}
 	now := time.Now().UTC()
