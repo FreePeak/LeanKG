@@ -95,6 +95,13 @@ func Routes(st Store) http.Handler {
 			writeFail(w, "insufficient permission to issue a token for another account (admin required)")
 			return
 		}
+		// A process-level caller (env token) has no account to own the minted
+		// token, so only one that can write may issue (#601 B2).
+		if ctx.AccountID == "" && !ctx.CanWrite() {
+			msg := "insufficient permission to issue a token: write access required"
+			httpx.WriteJSON(w, http.StatusForbidden, apiResponse{Success: false, Error: &msg})
+			return
+		}
 		role := "viewer"
 		if _, known := RoleFromString(req.Role); known {
 			role = req.Role

@@ -567,3 +567,50 @@ func TestRegisterDuplicateEmailIsGeneric(t *testing.T) {
 		t.Fatalf("short-password register = %d %v; want 400 failure", code, other)
 	}
 }
+
+// TestTokenIssueNeedsWriteForProcessCaller pins #601 B2: an env token has no
+// account, so it cannot own a minted token. An env viewer must not persist a DB
+// token through the public issuance route; an env contributor or admin still can.
+func TestTokenIssueNeedsWriteForProcessCaller(t *testing.T) {
+	st := openAuthStore(t)
+	h := newAuthServer(t, st)
+	const secret = "env-secret-for-issuance"
+	cases := []struct {
+		name, env string
+		want      int
+	}{
+		{"viewer refused", "LEANKG_TOKEN_VIEWER", http.StatusForbidden},
+		{"contributor allowed", "LEANKG_TOKEN_CONTRIBUTOR", http.StatusOK},
+		{"admin allowed", "LEANKG_TOKEN_ADMIN", http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearTokenEnv(t)
+			t.Setenv(tc.env, secret)
+			before, err := st.TokenList(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			code, resp := doJSON(t, h, "POST", "/api/v1/auth/token", secret, map[string]any{
+				"name": "persist", "role": "viewer",
+			})
+			after, err := st.TokenList(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if code != tc.want {
+				t.Fatalf("status = %d %v, want %d", code, resp, tc.want)
+			}
+			if tc.want == http.StatusForbidden {
+				if resp["success"] != false || !strings.Contains(errString(t, resp), "write access required") {
+					t.Fatalf("refusal = %v, want a failure envelope naming write access", resp)
+				}
+				if len(after) != len(before) {
+					t.Fatalf("token rows %d -> %d; a refused issuance must mint nothing", len(before), len(after))
+				}
+			} else if len(after) != len(before)+1 {
+				t.Fatalf("token rows %d -> %d, want one minted", len(before), len(after))
+			}
+		})
+	}
+}
