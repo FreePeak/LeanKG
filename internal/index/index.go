@@ -25,6 +25,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -50,6 +51,9 @@ type Result struct {
 	Elements      int
 	Relationships int
 	Skipped       int
+	// ParseFallbacks counts changed Go files the parser rejected; the regex tier
+	// indexed them, and each was logged. Zero is omitted from JSON.
+	ParseFallbacks int `json:"parse_fallbacks,omitempty"`
 }
 
 // skipDirs are skipped path components during the walk and for git candidates;
@@ -548,6 +552,10 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 			fe, err := extractFileAs(ctx, f.rel, src, f.lang)
 			if err != nil {
 				return res, err
+			}
+			if fe.fallbackErr != nil {
+				res.ParseFallbacks++
+				log.Printf("index: %s: Go parser rejected the file, regex tier used: %v", f.rel, fe.fallbackErr)
 			}
 			pending = append(pending, pendingFile{changedFile: f, fe: fe, src: src})
 		}

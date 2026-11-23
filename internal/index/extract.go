@@ -96,13 +96,17 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 	lines := strings.Split(strings.TrimSuffix(string(src), "\n"), "\n")
 
 	// Go: the standard-library parser is the definitions tier in every build
-	// (CGO-free). A file it rejects falls through to the regex tier below.
+	// (CGO-free). A file it rejects falls through to the regex tier below, and
+	// the parser's error rides on the result (fallbackErr) so the run can count it.
+	var fallbackErr error
 	if lang == "go" {
-		if defs, seeds, imports, decls, ok := goDefinitions(src); ok {
+		defs, seeds, imports, decls, err := goDefinitions(src)
+		if err == nil {
 			fe, err := finishDefinitions(ctx, rel, src, lines, lang, defs, imports, seeds)
 			fe.decls = decls
 			return fe, err
 		}
+		fallbackErr = err
 	} else {
 		// Tree-sitter tier (tstree build only): richer symbol extraction for
 		// the bundled grammars, with real end lines. No grammar for the
@@ -144,7 +148,7 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 		ms, _ = matchLangExp(lang, lines)
 	}
 	if len(ms) == 0 {
-		return fileElements{rel: rel}, nil
+		return fileElements{rel: rel, fallbackErr: fallbackErr}, nil
 	}
 
 	ends := make([]int, len(ms))
@@ -181,6 +185,7 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 		defs[i] = indexDef{Kind: m.kind, Name: m.name, StartLine: m.line, EndLine: ends[i], Owner: m.recv}
 	}
 	fe := indexDefsToElements(rel, lang, defs)
+	fe.fallbackErr = fallbackErr
 	if lang == "md" {
 		markdownContent(fe.elements, ms, ends, lines)
 		return fe, nil
@@ -201,6 +206,9 @@ type fileElements struct {
 	qualified []qualifiedSeed
 	// decls are the Go type declarations receiver typing reads (goast.go).
 	decls goDecls
+	// fallbackErr is the Go parser's error when a Go file fell back to the regex
+	// tier; nil otherwise.
+	fallbackErr error
 }
 
 // qualifiedSeed is one `alias.Name` use inside a Go element: the alias is an

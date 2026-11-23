@@ -97,8 +97,8 @@ func (d *goDecls) merge(o goDecls) {
 // returns its file-scope definitions, the name seeds of each definition (seeds[i]
 // belongs to defs[i]), its import names (name -> import path, an unaliased
 // import under its default name) and the type declarations receiver typing
-// reads. It is CGO-free and used by every build. ok is false when the parser
-// rejects the file; the caller then falls back to the regex tier.
+// reads. It is CGO-free and used by every build. A non-nil err is the parser's
+// rejection of the file; the caller then falls back to the regex tier.
 //
 // Ranges come from AST positions: a declaration starts on its keyword or name
 // line and ends on its last token, so a comment or a string that merely looks
@@ -107,11 +107,11 @@ func (d *goDecls) merge(o goDecls) {
 // each. An interface's declared method specs are method elements owned by it
 // (Spec), and an embedded interface is not an element; struct members are not
 // separate elements.
-func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[string]string, decls goDecls, ok bool) {
+func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[string]string, decls goDecls, err error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "", src, parser.SkipObjectResolution)
 	if err != nil {
-		return nil, nil, nil, goDecls{}, false
+		return nil, nil, nil, goDecls{}, err
 	}
 	imports = importPaths(f)
 	w := &seedWalker{fset: fset, imports: imports, lits: map[string]goIface{}}
@@ -174,7 +174,7 @@ func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[s
 		}
 	}
 	maps.Copy(decls.ifaces, w.lits)
-	return defs, seeds, imports, decls, true
+	return defs, seeds, imports, decls, nil
 }
 
 // ifaceLiteralPrefix starts the synthetic name of an inline interface literal.

@@ -1,12 +1,15 @@
 package index
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -260,5 +263,34 @@ func TestGoNameSeeds(t *testing.T) {
 		if !slices.Equal(got, c.want) {
 			t.Errorf("%s seeds:\n got: %q\nwant: %q", c.name, got, c.want)
 		}
+	}
+}
+
+// TestGoParseFallbackIsCountedAndLogged: a Go file the parser rejects is still
+// indexed by the regex tier, and the run counts it and logs one line that names
+// the file and the parse error. A file that parses is neither counted nor logged.
+func TestGoParseFallbackIsCountedAndLogged(t *testing.T) {
+	var logs bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(old) })
+
+	st, dir := newCrossTree(t)
+	putFiles(t, dir, map[string]string{
+		"good.go": "package a\n\nfunc Good() {}\n",
+		"bad.go":  "package a\n\nfunc Broken( {\n",
+	})
+	res, err := IndexDir(context.Background(), st, dir)
+	if err != nil {
+		t.Fatalf("IndexDir: %v", err)
+	}
+	if res.ParseFallbacks != 1 {
+		t.Fatalf("ParseFallbacks = %d, want 1", res.ParseFallbacks)
+	}
+	if n := strings.Count(logs.String(), "\n"); n != 1 {
+		t.Fatalf("fallback log lines = %d, want 1: %q", n, logs.String())
+	}
+	if !strings.Contains(logs.String(), "bad.go") || !strings.Contains(logs.String(), "expected") {
+		t.Fatalf("fallback log does not name the file and the parse error: %q", logs.String())
 	}
 }
