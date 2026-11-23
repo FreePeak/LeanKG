@@ -248,3 +248,15 @@ func waitForFile(path string, timeout time.Duration) bool {
 	}
 	return false
 }
+
+// A child that dies of SIGINT was interrupted: it maps to the cancelled status
+// 130, not to a plain failure of 1.
+func TestRunCommandSigintKilledChildExits130(t *testing.T) {
+	_, code, err := runCommand(context.Background(), []string{"sh", "-c", "kill -INT $$"}, false)
+	if err == nil {
+		t.Fatal("a signalled child must be an error")
+	}
+	if code != 130 {
+		t.Fatalf("exit code = %d, want 130 for a SIGINT-killed child (err: %v)", code, err)
+	}
+}

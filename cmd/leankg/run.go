@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/cliexit"
@@ -88,9 +89,13 @@ func runCommand(ctx context.Context, argv []string, compressOut bool) (string, i
 			// The command never started (missing binary, bad shebang...).
 			return string(raw), 1, fmt.Errorf("failed to execute %s: %w", argv[0], err)
 		}
+		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() && (ws.Signal() == syscall.SIGINT || ws.Signal() == syscall.SIGTERM) {
+			// Interrupted, not failed: wrapping context.Canceled makes cliexit.Finish exit 130.
+			return string(raw), 130, fmt.Errorf("%s: interrupted by %v: %w", cmdLine, ws.Signal(), context.Canceled)
+		}
 		code := ee.ExitCode()
 		if code <= 0 {
-			code = 1 // killed by a signal: report a plain failure
+			code = 1 // killed by another signal: report a plain failure
 		}
 		return string(raw), code, fmt.Errorf("%s failed with exit code %d\n%s", cmdLine, code, stderr.String())
 	}
