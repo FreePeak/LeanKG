@@ -834,7 +834,7 @@ func (e *Engine) rungFuzzy(ctx context.Context, q string, limit int, resp map[st
 	}
 	hits := make([]map[string]any, 0, len(matches))
 	for _, m := range matches {
-		h := shapeElement(m.Element, limit)
+		h := shapeElement(m.Element)
 		h["score"] = m.Score
 		hits = append(hits, h)
 	}
@@ -925,7 +925,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if len(fused) > 0 {
 		out := make([]map[string]any, 0, len(fused))
 		for _, h := range fused {
-			m := shapeElement(h.Element, limit)
+			m := shapeElement(h.Element)
 			m["similarity"] = h.Similarity
 			m["score"] = h.Score // the fused RRF score, not a single-arm score
 			m["ranks"] = h.Ranks
@@ -948,7 +948,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	}
 	out := make([]map[string]any, 0, len(hits))
 	for _, h := range hits {
-		m := shapeElement(h.Element, limit)
+		m := shapeElement(h.Element)
 		m["similarity"] = h.Similarity
 		out = append(out, m)
 	}
@@ -1015,18 +1015,13 @@ func (e *Engine) MemoryRead(ctx context.Context, command, path, query string, li
 
 // --- shaping ---
 
-// compactHitLimit is the window size above which a search hit drops language
-// and line_end. A wide window is a list to scan, so each hit carries only what
-// locates it; a narrow one is read closely and keeps the full shape.
-const compactHitLimit = 5
-
 // hitSnippetBytes caps the content snippet of a search hit.
 const hitSnippetBytes = 200
 
 func shapeElements(els []store.Element, limit int) []map[string]any {
 	out := make([]map[string]any, 0, len(els))
 	for _, el := range els {
-		out = append(out, shapeElement(el, limit))
+		out = append(out, shapeElement(el))
 		if len(out) >= limit {
 			break
 		}
@@ -1034,17 +1029,19 @@ func shapeElements(els []store.Element, limit int) []map[string]any {
 	return out
 }
 
-func shapeElement(el store.Element, limit int) map[string]any {
+// shapeElement is the one search-hit shape. It does not depend on the window:
+// the output shape is contractual (docs/mcp-tool-contract.md), so language and
+// line_end are present on every hit, whatever limit the caller or the ladder's
+// test demotion asked for.
+func shapeElement(el store.Element) map[string]any {
 	m := map[string]any{
 		"qualified_name": el.QualifiedName,
 		"element_type":   el.ElementType,
 		"name":           el.Name,
 		"file_path":      el.FilePath,
 		"line_start":     el.LineStart,
-	}
-	if limit <= compactHitLimit {
-		m["line_end"] = el.LineEnd
-		m["language"] = el.Language
+		"line_end":       el.LineEnd,
+		"language":       el.Language,
 	}
 	if el.ParentQualified != "" {
 		m["parent_qualified"] = el.ParentQualified

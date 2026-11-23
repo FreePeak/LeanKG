@@ -121,17 +121,15 @@ func TestCallersOfConcreteSeedIsNotWidened(t *testing.T) {
 }
 
 // TestShapeElementFlagsInterfaceSpecs pins B2: a spec element is marked, and the
-// flag stays on a wide (non-compact) hit, because it changes what the element is.
+// flag is on the one hit shape, because it changes what the element is.
 func TestShapeElementFlagsInterfaceSpecs(t *testing.T) {
 	spec := store.Element{QualifiedName: iwSpec, ElementType: "method", Name: "UpsertElements", Metadata: map[string]any{"interface_spec": true}}
 	impl := store.Element{QualifiedName: storeImpl, ElementType: "method", Name: "UpsertElements"}
-	for _, limit := range []int{compactHitLimit, 10} {
-		if got := shapeElement(spec, limit)["interface_spec"]; got != true {
-			t.Errorf("limit %d: spec interface_spec = %v, want true", limit, got)
-		}
-		if _, ok := shapeElement(impl, limit)["interface_spec"]; ok {
-			t.Errorf("limit %d: implementer carries interface_spec, want the key omitted", limit)
-		}
+	if got := shapeElement(spec)["interface_spec"]; got != true {
+		t.Errorf("spec interface_spec = %v, want true", got)
+	}
+	if _, ok := shapeElement(impl)["interface_spec"]; ok {
+		t.Errorf("implementer carries interface_spec, want the key omitted")
 	}
 }
 
