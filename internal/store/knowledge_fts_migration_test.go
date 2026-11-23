@@ -112,17 +112,10 @@ func TestKnowledgeFTSRebuildRealignsRowids(t *testing.T) {
 			t.Fatalf("upsert %s: %v", e.ID, err)
 		}
 	}
-	// Reverse the index insertion order so its rowids no longer match the
-	// entries', then drop the version-20 ledger row to make Migrate apply it.
-	for _, stmt := range []string{
-		`DELETE FROM knowledge_fts`,
-		`INSERT INTO knowledge_fts (entry_id, title, content)
-			SELECT id, title, content FROM knowledge_entries ORDER BY id DESC`,
-		`DELETE FROM schema_migrations WHERE version = 20`,
-	} {
-		if _, err := s.db.Exec(stmt); err != nil {
-			t.Fatalf("%s: %v", stmt, err)
-		}
+	driftKnowledgeFTS(t, s)
+	// Drop the version-20 ledger row to make Migrate apply the rebuild.
+	if _, err := s.db.Exec(`DELETE FROM schema_migrations WHERE version = 20`); err != nil {
+		t.Fatalf("drop version-20 ledger row: %v", err)
 	}
 	if n := knowledgeFTSRowidDrift(t, s); n == 0 {
 		t.Fatal("fixture did not drift: the rebuild would prove nothing")
@@ -185,6 +178,97 @@ func TestKnowledgeSearchPreMigration19ReportsDegradedRanking(t *testing.T) {
 	}
 	if len(hits) != 1 || hits[0].ID != "K-1" {
 		t.Fatalf("degraded search hits = %+v; want the substring match K-1", hits)
+	}
+}
+
+// driftKnowledgeFTS rewrites the index with its rows inserted in reverse entry
+// order, so every index row carries the rowid of the other entry.
+func driftKnowledgeFTS(t *testing.T, s *Store) {
+	t.Helper()
+	for _, stmt := range []string{
+		`DELETE FROM knowledge_fts`,
+		`INSERT INTO knowledge_fts (entry_id, title, content)
+			SELECT id, title, content FROM knowledge_entries ORDER BY id DESC`,
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+}
+
+// seedKnowledgeFTSPair writes the two entries the VACUUM tests search over.
+func seedKnowledgeFTSPair(t *testing.T, s *Store) {
+	t.Helper()
+	for _, e := range []KnowledgeEntry{
+		{ID: "K-1", KnowledgeType: "note", Title: "Socket resume", Content: "after a dropped transport", Environment: "local", Author: "a", CreatedAt: 1, UpdatedAt: 10},
+		{ID: "K-2", KnowledgeType: "note", Title: "Other", Content: "resume later", Environment: "local", Author: "a", CreatedAt: 2, UpdatedAt: 20},
+	} {
+		if err := s.KnowledgeEntryUpsert(context.Background(), e); err != nil {
+			t.Fatalf("upsert %s: %v", e.ID, err)
+		}
+	}
+}
+
+// VACUUM may renumber the rowids of tables without an INTEGER PRIMARY KEY, and
+// the index rowids must match their entries'. Every VACUUM path must realign
+// the index afterwards. The drifted index stands in for a renumbered VACUUM:
+// without the realign the drift survives the pass.
+func TestVacuumPathsRealignKnowledgeFTS(t *testing.T) {
+	ops := []MaintainOp{{Kind: MaintainUpgrade}, {Kind: MaintainReclaimFull}}
+	for _, op := range ops {
+		t.Run(string(op.Kind), func(t *testing.T) {
+			s := openTestStore(t)
+			ctx := context.Background()
+			seedKnowledgeFTSPair(t, s)
+			driftKnowledgeFTS(t, s)
+			if n := knowledgeFTSRowidDrift(t, s); n == 0 {
+				t.Fatal("fixture did not drift: the realign would prove nothing")
+			}
+			if _, err := s.Maintain(ctx, op); err != nil {
+				t.Fatalf("Maintain(%s): %v", op.Kind, err)
+			}
+			if n := knowledgeFTSRowidDrift(t, s); n != 0 {
+				t.Fatalf("rowid drift after %s = %d; want 0", op.Kind, n)
+			}
+			if n := knowledgeFTSRows(t, s); n != 2 {
+				t.Fatalf("knowledge_fts rows after %s = %d; want 2", op.Kind, n)
+			}
+			hits, err := s.KnowledgeEntriesSearch(ctx, "resume later", "", "", 10)
+			if err != nil || len(hits) == 0 || hits[0].ID != "K-2" {
+				t.Fatalf("search after %s = %+v, %v; want K-2 first", op.Kind, hits, err)
+			}
+		})
+	}
+}
+
+// UpgradePageSize rewrites the store through its own handle, so its VACUUM is
+// a separate path that needs the same realign.
+func TestUpgradePageSizeRealignsKnowledgeFTS(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), ".leankg", "leankg.db")
+	rw, err := openSQLite(ctx, path, RW)
+	if err != nil {
+		t.Fatalf("open RW: %v", err)
+	}
+	if err := rw.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	seedKnowledgeFTSPair(t, rw)
+	driftKnowledgeFTS(t, rw)
+	if err := rw.Close(); err != nil {
+		t.Fatalf("close RW: %v", err)
+	}
+
+	if _, err := UpgradePageSize(ctx, path, 4096); err != nil {
+		t.Fatalf("UpgradePageSize: %v", err)
+	}
+	after, err := openSQLite(ctx, path, RW)
+	if err != nil {
+		t.Fatalf("reopen RW: %v", err)
+	}
+	defer after.Close()
+	if n := knowledgeFTSRowidDrift(t, after); n != 0 {
+		t.Fatalf("rowid drift after page-size rewrite = %d; want 0", n)
 	}
 }
 

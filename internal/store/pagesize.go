@@ -121,7 +121,7 @@ func UpgradePageSize(ctx context.Context, path string, size int) (PageSizeUpgrad
 	if _, err := db.ExecContext(ctx, `PRAGMA page_size = `+strconv.Itoa(size)); err != nil {
 		return out, fmt.Errorf("store: set page size: %w", err)
 	}
-	if _, err := db.ExecContext(ctx, `VACUUM`); err != nil {
+	if err := vacuumSQLite(ctx, db); err != nil {
 		return out, fmt.Errorf("store: rewrite at page size %d: %w", size, err)
 	}
 	if journal != "delete" {
