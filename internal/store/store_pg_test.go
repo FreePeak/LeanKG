@@ -789,3 +789,24 @@ func TestPGFindExactRanksDeterministically(t *testing.T) {
 		t.Errorf("FindExact(Tie)[0] = %q; want a.go::Tie (path ascending)", got[0].QualifiedName)
 	}
 }
+
+// The PostgreSQL half of TestFindExactOrdersPathsByBinaryCollation. The path
+// tie-break is COLLATE "C", as SQLite's BINARY is. Under an en_US-style
+// database collation a.go sorts before B.go, so this test is red without the
+// COLLATE clause; under a C collation it passes with or without it.
+func TestPGFindExactOrdersPathsByBinaryCollation(t *testing.T) {
+	s := openPGTest(t)
+	if err := s.UpsertElements(context.Background(), []Element{
+		{QualifiedName: "a.go::Helper", ElementType: "function", Name: "Helper", FilePath: "a.go", Language: "go"},
+		{QualifiedName: "B.go::Helper", ElementType: "function", Name: "Helper", FilePath: "B.go", Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.FindExact(context.Background(), "Helper")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("FindExact = %d hits, err %v; want 2", len(got), err)
+	}
+	if got[0].QualifiedName != "B.go::Helper" {
+		t.Errorf("FindExact(Helper)[0] = %q; want B.go::Helper (binary path order)", got[0].QualifiedName)
+	}
+}

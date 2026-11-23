@@ -361,7 +361,7 @@ func (s *PGStore) FindExact(ctx context.Context, name string) ([]Element, error)
 	rows, err := s.pool.Query(ctx, `SELECT `+pgElementCols+` FROM code_elements ce
 		WHERE lower(ce.name) = lower($1) OR lower(ce.qualified_name) = lower($1)
 		ORDER BY (ce.name = $1 OR ce.qualified_name = $1) DESC, length(ce.qualified_name) ASC,
-			ce.file_path ASC, ce.qualified_name ASC LIMIT 200`, name)
+			ce.file_path COLLATE "C" ASC, ce.qualified_name COLLATE "C" ASC LIMIT 200`, name)
 	if err != nil {
 		return nil, err
 	}

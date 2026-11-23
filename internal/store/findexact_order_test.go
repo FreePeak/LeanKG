@@ -53,3 +53,24 @@ func TestFindExactTieBreaksByPath(t *testing.T) {
 		t.Errorf("FindExact(Helper)[0] = %q; want a.go::Helper (path ascending)", got[0].QualifiedName)
 	}
 }
+
+// TestFindExactOrdersPathsByBinaryCollation pins the path tie-break on mixed
+// case: BINARY order puts "B.go" before "a.go" ('B' < 'a'). The PostgreSQL half
+// (TestPGFindExactOrdersPathsByBinaryCollation) must order the same way, which
+// needs an explicit COLLATE "C" on its ORDER BY.
+func TestFindExactOrdersPathsByBinaryCollation(t *testing.T) {
+	s := openTestStore(t)
+	if err := s.UpsertElements(context.Background(), []Element{
+		{QualifiedName: "a.go::Helper", ElementType: "function", Name: "Helper", FilePath: "a.go", Language: "go"},
+		{QualifiedName: "B.go::Helper", ElementType: "function", Name: "Helper", FilePath: "B.go", Language: "go"},
+	}); err != nil {
+		t.Fatalf("UpsertElements: %v", err)
+	}
+	got, err := s.FindExact(context.Background(), "Helper")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("FindExact = %d hits, err %v; want 2", len(got), err)
+	}
+	if got[0].QualifiedName != "B.go::Helper" {
+		t.Errorf("FindExact(Helper)[0] = %q; want B.go::Helper (binary path order)", got[0].QualifiedName)
+	}
+}
