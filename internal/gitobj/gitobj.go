@@ -255,10 +255,10 @@ func gitErr(what, stderr string, err error) error {
 // Reader streams blob contents through one long-lived `git cat-file --batch`
 // process. It is not safe for concurrent use.
 type Reader struct {
-	ctx   context.Context
-	cmd   *exec.Cmd
-	stdin io.WriteCloser
-	out   *bufio.Reader
+	ctxErr func() error // ctx.Err of the NewReader ctx; ctx itself is not stored
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	out    *bufio.Reader
 }
 
 // NewReader starts `git cat-file --batch` in root. The process lives until
@@ -277,13 +277,13 @@ func NewReader(ctx context.Context, root string) (*Reader, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("gitobj: start cat-file: %w", err)
 	}
-	return &Reader{ctx: ctx, cmd: cmd, stdin: stdin, out: bufio.NewReader(stdout)}, nil
+	return &Reader{ctxErr: ctx.Err, cmd: cmd, stdin: stdin, out: bufio.NewReader(stdout)}, nil
 }
 
 // pipeErr reports a failed read or write on the cat-file pipes. A cancelled
 // ctx kills cat-file, so the broken pipe that follows is the cancel itself.
 func (r *Reader) pipeErr(what string, err error) error {
-	if cerr := r.ctx.Err(); cerr != nil {
+	if cerr := r.ctxErr(); cerr != nil {
 		return fmt.Errorf("gitobj: %s: %w", what, cerr)
 	}
 	return fmt.Errorf("gitobj: %s: %w", what, err)

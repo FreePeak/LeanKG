@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -223,5 +224,17 @@ func TestReaderCancelReportsContextCanceled(t *testing.T) {
 
 	if _, err := r.Read(aOID); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Read after cancel: err = %v, want context.Canceled", err)
+	}
+}
+
+// AGENTS.md: ctx is the first parameter and is never stored in a struct. The
+// Reader outlives no call, so it keeps only what it reads from ctx.
+func TestReaderDoesNotStoreContext(t *testing.T) {
+	ctxType := reflect.TypeFor[context.Context]()
+	rt := reflect.TypeFor[Reader]()
+	for i := range rt.NumField() {
+		if f := rt.Field(i); f.Type == ctxType {
+			t.Fatalf("Reader.%s stores a context.Context; keep ctx.Err or pass ctx per call", f.Name)
+		}
 	}
 }
