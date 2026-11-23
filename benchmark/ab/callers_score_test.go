@@ -213,10 +213,6 @@ func TestCallersScoreIntegration(t *testing.T) {
 		t.Skip("set LEANKG_CALLERS_SCORE=1 to run the callers precision/recall scorer")
 	}
 	ctx := context.Background()
-	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	raw, err := os.ReadFile(callersTruthPath)
 	if err != nil {
@@ -226,6 +222,8 @@ func TestCallersScoreIntegration(t *testing.T) {
 	if err := json.Unmarshal(raw, &truth); err != nil {
 		t.Fatalf("parse truth: %v", err)
 	}
+	root, commit := pinnedCorpus(t, truth.SourceCommit)
+	t.Logf("corpus commit %s", commit)
 
 	reg := langs.DefaultRegistry()
 	if _, err := reg.Activate(ctx, root); err != nil {

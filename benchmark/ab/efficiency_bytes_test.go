@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/core"
@@ -59,11 +58,8 @@ func TestSearchAnswerBytes(t *testing.T) {
 		t.Skip("set LEANKG_BYTES_BENCH=1 to measure answer bytes")
 	}
 	ctx := context.Background()
-	_, file, _, _ := runtime.Caller(0)
-	repo, err := filepath.Abs(filepath.Join(filepath.Dir(file), "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
+	repo, commit := pinnedCorpus(t, loadCallersTruth(t, callersTruthPath).SourceCommit)
+	t.Logf("corpus commit %s", commit)
 	st, err := store.OpenBackend(ctx, store.OpenOptions{Engine: store.EngineSQLite, DBPath: filepath.Join(t.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
