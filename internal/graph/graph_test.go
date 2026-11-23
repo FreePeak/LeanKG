@@ -582,3 +582,30 @@ func TestContextSplitsTestOnlyImporters(t *testing.T) {
 		}
 	}
 }
+
+// A self-loop makes its function its own caller, and mutual recursion makes
+// each side the other's caller. Both walks terminate, and each caller appears
+// once in the caller list and once in the impact radius.
+func TestCyclicGraphTerminatesWithEachCallerOnce(t *testing.T) {
+	st := openGraph(t, []string{"s", "a", "b"}, [][2]string{{"s", "s"}, {"a", "b"}, {"b", "a"}})
+	ctx := context.Background()
+
+	for seed, want := range map[string][]string{"s": {"s"}, "a": {"b"}, "b": {"a"}} {
+		sites, err := CallSites(ctx, st, []string{seed}, true, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := SiteEnds(sites); !reflect.DeepEqual(got, want) {
+			t.Fatalf("Callers(%s) = %v, want %v", seed, got, want)
+		}
+	}
+
+	hits, _, err := Impact(ctx, st, "a", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Hit{{QN: "a", Depth: 0}, {QN: "b", Depth: 1}}
+	if !reflect.DeepEqual(hits, want) {
+		t.Fatalf("Impact(a) = %v, want %v", hits, want)
+	}
+}
