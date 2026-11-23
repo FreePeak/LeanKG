@@ -254,3 +254,87 @@ func TestCancelRollsBackSpecialistFiles(t *testing.T) {
 		t.Fatalf("file records after cancelled directory = %d, want 0: the specialist and a.go were not rolled back", got)
 	}
 }
+
+// failFileRecordDelete fails the first DeleteFileRecord of one path, so a
+// rollback stops between removing a file's record and its elements.
+type failFileRecordDelete struct {
+	store.Backend
+	path   string
+	failed bool
+}
+
+func (s *failFileRecordDelete) DeleteFileRecord(ctx context.Context, path string) error {
+	if path == s.path && !s.failed {
+		s.failed = true
+		return errors.New("injected file record delete failure")
+	}
+	return s.Backend.DeleteFileRecord(ctx, path)
+}
+
+// writeThreeFiles writes three Go files of one package with distinct symbols.
+func writeThreeFiles(t *testing.T, dir string) {
+	t.Helper()
+	for name, fn := range map[string]string{"a.go": "Alpha", "b.go": "Bravo", "c.go": "Charlie"} {
+		src := "package p\n\nfunc " + fn + "() {}\n"
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestCancelRollbackCountsNoStoredFiles pins that a directory rolled back after
+// its files were written reports none of them. The write loop counted each file
+// before the rollback removed it, so a cancelled run reported files it did not
+// store.
+func TestCancelRollbackCountsNoStoredFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeThreeFiles(t, dir)
+	st := openIndexStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Cancelling during b's write leaves a and b written; the check before c
+	// then rolls the directory back.
+	w := &cancelInDeleteByFile{Backend: st, after: 2, cancel: cancel}
+	res, err := IndexDir(ctx, w, dir)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("IndexDir error = %v, want context.Canceled", err)
+	}
+	if res.Files != 0 || res.Elements != 0 || res.Relationships != 0 {
+		t.Fatalf("result after rollback = Files %d, Elements %d, Relationships %d; want all 0 (nothing is stored)",
+			res.Files, res.Elements, res.Relationships)
+	}
+	if got := shapeOf(t, st).files; got != 0 {
+		t.Fatalf("file records after rollback = %d, want 0", got)
+	}
+}
+
+// TestRollbackRecordFailureConvergesOnRerun pins that a rollback which fails to
+// delete one file's record still leaves a rerun able to restore every file. The
+// record must go before the elements: a record that outlived its elements read
+// as current and was skipped forever, with nothing indexed.
+func TestRollbackRecordFailureConvergesOnRerun(t *testing.T) {
+	dir := t.TempDir()
+	writeThreeFiles(t, dir)
+	reference := openIndexStore(t)
+	if _, err := IndexDir(context.Background(), reference, dir); err != nil {
+		t.Fatal(err)
+	}
+	want := shapeOf(t, reference)
+
+	st := openIndexStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Cancelling during b's write rolls back a and b. The first record delete
+	// of a.go fails, so the rollback stops after it.
+	w := &cancelInDeleteByFile{Backend: &failFileRecordDelete{Backend: st, path: "a.go"}, after: 2, cancel: cancel}
+	if _, err := IndexDir(ctx, w, dir); !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted IndexDir error = %v, want context.Canceled", err)
+	}
+	assertRecordsHaveElements(t, st)
+	if _, err := IndexDir(context.Background(), st, dir); err != nil {
+		t.Fatalf("rerun: %v", err)
+	}
+	if got := shapeOf(t, st); got != want {
+		t.Fatalf("rerun shape = %+v, want uninterrupted %+v", got, want)
+	}
+}
