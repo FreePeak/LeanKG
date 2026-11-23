@@ -495,12 +495,19 @@ func locate(ctx context.Context, st graphStore, qn string) (store.Element, error
 	if err != nil {
 		return store.Element{}, err
 	}
+	el, _ := ExactQN(els, qn)
+	return el, nil
+}
+
+// ExactQN picks the element whose qualified name is exactly qn from the rows a
+// name lookup returned. ok is false when none has that qualified name.
+func ExactQN(els []store.Element, qn string) (store.Element, bool) {
 	for _, el := range els {
 		if el.QualifiedName == qn {
-			return el, nil
+			return el, true
 		}
 	}
-	return store.Element{}, nil
+	return store.Element{}, false
 }
 
 // callLines reads the call-site lines an edge carries. The "lines" metadata
