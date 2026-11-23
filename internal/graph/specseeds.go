@@ -4,7 +4,6 @@ import (
 	"context"
 	"maps"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -166,6 +165,6 @@ func (x specExpander) sharingSpecs(ctx context.Context, el store.Element, impls 
 			out = append(out, c.QualifiedName)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, truncated, nil
 }

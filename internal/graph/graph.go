@@ -6,11 +6,11 @@
 package graph
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"path"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -133,7 +133,7 @@ func Impact(ctx context.Context, st graphStore, qn string, depth int) ([]Hit, Bo
 				break
 			}
 		}
-		sort.Strings(next)
+		slices.Sort(next)
 		for _, q := range next {
 			if len(hits) == NodeBudget {
 				bounds.Truncated = true
@@ -193,7 +193,7 @@ func ShortestPath(ctx context.Context, st graphStore, from, to string, maxDepth 
 				}
 			}
 		}
-		sort.Strings(next)
+		slices.Sort(next)
 		frontier = next
 	}
 	return nil, bounds, nil
@@ -227,7 +227,7 @@ func undirectedNeighbors(ctx context.Context, st graphStore, node string) ([]str
 			nb = append(nb, r.Source)
 		}
 	}
-	sort.Strings(nb)
+	slices.Sort(nb)
 	return nb, nil
 }
 
@@ -341,18 +341,8 @@ func UnionSites(seeds []string, bySeed map[string][]Site) []Site {
 			}
 		}
 	}
-	sort.Slice(sites, func(i, j int) bool {
-		a, b := sites[i], sites[j]
-		if a.QN != b.QN {
-			return a.QN < b.QN
-		}
-		if a.File != b.File {
-			return a.File < b.File
-		}
-		if a.Line != b.Line {
-			return a.Line < b.Line
-		}
-		return a.RelType < b.RelType
+	slices.SortFunc(sites, func(a, b Site) int {
+		return cmp.Or(strings.Compare(a.QN, b.QN), strings.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), strings.Compare(a.RelType, b.RelType))
 	})
 	return sites
 }
@@ -494,7 +484,7 @@ func SiteRelTypes(sites []Site) []string {
 			out = append(out, s.RelType)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -531,7 +521,7 @@ func callLines(meta map[string]any) []int {
 			out = append(out, v...)
 		}
 		if len(out) > 0 {
-			sort.Ints(out)
+			slices.Sort(out)
 			return slices.Compact(out)
 		}
 	}
@@ -614,7 +604,7 @@ func importerSplit(in []store.Relationship) (map[string]int, []string) {
 			summary["non_test"]++
 		}
 	}
-	sort.Strings(testOnly)
+	slices.Sort(testOnly)
 	return summary, testOnly
 }
 
@@ -630,7 +620,7 @@ func groupByRelType(rels []store.Relationship, limit int, pick func(store.Relati
 	}
 	res := map[string]any{}
 	for rt, qns := range grouped {
-		sort.Strings(qns)
+		slices.Sort(qns)
 		if limit > 0 && len(qns) > limit {
 			qns = qns[:limit]
 		}
@@ -688,15 +678,8 @@ func countByRelType(rels []store.Relationship) map[string]int {
 func sampleEdges(rels []store.Relationship) []map[string]any {
 	sorted := make([]store.Relationship, len(rels))
 	copy(sorted, rels)
-	sort.Slice(sorted, func(i, j int) bool {
-		a, b := sorted[i], sorted[j]
-		if a.Source != b.Source {
-			return a.Source < b.Source
-		}
-		if a.Target != b.Target {
-			return a.Target < b.Target
-		}
-		return a.RelType < b.RelType
+	slices.SortFunc(sorted, func(a, b store.Relationship) int {
+		return cmp.Or(strings.Compare(a.Source, b.Source), strings.Compare(a.Target, b.Target), strings.Compare(a.RelType, b.RelType))
 	})
 	if len(sorted) > 5 {
 		sorted = sorted[:5]
