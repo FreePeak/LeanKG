@@ -158,9 +158,15 @@ func newID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// ErrAccountExists is the duplicate-email rejection from Register. It names no
+// email: the HTTP surface answers it with generic text (#586), so an attacker
+// cannot tell an existing account from another registration failure.
+var ErrAccountExists = errors.New("account already exists")
+
 // Register creates an account plus its bootstrap org owned by that account,
-// with the account as the org's owner member. Duplicate emails and passwords
-// shorter than 8 characters are rejected (Rust AccountStore::register).
+// with the account as the org's owner member. Duplicate emails (ErrAccountExists)
+// and passwords shorter than 8 characters are rejected (Rust
+// AccountStore::register).
 func Register(ctx context.Context, st Store, email, password, name string) (store.Account, error) {
 	email = NormalizeEmail(email)
 	if !strings.Contains(email, "@") {
@@ -170,9 +176,12 @@ func Register(ctx context.Context, st Store, email, password, name string) (stor
 		return store.Account{}, err
 	}
 	if _, found, err := st.AccountByEmail(ctx, email); err != nil {
-		return store.Account{}, err
+		return store.Account{}, store.Fail("account lookup", err)
 	} else if found {
-		return store.Account{}, fmt.Errorf("account already exists: %s", email)
+		// Spend the PBKDF2 work a new account costs, so a duplicate does not
+		// answer in a fraction of the time and reveal the email (#601 B1).
+		_ = VerifyPassword(password, dummyVerifier)
+		return store.Account{}, ErrAccountExists
 	}
 	hash, err := HashPassword(password)
 	if err != nil {
@@ -193,10 +202,10 @@ func Register(ctx context.Context, st Store, email, password, name string) (stor
 		UpdatedAt:    now,
 	}
 	if err := st.AccountUpsert(ctx, account); err != nil {
-		return store.Account{}, err
+		return store.Account{}, store.Fail("account upsert", err)
 	}
 	if _, err := CreateOrg(ctx, st, name+"'s org", account.ID); err != nil {
-		return store.Account{}, err
+		return store.Account{}, store.Fail("org create", err)
 	}
 	return account, nil
 }
@@ -225,7 +234,7 @@ func CreateOrg(ctx context.Context, st Store, name, ownerAccountID string) (stor
 		UpdatedAt:      now,
 	}
 	if err := st.OrgUpsert(ctx, org); err != nil {
-		return store.Org{}, err
+		return store.Org{}, store.Fail("org upsert", err)
 	}
 	if err := st.OrgMembershipUpsert(ctx, store.OrgMember{
 		OrgID:     org.ID,
@@ -233,7 +242,7 @@ func CreateOrg(ctx context.Context, st Store, name, ownerAccountID string) (stor
 		Role:      OrgRoleOwner,
 		JoinedAt:  now,
 	}); err != nil {
-		return store.Org{}, err
+		return store.Org{}, store.Fail("org membership", err)
 	}
 	return org, nil
 }
@@ -244,6 +253,10 @@ func AddOrgMember(ctx context.Context, st Store, orgID, accountID, role string) 
 	if !ValidOrgRole(role) {
 		return store.OrgMember{}, fmt.Errorf("invalid role %q", role)
 	}
+	// Client input is checked here, so the store's required-field error is a 400.
+	if orgID == "" || accountID == "" {
+		return store.OrgMember{}, errors.New("org membership: org_id and account_id are required")
+	}
 	member := store.OrgMember{
 		OrgID:     orgID,
 		AccountID: accountID,
@@ -251,7 +264,7 @@ func AddOrgMember(ctx context.Context, st Store, orgID, accountID, role string) 
 		JoinedAt:  time.Now().Unix(),
 	}
 	if err := st.OrgMembershipUpsert(ctx, member); err != nil {
-		return store.OrgMember{}, err
+		return store.OrgMember{}, store.Fail("org membership", err)
 	}
 	return member, nil
 }
@@ -260,8 +273,11 @@ func AddOrgMember(ctx context.Context, st Store, orgID, accountID, role string) 
 // role in orgID. A non-member is never sufficient (Rust org_role_sufficient).
 func OrgRoleSufficient(ctx context.Context, st Store, orgID, accountID, required string) (bool, error) {
 	member, found, err := st.OrgMemberOf(ctx, orgID, accountID)
-	if err != nil || !found {
-		return false, err
+	if err != nil {
+		return false, store.Fail("org member", err)
+	}
+	if !found {
+		return false, nil
 	}
 	return RoleSufficient(member.Role, required), nil
 }
@@ -269,11 +285,17 @@ func OrgRoleSufficient(ctx context.Context, st Store, orgID, accountID, required
 // ClaimResource records that ownerAccountID owns a resource (Rust
 // AccountStore::claim_resource).
 func ClaimResource(ctx context.Context, st Store, resourceType, resourceID, ownerAccountID, orgID string) error {
-	return st.ResourceClaim(ctx, resourceType, resourceID, ownerAccountID, orgID)
+	// Client input is checked here, so the store's required-field error is a
+	// 400 and is not classified as a store fault.
+	if resourceType == "" || resourceID == "" || ownerAccountID == "" {
+		return errors.New("resource claim: resource_type, resource_id and owner_account_id are required")
+	}
+	return store.Fail("resource claim", st.ResourceClaim(ctx, resourceType, resourceID, ownerAccountID, orgID))
 }
 
 // IsResourceOwner reports whether accountID owns the resource (Rust
 // AccountStore::is_resource_owner).
 func IsResourceOwner(ctx context.Context, st Store, resourceType, resourceID, accountID string) (bool, error) {
-	return st.IsResourceOwner(ctx, resourceType, resourceID, accountID)
+	owns, err := st.IsResourceOwner(ctx, resourceType, resourceID, accountID)
+	return owns, store.Fail("resource owner", err)
 }

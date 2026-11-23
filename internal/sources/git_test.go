@@ -246,7 +246,7 @@ func TestSyncedCloneIsIndexableAndHidesGit(t *testing.T) {
 	if _, err := reg.Activate(context.Background(), got); err != nil {
 		t.Fatalf("Activate: %v", err)
 	}
-	files, err := index.SupportedFiles(got, reg)
+	files, err := index.SupportedFiles(context.Background(), got, reg)
 	if err != nil {
 		t.Fatalf("SupportedFiles: %v", err)
 	}

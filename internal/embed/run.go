@@ -12,7 +12,7 @@ import (
 
 // ChunkerVersion versions the pipeline that turns a stored element into the
 // text a model embeds: per-element chunks keyed on qualified_name, the run's
-// write cap (writeCapFor, at most maxContentChars runes), and the catalog's
+// write cap (writeCapFor, at most MaxContentChars runes), and the catalog's
 // query/document prefix pair applied at the provider boundary.
 //
 // Bump it on ANY change to that construction. The value is carried on every
@@ -77,12 +77,12 @@ func TextCap(p Provider) int {
 // incremental stamp guard applies it to the stored label as well.
 func capForLabel(label string, budget int) int {
 	if label != "local" {
-		return maxContentChars
+		return MaxContentChars
 	}
 	if budget <= 0 {
 		budget = maxLocalTextChars
 	}
-	return min(maxContentChars, budget)
+	return min(MaxContentChars, budget)
 }
 
 // resolveWriteCap is the rune cap a writer embeds with, decided by rule order
@@ -106,7 +106,7 @@ func resolveWriteCap(label string, budget, pin, stored int) (int, error) {
 	if pin > 0 {
 		return pin, nil
 	}
-	return 0, fmt.Errorf("embed: cannot determine the text cap for provider %q: the sidecar /props reported no budget; make the sidecar /props reachable, or set LEANKG_EMBED_TEXT_CAP (256-8000)", label)
+	return 0, fmt.Errorf("embed: cannot determine the text cap for provider %q: the sidecar /props reported no budget; make the sidecar /props reachable, or set LEANKG_EMBED_TEXT_CAP (256-%d)", label, MaxContentChars)
 }
 
 // writeCapFor resolves the one write cap a run of provider p embeds with, from
@@ -250,19 +250,17 @@ func Run(ctx context.Context, st Store, p Provider, mode string) (Report, error)
 		return rep, fmt.Errorf("embed: unknown mode %q (want incremental|full)", mode)
 	}
 	modelID := p.Identity().Model
-	// stopped records a run that ctx stopped before its plan was made: the run
-	// still leaves its ledger row, as cancelled.
-	stopped := func(err error) (Report, error) {
-		if runID, serr := st.StartEmbedRun(ledger, modelID, mode, 0); serr == nil {
-			_ = st.FinishEmbedRun(ledger, runID, failedStatus(err), 0, 0, 0, 0, 0)
-		}
+	// stop is the exit for a failure before the run's ledger row starts: a stop
+	// still leaves that row, as cancelled (recordStopped).
+	stop := func(err error) (Report, error) {
+		recordStopped(ctx, st, modelID, mode)
 		return rep, err
 	}
 	if err := ctx.Err(); err != nil {
-		return stopped(err)
+		return stop(err)
 	}
 	if err := p.Probe(ctx); err != nil {
-		return rep, err
+		return stop(err)
 	}
 	want := StampOf(p)
 	// Stamp guard (FR-ZCP-11 contract): every vector writer enforces the
@@ -273,7 +271,7 @@ func Run(ctx context.Context, st Store, p Provider, mode string) (Report, error)
 	//   no stamp    ⇒ write (first build, both modes)
 	cur, err := st.Stamp(ctx, modelID)
 	if err != nil {
-		return rep, err
+		return stop(err)
 	}
 	if cur != nil && mode != "full" && !cur.Matches(want) {
 		return rep, fmt.Errorf(
@@ -290,7 +288,7 @@ func Run(ctx context.Context, st Store, p Provider, mode string) (Report, error)
 	}
 	if cur != nil && (!cur.Matches(want) || (mode == "full" && cur.TextCap != writeLimit)) {
 		if err := st.ClearVectors(ctx, modelID); err != nil {
-			return rep, err
+			return stop(err)
 		}
 		cur = nil
 	}
@@ -303,7 +301,7 @@ func Run(ctx context.Context, st Store, p Provider, mode string) (Report, error)
 		}
 		stamp.TextCap = writeLimit
 		if err := st.WriteStamp(ctx, stamp); err != nil {
-			return rep, err
+			return stop(err)
 		}
 	}
 
@@ -311,14 +309,11 @@ func Run(ctx context.Context, st Store, p Provider, mode string) (Report, error)
 	// (incremental) or all elements (full).
 	elems, err := readElements(ctx, st)
 	if err != nil {
-		if ctx.Err() != nil {
-			return stopped(err)
-		}
-		return rep, err
+		return stop(err)
 	}
 	states, err := st.EmbeddingStateMap(ctx, modelID)
 	if err != nil {
-		return rep, err
+		return stop(err)
 	}
 	dirty := make([]dirtyItem, 0, len(elems))
 	for _, e := range elems {
@@ -343,7 +338,7 @@ func Run(ctx context.Context, st Store, p Provider, mode string) (Report, error)
 	status := "ok"
 	if err := embedFiles(ctx, st, p, modelID, groupByFile(dirty), &rep); err != nil {
 		rep.Duration = time.Since(start)
-		_ = st.FinishEmbedRun(ledger, runID, failedStatus(err), rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
+		_ = st.FinishEmbedRun(ledger, runID, failedStatus(ctx, err), rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
 		return rep, err
 	}
 
@@ -352,13 +347,13 @@ func Run(ctx context.Context, st Store, p Provider, mode string) (Report, error)
 	// served them as hits (RS-05).
 	if _, err := st.DeleteOrphanVectors(ctx); err != nil {
 		rep.Duration = time.Since(start)
-		_ = st.FinishEmbedRun(ledger, runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
+		_ = st.FinishEmbedRun(ledger, runID, failedStatus(ctx, err), rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
 		return rep, fmt.Errorf("embed: reclaim orphan vectors: %w", err)
 	}
 	covered, orphans, err := readVectorCounts(ctx, st, modelID)
 	if err != nil {
 		rep.Duration = time.Since(start)
-		_ = st.FinishEmbedRun(ledger, runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
+		_ = st.FinishEmbedRun(ledger, runID, failedStatus(ctx, err), rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
 		return rep, err
 	}
 	rep.Orphans = orphans
@@ -396,14 +391,31 @@ func Run(ctx context.Context, st Store, p Provider, mode string) (Report, error)
 	return rep, cancelErr
 }
 
-// failedStatus is the run status recorded when embedFiles returns err: a
-// cancellation is "cancelled" (the stop was requested, the data did not fail),
-// anything else is "failed".
-func failedStatus(err error) string {
-	if errors.Is(err, context.Canceled) {
+// failedStatus is the run status recorded when a run step returns err: a stop
+// requested on ctx, or a cancellation error, is "cancelled" (the stop was
+// requested, the data did not fail), anything else is "failed". A store error
+// that lands during a stop is still recorded cancelled, the same rule as the
+// end-of-run cancelErr.
+func failedStatus(ctx context.Context, err error) string {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 		return "cancelled"
 	}
 	return "failed"
+}
+
+// recordStopped leaves the ledger row of a run that ctx stopped before it made
+// its plan, so the run still has a row: no work was planned, so the counters are
+// zero and the status is cancelled. It does nothing while ctx is live; a failure
+// without a stop keeps its existing behaviour (no row). Both Run and
+// ImportNDJSON call it on their pre-start exits.
+func recordStopped(ctx context.Context, st Store, modelID, mode string) {
+	if ctx.Err() == nil {
+		return
+	}
+	ledger := context.WithoutCancel(ctx)
+	if runID, err := st.StartEmbedRun(ledger, modelID, mode, 0); err == nil {
+		_ = st.FinishEmbedRun(ledger, runID, "cancelled", 0, 0, 0, 0, 0)
+	}
 }
 
 // needsVector is the incremental selection, shared by Run and IncrementalBacklog

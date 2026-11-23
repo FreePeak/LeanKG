@@ -391,3 +391,120 @@ func TestRedactIsIdempotent(t *testing.T) {
 		}
 	}
 }
+
+// TestDocumentIDMatchesRedactedForm pins that a document id is matched in the
+// form the row stores. The row's metadata is redacted on write, so a client
+// id that redaction rewrites (sync-token=abc123 becomes sync-token=[REDACTED])
+// must be found by the same raw id it was retained under. Before the fix,
+// DeleteDocument and RetainReplacing compared the raw id with the redacted
+// row and matched nothing: the delete reported success and left the row.
+func TestDocumentIDMatchesRedactedForm(t *testing.T) {
+	const raw = "sync-token=abc123"
+	ctx := context.Background()
+	entry := func(content string) Entry {
+		return Entry{Content: content, Metadata: map[string]any{"document_id": raw}}
+	}
+
+	t.Run("delete by raw id removes the row", func(t *testing.T) {
+		m := openTest(t)
+		if _, err := m.RetainReplacing(ctx, "b", []Entry{entry("doc body")}, nil); err != nil {
+			t.Fatal(err)
+		}
+		n, err := m.DeleteDocument(ctx, "b", raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Fatalf("DeleteDocument(%q) = %d rows, want 1", raw, n)
+		}
+		rows, _, err := m.List("b", 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 0 {
+			t.Fatalf("rows after delete = %d, want 0: %+v", len(rows), rows)
+		}
+	})
+
+	t.Run("replace by raw id drops the earlier row", func(t *testing.T) {
+		m := openTest(t)
+		if _, err := m.RetainReplacing(ctx, "b", []Entry{entry("first")}, nil); err != nil {
+			t.Fatal(err)
+		}
+		replaced, err := m.RetainReplacing(ctx, "b", []Entry{entry("second")}, []string{raw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if replaced != 1 {
+			t.Fatalf("replaced = %d, want 1", replaced)
+		}
+		rows, _, err := m.List("b", 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || rows[0].Content != "second" {
+			t.Fatalf("rows after replace = %+v, want only the second", rows)
+		}
+	})
+}
+
+// TestPreRedactionRowsMatchByRawDocumentID pins that a row written before
+// redaction existed keeps its raw document id on disk, and is found by that
+// raw id. DeleteDocument and RetainReplacing matched only the redacted form,
+// so the raw id reported 0 rows and left the row in place.
+func TestPreRedactionRowsMatchByRawDocumentID(t *testing.T) {
+	const raw = "sync-token=abc123"
+	ctx := context.Background()
+	preRedaction := func(m *Memory) {
+		writeRawBankLines(t, m, "b", `{"id":"old-1","content":"doc body","source":"test","timestamp":1,"importance":0.5,"cwd":"","metadata":{"document_id":"`+raw+`"}}`)
+	}
+
+	t.Run("delete by raw id removes the row", func(t *testing.T) {
+		m := openTest(t)
+		preRedaction(m)
+		n, err := m.DeleteDocument(ctx, "b", raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Fatalf("DeleteDocument(%q) = %d rows, want 1", raw, n)
+		}
+	})
+
+	t.Run("replace by raw id drops the pre-redaction row", func(t *testing.T) {
+		m := openTest(t)
+		preRedaction(m)
+		replaced, err := m.RetainReplacing(ctx, "b", []Entry{{Content: "second", Metadata: map[string]any{"document_id": raw}}}, []string{raw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if replaced != 1 {
+			t.Fatalf("replaced = %d, want 1", replaced)
+		}
+		rows, _, err := m.List("b", 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || rows[0].Content != "second" {
+			t.Fatalf("rows after replace = %+v, want only the second", rows)
+		}
+	})
+}
+
+// TestSessionRetainRedactsRowID pins that the row id, which SessionRetain
+// derives from the client session id, is masked like the content. A session id
+// with a secret shape must not reach the bank file through the id.
+func TestSessionRetainRedactsRowID(t *testing.T) {
+	m := openTest(t)
+	const secret = "sk-abc123def456ghi789jkl"
+	if _, err := m.SessionRetain(context.Background(), ScopeGlobal, t.TempDir(), "idprobe", secret, []string{"turn text"}, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(m.Root(), "banks", "idprobe.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), secret) {
+		t.Fatalf("bank row id carries the raw session id: %s", data)
+	}
+}

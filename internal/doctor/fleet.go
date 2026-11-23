@@ -124,6 +124,12 @@ func checkFleet(ctx context.Context, _ Probes, env Env) Finding {
 	}
 	projects, err := env.Fleet.Fleet(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			// The probe deadline or an interrupt stopped the read: the registry
+			// was not the problem, so say the check did not finish.
+			return Finding{check, StatusFail, fmt.Sprintf("fleet check did not finish: %v", ctx.Err()),
+				"Re-run doctor; a fleet registry that stays this slow needs its database checked."}
+		}
 		if errors.Is(err, portfolioreg.ErrNoRegistry) {
 			// A deployment with no fleet registry is not sick: the
 			// single-project checks already cover the project at hand.

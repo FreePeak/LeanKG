@@ -16,24 +16,26 @@ var ioBudget = map[string]map[string]int{
 // ioRule is one context-less I/O pattern with its AST matcher.
 type ioRule struct {
 	name string
-	hit  func(ast.Node) bool
+	hit  nodeHit
 }
 
 // ioRules are the rules enforced by TestNoContextlessIO. Their names are the
 // keys of ioBudget.
 var ioRules = []ioRule{
-	{"exec.Command", func(n ast.Node) bool {
-		return isPkgCall(n, "exec", "Command")
+	{"exec.Command", func(f *sourceFile, n ast.Node) bool {
+		return isPkgCall(f, n, "os/exec", "Command")
 	}},
-	{"http.NewRequest", func(n ast.Node) bool {
-		return isPkgCall(n, "http", "NewRequest")
+	{"http.NewRequest", func(f *sourceFile, n ast.Node) bool {
+		return isPkgCall(f, n, "net/http", "NewRequest")
 	}},
-	{"http.Get/Post/PostForm/Head", func(n ast.Node) bool {
-		return isPkgCall(n, "http", "Get", "Post", "PostForm", "Head")
+	{"http.Get/Post/PostForm/Head", func(f *sourceFile, n ast.Node) bool {
+		return isPkgCall(f, n, "net/http", "Get", "Post", "PostForm", "Head")
 	}},
 	{"http.Client-without-Timeout", clientWithoutTimeout},
 	{"http.DefaultClient", isDefaultClient},
-	{"sql-no-ctx", isSQLWithoutCtx},
+	{"sql-no-ctx", func(_ *sourceFile, n ast.Node) bool {
+		return isSQLWithoutCtx(n)
+	}},
 }
 
 // TestNoContextlessIO counts context-less I/O calls per directory and rule and
@@ -65,38 +67,40 @@ func budgetForRule(rule string) map[string]int {
 	return out
 }
 
-// clientWithoutTimeout matches an http.Client composite literal (including
-// &http.Client{}) that has no Timeout key.
-func clientWithoutTimeout(n ast.Node) bool {
-	lit, ok := n.(*ast.CompositeLit)
-	if !ok || !isPkgType(lit.Type, "http", "Client") {
-		return false
+// clientWithoutTimeout matches an http.Client that carries no Timeout. It
+// covers two shapes: a composite literal (including &http.Client{}) with no
+// Timeout key, and new(http.Client). http.DefaultClient has its own rule
+// (isDefaultClient). The package name is resolved through the file's imports,
+// so an alias is caught and an unrelated identifier named http is not.
+func clientWithoutTimeout(f *sourceFile, n ast.Node) bool {
+	switch e := n.(type) {
+	case *ast.CompositeLit:
+		return isQualified(f, e.Type, "net/http", "Client") && !hasTimeoutKey(e)
+	case *ast.CallExpr:
+		id, ok := e.Fun.(*ast.Ident)
+		return ok && id.Name == "new" && len(e.Args) == 1 && isQualified(f, e.Args[0], "net/http", "Client")
 	}
+	return false
+}
+
+// hasTimeoutKey reports whether a composite literal sets a Timeout field.
+func hasTimeoutKey(lit *ast.CompositeLit) bool {
 	for _, el := range lit.Elts {
 		if kv, ok := el.(*ast.KeyValueExpr); ok {
 			if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "Timeout" {
-				return false
+				return true
 			}
 		}
 	}
-	return true
+	return false
 }
 
 // isDefaultClient matches a reference to http.DefaultClient, which has no
-// timeout. It is counted like a timeout-less http.Client literal.
-func isDefaultClient(n ast.Node) bool {
-	sel, ok := n.(*ast.SelectorExpr)
-	return ok && isPkgType(sel, "http", "DefaultClient")
-}
-
-// isPkgType reports whether expr is the qualified type pkg.name.
-func isPkgType(expr ast.Expr, pkg, name string) bool {
-	sel, ok := expr.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != name {
-		return false
-	}
-	id, ok := sel.X.(*ast.Ident)
-	return ok && id.Name == pkg
+// timeout. It has its own rule, so it is counted once and not as a timeout-less
+// http.Client literal.
+func isDefaultClient(f *sourceFile, n ast.Node) bool {
+	e, ok := n.(ast.Expr)
+	return ok && isQualified(f, e, "net/http", "DefaultClient")
 }
 
 // isSQLWithoutCtx flags database/sql calls that take no context. It is
@@ -145,4 +149,62 @@ func isCtxShaped(expr ast.Expr) bool {
 		return ok && sel.Sel.Name == "Context"
 	}
 	return false
+}
+
+// TestContextlessIORuleFixtures proves each matcher catches the shapes it
+// claims to, and ignores look-alikes that a file which never imports the
+// package cannot use. Each case is an in-memory file counted by one rule.
+func TestContextlessIORuleFixtures(t *testing.T) {
+	cases := []struct {
+		name string
+		rule string
+		src  string
+		want int
+	}{
+		{"client literal without timeout", "http.Client-without-Timeout",
+			`package p; import "net/http"; var c = &http.Client{}`, 1},
+		{"client literal with timeout", "http.Client-without-Timeout",
+			`package p; import "net/http"; var c = http.Client{Timeout: 5}`, 0},
+		{"new(http.Client)", "http.Client-without-Timeout",
+			`package p; import "net/http"; var c = new(http.Client)`, 1},
+		{"http.DefaultClient value", "http.DefaultClient",
+			`package p; import "net/http"; var c = http.DefaultClient`, 1},
+		{"http.DefaultClient.Do call counts once", "http.DefaultClient",
+			`package p; import "net/http"; func f() { http.DefaultClient.Do(nil) }`, 1},
+		{"aliased client literal", "http.Client-without-Timeout",
+			`package p; import h "net/http"; var c = &h.Client{}`, 1},
+		{"aliased new(client)", "http.Client-without-Timeout",
+			`package p; import h "net/http"; var c = new(h.Client)`, 1},
+		{"aliased DefaultClient", "http.DefaultClient",
+			`package p; import h "net/http"; var c = h.DefaultClient`, 1},
+		{"http name without the import", "http.DefaultClient",
+			`package p; var c = http.DefaultClient`, 0},
+		{"aliased http.Get", "http.Get/Post/PostForm/Head",
+			`package p; import h "net/http"; func f() { h.Get("u") }`, 1},
+		{"http.Get without the import", "http.Get/Post/PostForm/Head",
+			`package p; func f() { http.Get("u") }`, 0},
+		{"aliased exec.Command", "exec.Command",
+			`package p; import x "os/exec"; func f() { x.Command("ls") }`, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := parseFixture(t, tc.src)
+			got := countByDir([]sourceFile{*f}, ruleHit(t, tc.rule))["."]
+			if got != tc.want {
+				t.Fatalf("%s: %s counted %d, want %d", tc.src, tc.rule, got, tc.want)
+			}
+		})
+	}
+}
+
+// ruleHit returns the matcher of the named ioRules entry.
+func ruleHit(t *testing.T, name string) nodeHit {
+	t.Helper()
+	for _, r := range ioRules {
+		if r.name == name {
+			return r.hit
+		}
+	}
+	t.Fatalf("no ioRules entry named %q", name)
+	return nil
 }

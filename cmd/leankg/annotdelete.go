@@ -20,7 +20,6 @@ import (
 func cmdDeleteAnnotation(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("delete-annotation", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	_ = cliexit.Parse(fs, args)
 
 	positional, err := parseInterspersed("delete-annotation", fs, args, 1)
 	if err != nil {

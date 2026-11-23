@@ -11,6 +11,9 @@ cd "$(git rev-parse --show-toplevel)"
 PG_URL="${LEANKG_TEST_PG_URL:-postgres://postgres:postgres@localhost:5433/leankg?sslmode=disable}"
 
 SMOKE=$(mktemp -d)
+# Keep the e2e `leankg index` out of the real ~/.leankg/portfolio.db, which would
+# otherwise register a /private/tmp/tmp.* project on every run.
+export LEANKG_PORTFOLIO_DB="$SMOKE/portfolio.db"
 PG_SCHEMA=""
 cleanup() {
   # Drop the per-run PG schema (the PG backend keys schemas off the project

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -149,7 +150,7 @@ func (s *Store) Maintain(ctx context.Context, op MaintainOp) (MaintainResult, er
 			return MaintainResult{}, fmt.Errorf("store: incremental_vacuum: %w", err)
 		}
 	case MaintainReclaimFull:
-		if _, err := s.db.ExecContext(ctx, `VACUUM`); err != nil {
+		if err := vacuumSQLite(ctx, s.db); err != nil {
 			return MaintainResult{}, fmt.Errorf("store: vacuum: %w", err)
 		}
 	case MaintainCompactKeywordIndex:
@@ -224,7 +225,7 @@ func (s *Store) ensureIncrementalVacuum(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
 		return fmt.Errorf("store: request incremental vacuum: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, `VACUUM`); err != nil {
+	if err := vacuumSQLite(ctx, s.db); err != nil {
 		return fmt.Errorf("store: enable incremental vacuum: %w", err)
 	}
 	if err := s.db.QueryRowContext(ctx, `PRAGMA auto_vacuum`).Scan(&mode); err != nil {
@@ -234,4 +235,37 @@ func (s *Store) ensureIncrementalVacuum(ctx context.Context) error {
 		return fmt.Errorf("store: incremental vacuum not enabled (auto_vacuum=%d after VACUUM)", mode)
 	}
 	return nil
+}
+
+// vacuumSQLite runs VACUUM and then realigns the knowledge index. VACUUM may
+// renumber the rowids of tables without an INTEGER PRIMARY KEY, and an index
+// row must sit on its entry's rowid (migration 20), so every VACUUM goes
+// through here.
+func vacuumSQLite(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `VACUUM`); err != nil {
+		return err
+	}
+	return realignKnowledgeFTS(ctx, db)
+}
+
+// realignKnowledgeFTS reruns the migration-20 rebuild in one transaction. A
+// store without the index (one that predates migration 19) has nothing to
+// realign.
+func realignKnowledgeFTS(ctx context.Context, db *sql.DB) error {
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name = 'knowledge_fts'`).Scan(&n); err != nil {
+		return fmt.Errorf("store: knowledge index probe: %w", err)
+	}
+	if n == 0 {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: realign knowledge index: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, knowledgeFTSRebuild); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("store: realign knowledge index: %w", err)
+	}
+	return tx.Commit()
 }

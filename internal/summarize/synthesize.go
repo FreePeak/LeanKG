@@ -406,15 +406,17 @@ func (p *pipeline) loadSynthCache(ctx context.Context) map[string][]cleanedNode 
 	return cache
 }
 
-// saveSynthCache rewrites the cache with the live batches only, so it cannot
-// grow forever and a batch that produced nothing is retried next run rather
-// than frozen as an empty success (graft build.ts:240-254).
+// saveSynthCache rewrites the cache with the batches the run kept (live, plus
+// the unreached ones carried over in pass2), so it cannot grow forever and a
+// batch that produced nothing is retried next run rather than frozen as an
+// empty success (graft build.ts:240-254). The save runs on a context that a
+// cancel cannot stop, so a cancelled run still keeps its work.
 func (p *pipeline) saveSynthCache(ctx context.Context, live map[string][]cleanedNode) {
 	blob, err := json.Marshal(live)
 	if err != nil {
 		return
 	}
-	_ = p.st.KVSet(ctx, synthCacheNamespace, synthCacheKey, string(blob))
+	_ = p.st.KVSet(context.WithoutCancel(ctx), synthCacheNamespace, synthCacheKey, string(blob))
 }
 
 // pass2 batches the summaries and asks for a curated node set per batch.
@@ -439,13 +441,17 @@ func (p *pipeline) pass2(ctx context.Context, ws []work) []Node {
 	}
 
 	cache := p.loadSynthCache(ctx)
+	keys := make([]string, len(batches))
+	for i, batch := range batches {
+		keys[i] = batchKey(batch, hashByPath)
+	}
 	live := map[string][]cleanedNode{}
 	var all []cleanedNode
 	for i, batch := range batches {
 		if ctx.Err() != nil {
 			break
 		}
-		key := batchKey(batch, hashByPath)
+		key := keys[i]
 		// An empty entry is a miss, not a hit (graft #177): a cached [] made a
 		// silent empty synthesis permanent. --force ignores the cache outright,
 		// because the key is file CONTENT: a prompt change leaves every hash
@@ -487,6 +493,17 @@ func (p *pipeline) pass2(ctx context.Context, ws []work) []Node {
 		live[key] = nodes
 		all = append(all, nodes...)
 		p.gate.succeeded()
+	}
+	// A cancelled run never reaches its later batches. Their cached entries
+	// carry over, keyed by this run's own plan, so the save keeps them and a
+	// stale batch (no longer in the plan) is still pruned.
+	for _, key := range keys {
+		if _, done := live[key]; done {
+			continue
+		}
+		if got, ok := cache[key]; ok {
+			live[key] = got
+		}
 	}
 	p.saveSynthCache(ctx, live)
 	if len(all) == 0 {

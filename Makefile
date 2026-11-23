@@ -13,10 +13,11 @@ help:
 	@echo "  go-ui-assets    Sync the checked-in ui build into the Go embed dir"
 	@echo "  dual-engine     Run the dual-engine (sqlite + postgres) acceptance gate"
 	@echo "  scan-root-check Check the self-host scan-root scope (scripts/test-scan-root.sh)"
+	@echo "  live-test       Local live-test harness: real binary, temp fixtures, evidence in .live-evidence/ (LIVE_ARGS='--only 02')"
 	@echo "  clean           Remove Go build artifacts"
 	@echo "  install-go      Build-from-source installer (scripts/install-go.sh)"
 
-.PHONY: help go-build go-test go-bench go-vet go-ui-assets go-ui-dashboard go-ui-dashboard-check dual-engine scan-root-check clean install-go go-build-tstree go-test-tstree
+.PHONY: help go-build go-test go-bench go-vet go-ui-assets go-ui-dashboard go-ui-dashboard-check dual-engine scan-root-check live-test clean install-go go-build-tstree go-test-tstree
 
 go-build:
 	CGO_ENABLED=0 go build -o bin/ ./cmd/leankg ./cmd/leankg-embed
@@ -87,10 +88,20 @@ go-ui-dashboard-check:
 dual-engine:
 	bash scripts/test-dual-engine.sh
 
-# The served fleet must stay inside ~/work/harvey/freepeak; ~/work/be is
-# served by be-kg. The check is a script, offline and fast.
+# The served fleet must stay inside the self-host scan root (<workspace>/<org>/<group>).
+# Repos outside it (other-repo) are served by other-kg. The check is a script,
+# offline and fast.
 scan-root-check:
 	bash scripts/test-scan-root.sh
+
+# Local live-test harness (scripts/live/): builds the binary, starts it against
+# temp fixtures, runs every scenario. Local only, not for CI. SQLite by default and
+# no container. The PostgreSQL gates in scenario 16 run only with LIVE_PG_URL (a
+# private pgvector database). LIVE_BASELINE_BIN and LIVE_SEED_BIN name the baseline
+# and pre-fix binaries for scenarios 16 and 21. The ambient environment is ignored:
+# these make-line variables reach run.sh as flags.
+live-test:
+	bash scripts/live/run.sh $(LIVE_ARGS) $(if $(LIVE_PG_URL),--pg-url '$(LIVE_PG_URL)') $(if $(LIVE_BASELINE_BIN),--baseline-bin '$(LIVE_BASELINE_BIN)') $(if $(LIVE_SEED_BIN),--seed-bin '$(LIVE_SEED_BIN)')
 
 clean:
 	rm -rf bin

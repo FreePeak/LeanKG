@@ -163,6 +163,9 @@ type stampShape struct {
 	selectSQL string
 }
 
+// absent reports that the store has no emb_stamp table at all (no columns).
+func (sh *stampShape) absent() bool { return len(sh.cols) == 0 }
+
 // WriteStamp upserts the stamp for a model (writer side, after validation).
 // The full identity — model, revision, dims, distance, provider, chunker
 // version and the query/document prefix pair — is what a reader compares, so
@@ -180,8 +183,8 @@ func (s *Store) WriteStamp(ctx context.Context, st ModelStamp) error {
 
 // stampColumns probes the emb_stamp columns this store's schema carries.
 // A store that never had the table (or that predates the stamp migrations)
-// yields no optional columns; the read then fails with the driver's own
-// "no such table: emb_stamp", which is the truth about that store.
+// yields no columns at all: the reads treat that as "nothing stamped", and a
+// write still fails with the driver's own "no such table: emb_stamp".
 func (s *Store) stampColumns(ctx context.Context) (stampColumnSet, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT name FROM pragma_table_info('emb_stamp')`)
 	if err != nil {
@@ -221,6 +224,9 @@ func (s *Store) Stamp(ctx context.Context, modelID string) (*ModelStamp, error) 
 	shape, err := s.stampShape(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if shape.absent() {
+		return nil, nil
 	}
 	st, err := scanStamp(s.db.QueryRowContext(ctx, shape.selectSQL+` WHERE model_id = ?`, modelID))
 	if err == sql.ErrNoRows {
@@ -277,6 +283,9 @@ func (s *Store) Stamps(ctx context.Context) ([]ModelStamp, error) {
 	shape, err := s.stampShape(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if shape.absent() {
+		return nil, nil
 	}
 	rows, err := s.db.QueryContext(ctx, shape.selectSQL)
 	if err != nil {
@@ -589,7 +598,7 @@ func (s *Store) SearchVectors(ctx context.Context, q VectorQuery) ([]VectorSearc
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	k := q.K
+	k := max(q.K, 0) // a negative K would panic the slice below; PG clamps the same way
 	// partial sort top-k (k is small; n scan already done)
 	for i := 0; i < len(hits) && i < k; i++ {
 		best := i

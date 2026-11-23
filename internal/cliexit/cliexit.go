@@ -11,9 +11,9 @@ import (
 	"io"
 )
 
-// exitStatusCancelled is the status of a run stopped by SIGINT or SIGTERM, the
+// ExitCancelled is the status of a run stopped by SIGINT or SIGTERM, the
 // shell's 128 + SIGINT convention.
-const exitStatusCancelled = 130
+const ExitCancelled = 130
 
 // Error is an exit status the verb has settled on. Its message, if any, was
 // already written by the verb, so Finish prints nothing for it.
@@ -64,7 +64,7 @@ func Finish(err error, stderr io.Writer) int {
 	}
 	switch {
 	case errors.Is(err, context.Canceled):
-		return exitStatusCancelled
+		return ExitCancelled
 	case errors.As(err, &coded):
 		return coded.Code
 	case errors.As(err, new(*usageError)):

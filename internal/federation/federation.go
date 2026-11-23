@@ -419,6 +419,15 @@ func isGraphEnvelope(body []byte) bool {
 	return json.Unmarshal(body, &keys) == nil && keys.Elements != nil && keys.Relationships != nil
 }
 
+// publishCapError is a local graph too large to publish whole. It is an
+// operator-actionable limit, not a store fault, so the publish handler sends
+// its message instead of masking it.
+type publishCapError struct{ total, limit int }
+
+func (e *publishCapError) Error() string {
+	return fmt.Sprintf("federation: local graph has %d relationships, above the %d publish cap", e.total, e.limit)
+}
+
 // readRelationships reads every local relationship, refusing to publish a
 // graph the paged read may have truncated.
 func readRelationships(ctx context.Context, st graphStore) ([]store.Relationship, error) {
@@ -432,7 +441,7 @@ func readRelationships(ctx context.Context, st graphStore) ([]store.Relationship
 			return nil, fmt.Errorf("federation: count local relationships: %w", err)
 		}
 		if total > len(rels) {
-			return nil, fmt.Errorf("federation: local graph has %d relationships, above the %d publish cap", total, maxRelationships)
+			return nil, &publishCapError{total: total, limit: maxRelationships}
 		}
 	}
 	return rels, nil

@@ -62,7 +62,7 @@ type hindsightItem struct {
 }
 
 func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
-	mux.Handle("PUT /v1/default/banks/{bank}", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("PUT /v1/default/banks/{bank}", auth.Require(auth.Contributor, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"bank_id": r.PathValue("bank"), "object": "bank",
 		})

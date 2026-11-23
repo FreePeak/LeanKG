@@ -10,7 +10,6 @@ import (
 // drops must be lowered in the same diff, and a directory must reach 0 and
 // leave the map.
 var backgroundBudget = map[string]int{
-	"internal/index":    2,
 	"internal/lsp":      1,
 	"internal/registry": 1,
 	"internal/session":  1,
@@ -27,8 +26,8 @@ func TestContextRootsRatchet(t *testing.T) {
 }
 
 // isContextRoot matches calls of the form context.<name>().
-func isContextRoot(name string) func(ast.Node) bool {
-	return func(n ast.Node) bool {
-		return isPkgCall(n, "context", name)
+func isContextRoot(name string) nodeHit {
+	return func(f *sourceFile, n ast.Node) bool {
+		return isPkgCall(f, n, "context", name)
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // A cancelled ctx stops a pass before any sweep runs: the stale collection
@@ -84,5 +86,33 @@ func TestRunFleetDisabledIsAlreadyJoined(t *testing.T) {
 	case <-done:
 	default:
 		t.Fatal("a disabled RunFleet returned an open done channel")
+	}
+}
+
+// cancelAtCheckpoint cancels the pass the moment its checkpoint step runs and
+// fails that step with the cancel: the shape of a SIGINT that lands mid-pass.
+type cancelAtCheckpoint struct {
+	Store
+	cancel context.CancelFunc
+}
+
+func (s cancelAtCheckpoint) Maintain(ctx context.Context, op store.MaintainOp) (store.MaintainResult, error) {
+	if op.Kind == store.MaintainCheckpoint {
+		s.cancel()
+		return store.MaintainResult{}, ctx.Err()
+	}
+	return s.Store.Maintain(ctx, op)
+}
+
+// A pass cut short by a cancel must report it: a checkpoint or space probe
+// that failed under a cancelled ctx is not a successful pass.
+func TestPassReturnsCancelWhenCheckpointIsCut(t *testing.T) {
+	st := collectionFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	_, err := Pass(ctx, cancelAtCheckpoint{Store: st, cancel: cancel}, Options{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("pass cut at checkpoint: err = %v, want context.Canceled", err)
 	}
 }

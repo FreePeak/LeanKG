@@ -113,14 +113,23 @@ func TestHookBudgetResolution(t *testing.T) {
 // not block.
 func TestIndexHookStopsWhenBudgetExpires(t *testing.T) {
 	dir := writeSourceTree(t, 2000)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		cmdIndex(context.Background(), []string{"--hook", "--hook-budget", "1ns", "--project", dir, dir})
+		cmdIndex(ctx, []string{"--hook", "--hook-budget", "1ns", "--project", dir, dir})
 	}()
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
+		// Join the command before failing: a cmdIndex still running when the
+		// test returns prints into the next test's captured stdout.
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+		}
 		t.Fatal("index --hook did not return after its budget expired")
 	}
 }

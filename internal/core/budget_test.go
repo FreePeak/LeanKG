@@ -84,3 +84,40 @@ func TestQueryAnswerRefusesBadTokenBudget(t *testing.T) {
 		}
 	}
 }
+
+// Every query action has an explicit budget row, so none silently falls back
+// to the default cap (the 1000-token fallback cut history, prd and friends).
+func TestEveryQueryActionHasAnExplicitBudget(t *testing.T) {
+	for action := range queryActions {
+		if action == "" {
+			continue // the ladder router is budgeted as "search"
+		}
+		if (budget.TokenBudget{}).MaxTokensForTool(action) == budget.DefaultMaxTokens {
+			t.Errorf("query action %q falls back to the default %d-token cap; add it to budget.ToolBudgets", action, budget.DefaultMaxTokens)
+		}
+	}
+}
+
+// TestResolveQueryGraphBudgetClampsToTheAnswerRange: a query-graph budget is
+// the caller's token_budget (or the table cap when absent), clamped to 200 to
+// 20000 tokens, so every transport cuts the answer to the same size.
+func TestResolveQueryGraphBudgetClampsToTheAnswerRange(t *testing.T) {
+	cases := []struct {
+		name  string
+		token any
+		want  int
+	}{
+		{"absent is the table cap", nil, 2000},
+		{"below the floor", 50, 200},
+		{"inside the range", 500, 500},
+		{"above the ceiling", 99999, 20000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolveQueryGraphBudget(tc.token)
+			if err != nil || got != tc.want {
+				t.Fatalf("ResolveQueryGraphBudget(%v) = %d, %v; want %d", tc.token, got, err, tc.want)
+			}
+		})
+	}
+}

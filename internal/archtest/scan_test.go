@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -22,10 +23,50 @@ var skipDirs = map[string]bool{
 
 // sourceFile is one non-test, non-generated Go file of the repository.
 type sourceFile struct {
-	Rel string // repo-relative slash path
-	Dir string // repo-relative slash directory, "." for the root
-	Pkg string // package clause name
-	AST *ast.File
+	Rel     string            // repo-relative slash path
+	Dir     string            // repo-relative slash directory, "." for the root
+	Pkg     string            // package clause name
+	Imports map[string]string // local name -> import path, from the import block
+	AST     *ast.File
+}
+
+// nodeHit reports whether node n of file f is one of the patterns a rule
+// counts. The file is passed so a matcher can resolve import aliases.
+type nodeHit func(f *sourceFile, n ast.Node) bool
+
+// newSourceFile wraps a parsed file. Each import is keyed by the name it is
+// used under: its explicit alias, or else the last element of its path (the
+// package name for every stdlib package the rules use). Blank and dot imports
+// bind no name.
+func newSourceFile(rel string, f *ast.File) sourceFile {
+	imports := map[string]string{}
+	for _, imp := range f.Imports {
+		path, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			continue
+		}
+		name := path[strings.LastIndex(path, "/")+1:]
+		if imp.Name != nil {
+			name = imp.Name.Name
+		}
+		if name != "_" && name != "." {
+			imports[name] = path
+		}
+	}
+	dir := filepath.ToSlash(filepath.Dir(rel))
+	return sourceFile{Rel: rel, Dir: dir, Pkg: f.Name.Name, Imports: imports, AST: f}
+}
+
+// parseFixture parses an in-memory Go source as a repo file named fixture.go,
+// for rule tests that must prove a pattern is caught or not.
+func parseFixture(t *testing.T, src string) *sourceFile {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), "fixture.go", src, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+	sf := newSourceFile("fixture.go", f)
+	return &sf
 }
 
 // scanLibrary parses every non-test, non-generated .go file under the
@@ -74,7 +115,7 @@ func scanSources(t *testing.T, keep func(rel, pkg string) bool) (*token.FileSet,
 			return err
 		}
 		if keep(rel, f.Name.Name) {
-			files = append(files, sourceFile{Rel: rel, Dir: filepath.ToSlash(filepath.Dir(rel)), Pkg: f.Name.Name, AST: f})
+			files = append(files, newSourceFile(rel, f))
 		}
 		return nil
 	})
@@ -108,11 +149,12 @@ func repoRoot(t *testing.T) string {
 
 // countByDir counts the nodes of every file for which hit reports true,
 // keyed by repo-relative directory.
-func countByDir(files []sourceFile, hit func(ast.Node) bool) map[string]int {
+func countByDir(files []sourceFile, hit nodeHit) map[string]int {
 	counts := map[string]int{}
-	for _, f := range files {
+	for i := range files {
+		f := &files[i]
 		ast.Inspect(f.AST, func(n ast.Node) bool {
-			if hit(n) {
+			if hit(f, n) {
 				counts[f.Dir]++
 			}
 			return true
@@ -138,13 +180,27 @@ func asCall(n ast.Node) (recv, sel string, args []ast.Expr, ok bool) {
 	return recv, sx.Sel.Name, call.Args, true
 }
 
-// isPkgCall reports whether n is pkg.Sel(...) for one of sels.
-func isPkgCall(n ast.Node, pkg string, sels ...string) bool {
+// isPkgCall reports whether n is a call pkgPath.Sel(...) for one of sels. The
+// receiver must be an identifier that f imports as pkgPath, so an alias
+// (import h "net/http") matches and a local variable that happens to share the
+// package's name does not.
+func isPkgCall(f *sourceFile, n ast.Node, pkgPath string, sels ...string) bool {
 	recv, sel, _, ok := asCall(n)
-	if !ok || recv != pkg {
+	if !ok || f.Imports[recv] != pkgPath {
 		return false
 	}
 	return slices.Contains(sels, sel)
+}
+
+// isQualified reports whether expr is the qualified identifier pkgPath.name,
+// used as a type (http.Client) or a value (http.DefaultClient).
+func isQualified(f *sourceFile, expr ast.Expr, pkgPath, name string) bool {
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != name {
+		return false
+	}
+	id, ok := sel.X.(*ast.Ident)
+	return ok && f.Imports[id.Name] == pkgPath
 }
 
 // funcName returns "Func" for a function and "Recv.Method" for a method.

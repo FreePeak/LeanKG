@@ -151,15 +151,21 @@ func TestPGStampAfterMigratingPre017Store(t *testing.T) {
 	}
 }
 
-// TestPGStoreOpensWithoutEmbStamp pins that a schema with no emb_stamp
-// table at all reports the truth: the read fails with PostgreSQL's own
-// "relation emb_stamp does not exist", not with a silently empty answer.
+// TestPGStoreOpensWithoutEmbStamp pins that a schema with no emb_stamp table
+// at all is a store that was never embedded: the reads answer "nothing
+// stamped" (no stamp, empty list) and no error, so status does not report
+// the store unhealthy (#592). The write side still fails on the missing table.
 func TestPGStoreOpensWithoutEmbStamp(t *testing.T) {
 	s := openPGPre017Store(t)
-	if _, err := s.pool.Exec(context.Background(), `DROP TABLE emb_stamp`); err != nil {
+	ctx := context.Background()
+	if _, err := s.pool.Exec(ctx, `DROP TABLE emb_stamp`); err != nil {
 		t.Fatalf("drop emb_stamp: %v", err)
 	}
-	if _, err := s.Stamp(context.Background(), "whatever"); err == nil {
-		t.Fatal("a missing emb_stamp table must fail the stamp read")
+	stamps, err := s.Stamps(ctx)
+	if err != nil || len(stamps) != 0 {
+		t.Fatalf("Stamps without emb_stamp = %+v, %v; want empty and no error", stamps, err)
+	}
+	if st, err := s.Stamp(ctx, "whatever"); err != nil || st != nil {
+		t.Fatalf("Stamp without emb_stamp = %+v, %v; want nil and no error", st, err)
 	}
 }

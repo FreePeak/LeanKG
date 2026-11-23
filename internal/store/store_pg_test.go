@@ -747,3 +747,66 @@ func TestPGVectorExtensionSharedAcrossProjects(t *testing.T) {
 		t.Fatalf("vector extension schema = %q; want public", schema)
 	}
 }
+
+// TestPGFindExactRanksDeterministically pins the PostgreSQL L1 order to the
+// SQLite one: an exact-case match first, then the shorter qualified name, then
+// file_path and qualified_name ascending, whatever order the rows were written.
+func TestPGFindExactRanksDeterministically(t *testing.T) {
+	ctx := context.Background()
+	// The exact-case match has the LONGER qualified name, so a length-only
+	// ORDER BY ranks the case-variant first and fails this test.
+	exact := Element{QualifiedName: "pkg.sub.Helper", ElementType: "function", Name: "Helper", FilePath: "b.go", Language: "go"}
+	variant := Element{QualifiedName: "pkg.helper", ElementType: "function", Name: "helper", FilePath: "a.go", Language: "go"}
+	for _, order := range [][]Element{{exact, variant}, {variant, exact}} {
+		s := openPGTest(t)
+		if err := s.UpsertElements(ctx, order); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.FindExact(ctx, "Helper")
+		if err != nil || len(got) != 2 {
+			t.Fatalf("FindExact(Helper) = %d hits, %v; want 2", len(got), err)
+		}
+		if got[0].QualifiedName != exact.QualifiedName {
+			t.Errorf("order %s first, FindExact(Helper)[0] = %q; want %q",
+				order[0].QualifiedName, got[0].QualifiedName, exact.QualifiedName)
+		}
+	}
+
+	// Two exact-case matches of the same length tie on every key but the path,
+	// which orders them ascending.
+	s := openPGTest(t)
+	if err := s.UpsertElements(ctx, []Element{
+		{QualifiedName: "b.go::Tie", ElementType: "function", Name: "Tie", FilePath: "b.go", Language: "go"},
+		{QualifiedName: "a.go::Tie", ElementType: "function", Name: "Tie", FilePath: "a.go", Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.FindExact(ctx, "Tie")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("FindExact(Tie) = %d hits, %v; want 2", len(got), err)
+	}
+	if got[0].QualifiedName != "a.go::Tie" {
+		t.Errorf("FindExact(Tie)[0] = %q; want a.go::Tie (path ascending)", got[0].QualifiedName)
+	}
+}
+
+// The PostgreSQL half of TestFindExactOrdersPathsByBinaryCollation. The path
+// tie-break is COLLATE "C", as SQLite's BINARY is. Under an en_US-style
+// database collation a.go sorts before B.go, so this test is red without the
+// COLLATE clause; under a C collation it passes with or without it.
+func TestPGFindExactOrdersPathsByBinaryCollation(t *testing.T) {
+	s := openPGTest(t)
+	if err := s.UpsertElements(context.Background(), []Element{
+		{QualifiedName: "a.go::Helper", ElementType: "function", Name: "Helper", FilePath: "a.go", Language: "go"},
+		{QualifiedName: "B.go::Helper", ElementType: "function", Name: "Helper", FilePath: "B.go", Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.FindExact(context.Background(), "Helper")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("FindExact = %d hits, err %v; want 2", len(got), err)
+	}
+	if got[0].QualifiedName != "B.go::Helper" {
+		t.Errorf("FindExact(Helper)[0] = %q; want B.go::Helper (binary path order)", got[0].QualifiedName)
+	}
+}

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/FreePeak/LeanKG/internal/errs"
 )
 
 func TestGuardAnswersCancelledRequestWithoutCallingHandler(t *testing.T) {
@@ -36,5 +38,42 @@ func TestGuardPassesLiveRequestThrough(t *testing.T) {
 
 	if !called || rec.Code != http.StatusTeapot {
 		t.Fatalf("called = %v, status = %d; a live request must reach the handler", called, rec.Code)
+	}
+}
+
+// TestStatusForClassifiesEveryCatalogCode pins one status per catalog code. A
+// code added to the catalog without a row here fails the loop, so no new code
+// reaches the wire as an unclassified 400.
+func TestStatusForClassifiesEveryCatalogCode(t *testing.T) {
+	want := map[errs.ErrorCode]int{
+		errs.PGUnreachable:         http.StatusServiceUnavailable,
+		errs.TrgmUnavailable:       http.StatusServiceUnavailable,
+		errs.PGURLMalformed:        http.StatusInternalServerError,
+		errs.AutoAttachFailed:      http.StatusInternalServerError,
+		errs.ProjectNotInitialized: http.StatusNotFound,
+		errs.UnknownProject:        http.StatusNotFound,
+		errs.UnknownTool:           http.StatusNotFound,
+		errs.MethodNotFound:        http.StatusNotFound,
+		errs.Unauthorized:          http.StatusUnauthorized,
+		errs.PermissionDenied:      http.StatusForbidden,
+		errs.ReadOnly:              http.StatusForbidden,
+		errs.NoVectors:             http.StatusConflict,
+		errs.IndexRootMismatch:     http.StatusConflict,
+		errs.UnknownAction:         http.StatusBadRequest,
+		errs.MissingParam:          http.StatusBadRequest,
+		errs.PathOutsideProject:    http.StatusBadRequest,
+		errs.InvalidParam:          http.StatusBadRequest,
+		errs.RequestTooLarge:       http.StatusRequestEntityTooLarge,
+		errs.IndexUnavailable:      http.StatusServiceUnavailable,
+	}
+	for _, entry := range errs.Catalog {
+		wantStatus, ok := want[entry]
+		if !ok {
+			t.Errorf("%s has no expected status in this test", entry.Code)
+			continue
+		}
+		if got := StatusFor(errs.NewError(entry, "cause", "")); got != wantStatus {
+			t.Errorf("%s: StatusFor = %d, want %d", entry.Code, got, wantStatus)
+		}
 	}
 }

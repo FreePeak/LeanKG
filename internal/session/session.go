@@ -22,6 +22,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/FreePeak/LeanKG/internal/telemetry"
 )
 
 var (
@@ -204,6 +206,7 @@ func (s *Store) AddLessonCtx(ctx context.Context, sessionID, text string) (dedup
 }
 
 func (s *Store) addLesson(sessionID, text string) (deduped bool, err error) {
+	text = telemetry.Redact(text) // a lesson is stored, and deduped, in its masked form
 	dir, err := s.sessionDir(sessionID)
 	if err != nil {
 		return false, err

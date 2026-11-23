@@ -13,6 +13,7 @@ import (
 
 	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/core"
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/rest"
 	leankgv1 "github.com/FreePeak/LeanKG/internal/rpc/leankg/v1"
 	leankgv1connect "github.com/FreePeak/LeanKG/internal/rpc/leankg/v1/leankgv1connect"
@@ -23,7 +24,9 @@ import (
 // interceptor for rec. It returns the same path and handler that
 // leankgv1connect.NewLeanKGHandler does.
 func Handler(engine *core.Engine, rec telemetry.Recorder) (string, http.Handler) {
-	return leankgv1connect.NewLeanKGHandler(NewLeanKGService(engine), connect.WithInterceptors(CaptureInterceptor(rec)))
+	return leankgv1connect.NewLeanKGHandler(NewLeanKGService(engine),
+		connect.WithInterceptors(CaptureInterceptor(rec)),
+		connect.WithReadMaxBytes(httpx.MaxBodyBytes))
 }
 
 // Mount registers the LeanKG service on mux with the role each procedure

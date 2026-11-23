@@ -129,7 +129,8 @@ func New(st store.Backend, opts Options) *Engine {
 
 // Close releases what the engine started: the LSP servers and the pool's idle
 // janitor. The store and the memory layer belong to the caller, who closes
-// them. Close is idempotent; a query after Close answers an error (CX-45).
+// them. Close is idempotent. After Close only the LSP queries answer an error
+// (errEngineClosed, CX-45); the other queries still run against the store.
 func (e *Engine) Close() {
 	e.lspMu.Lock()
 	defer e.lspMu.Unlock()
@@ -1124,8 +1125,9 @@ func looksLikeIdentifier(s string) bool {
 // resolveGraphSeed turns a short name or bare identifier into the qualified
 // name graph verbs need. Relationships are keyed by qualified_name only, so a
 // bare "ServeProjectDirs" used to look like a leaf (empty callers/callees) even
-// when the element and its edges were indexed. FindExact already ranks by
-// shortest qualified_name, matching L1. Unknown seeds pass through unchanged so
+// when the element and its edges were indexed. FindExact ranks an exact-case
+// match first, then the shorter qualified_name, then path and qualified_name,
+// matching L1. Unknown seeds pass through unchanged so
 // graph.ErrUnknownNode still fires for true misses.
 func (e *Engine) resolveGraphSeed(ctx context.Context, seed string) (string, error) {
 	seed = strings.TrimSpace(seed)

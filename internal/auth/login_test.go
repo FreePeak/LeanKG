@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -187,5 +189,77 @@ func TestLoginRouteAnswersDisabledAccountLikeWrongPassword(t *testing.T) {
 	}
 	if !reflect.DeepEqual(disabledBody, wrongBody) {
 		t.Fatalf("body differs: disabled %v, wrong password %v", disabledBody, wrongBody)
+	}
+}
+
+// countingStore counts AccountByEmail calls. A login reaches its password check
+// only after that lookup, so the count is the number of attempts that got to
+// PBKDF2.
+type countingStore struct {
+	Store
+	lookups atomic.Int64
+}
+
+func (c *countingStore) AccountByEmail(ctx context.Context, email string) (store.Account, bool, error) {
+	c.lookups.Add(1)
+	return c.Store.AccountByEmail(ctx, email)
+}
+
+// Concurrent wrong-password logins for one account must not all reach the
+// password check. The throttle reserves each attempt before PBKDF2 runs, so at
+// most loginMaxFailures of them do.
+func TestVerifyLoginConcurrentAttemptsReachVerifierAtMostLimit(t *testing.T) {
+	st := openAuthStore(t)
+	seedAccount(t, st, "burst@example.com", adminTestPassword, false)
+	counted := &countingStore{Store: st}
+
+	throttle, _ := newTestThrottle()
+	const attempts = 20
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	results := make([]error, attempts)
+	for i := range attempts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, results[i] = verifyLogin(context.Background(), throttle, counted, "burst@example.com", "wrong password!", false)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if got := counted.lookups.Load(); got > loginMaxFailures {
+		t.Fatalf("%d of %d concurrent attempts reached the password check, want at most %d", got, attempts, loginMaxFailures)
+	}
+	for i, err := range results {
+		if !errors.Is(err, ErrInvalidAdminLogin) {
+			t.Fatalf("attempt %d err = %v, want ErrInvalidAdminLogin", i, err)
+		}
+	}
+}
+
+// storeDownStore fails every account lookup, the way a database outage does.
+type storeDownStore struct{ Store }
+
+func (storeDownStore) AccountByEmail(context.Context, string) (store.Account, bool, error) {
+	return store.Account{}, false, errors.New("database is locked")
+}
+
+// A store failure is not a wrong password, so it must not count toward the
+// lockout (#601 S1). After more store failures than the limit, the correct
+// password still logs in.
+func TestVerifyLoginStoreErrorsDoNotLockOut(t *testing.T) {
+	st := openAuthStore(t)
+	seedAccount(t, st, "outage@example.com", adminTestPassword, false)
+	throttle, _ := newTestThrottle()
+
+	for i := 0; i < 2*loginMaxFailures; i++ {
+		if _, err := verifyLogin(context.Background(), throttle, storeDownStore{st}, "outage@example.com", adminTestPassword, false); err == nil {
+			t.Fatalf("attempt %d: a store outage must fail the login", i)
+		}
+	}
+	if _, err := verifyLogin(context.Background(), throttle, st, "outage@example.com", adminTestPassword, false); err != nil {
+		t.Fatalf("correct password after store outage: %v", err)
 	}
 }

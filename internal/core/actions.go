@@ -802,7 +802,7 @@ func (e *Engine) importIndex(ctx context.Context, req ImportRequest) (map[string
 	if _, err := e.refreshInventory(ctx); err != nil {
 		return nil, err
 	}
-	status, _ := e.Status(ctx)
+	status, serr := e.Status(ctx)
 	indexed := map[string]any{
 		"files":         res.Files,
 		"elements":      res.Elements,
@@ -814,7 +814,13 @@ func (e *Engine) importIndex(ctx context.Context, req ImportRequest) (map[string
 	if res.DeletedFiles > 0 {
 		indexed["deleted_files"] = res.DeletedFiles
 	}
-	return map[string]any{"indexed": indexed, "status": status}, nil
+	out := map[string]any{"indexed": indexed, "status": status}
+	if serr != nil {
+		// Named, not dropped: the index is already written, only the status
+		// read failed, and the caller must be able to tell that apart.
+		out["status_error"] = serr.Error()
+	}
+	return out, nil
 }
 
 func (e *Engine) importOntology(ctx context.Context, req ImportRequest) (map[string]any, error) {

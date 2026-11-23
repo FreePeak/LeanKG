@@ -48,13 +48,7 @@ type recorder struct {
 	closed bool
 
 	closeOnce sync.Once
-	// writerOnce guards close(done): the Off construction path closes it with
-	// no writer, a running writer closes it on exit, and SetLevel re-arms it
-	// when it revives a recorder built Off. Without it, a revived recorder's
-	// writer would no-op on a once already spent, and Close would block on
-	// <-r.done forever.
-	writerOnce sync.Once
-	closeErr   error
+	closeErr  error
 }
 
 // NewRecorder returns a Recorder that writes to st at level. Off returns a
@@ -71,9 +65,7 @@ func NewRecorder(ctx context.Context, st Store, level Level, maxBodyBytes int) R
 		// No writer and no queue. `closed` stays false because it marks
 		// "Close was called", not "not capturing": the level alone is Off, so
 		// SetLevel can revive this recorder (the consent reload) while Close
-		// semantics stay correct. `done` is closed because no writer will ever
-		// close it, which is what makes Close on an Off recorder cheap.
-		r.writerOnce.Do(func() { close(r.done) })
+		// semantics stay correct.
 		return r
 	}
 	r.ch = make(chan queued, queueSize)
@@ -93,7 +85,7 @@ func (r *recorder) Level() Level {
 // restart the server. Two directions:
 //
 //   - rising from Off: the recorder was built with no writer and no queue, so
-//     this re-arms writerOnce and starts the writer. Without that, events
+//     this creates the queue and starts the writer. Without that, events
 //     would be accepted into a queue nobody drains.
 //   - falling to Off: capture stops immediately (enqueue checks the level
 //     under the same lock). The writer keeps running so a later raise is free.
@@ -110,9 +102,6 @@ func (r *recorder) SetLevel(level Level) error {
 	r.level = level
 	needWriter := risingFromOff && r.ch == nil
 	if needWriter {
-		// Re-arm for the writer about to start: the Off construction path
-		// already spent this once to close `done`.
-		r.writerOnce = sync.Once{}
 		r.ch = make(chan queued, queueSize)
 	}
 	r.mu.Unlock()
@@ -153,11 +142,16 @@ func (r *recorder) Close() error {
 	r.closeOnce.Do(func() {
 		r.mu.Lock()
 		r.closed = true
-		if r.ch != nil {
+		// r.ch is set exactly when a writer was started, so only then is there
+		// a `done` to wait for.
+		writing := r.ch != nil
+		if writing {
 			close(r.ch)
 		}
 		r.mu.Unlock()
-		<-r.done
+		if writing {
+			<-r.done
+		}
 		if r.st != nil {
 			r.closeErr = r.st.Close()
 		}
@@ -168,10 +162,9 @@ func (r *recorder) Close() error {
 // run is the single writer. It batches by count and by time, and reports
 // drops with AddDropped on every flush.
 func (r *recorder) run() {
-	// `done` is closed by whoever stops this writer — here, or the Off
-	// construction path that never started one. The once keeps a revived
-	// recorder (SetLevel re-armed it) from double-closing.
-	defer r.writerOnce.Do(func() { close(r.done) })
+	// The writer is the only closer of `done`, so each started writer closes
+	// it exactly once, including one started by SetLevel after an Off build.
+	defer close(r.done)
 
 	var calls []CallEvent
 	var mems []MemoryEvent

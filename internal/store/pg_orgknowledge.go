@@ -363,7 +363,7 @@ func (s *PGStore) EnvSnapshotsPut(ctx context.Context, snaps []EnvSnapshot) erro
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	for _, snap := range snaps {
 		if snap.Env == "" || snap.QualifiedName == "" {
 			return fmt.Errorf("store: env snapshot: env and qualified_name are required")

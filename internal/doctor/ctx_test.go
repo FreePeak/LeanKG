@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -123,5 +124,25 @@ func TestOpenProbesHonoursCtxOnHungPostgres(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("openProbes took %s with a 200ms ctx; the open ignores its ctx", elapsed)
+	}
+}
+
+// A fleet read cut by the check deadline is reported as the timeout it is, not
+// as an unreadable registry: the operator should not chase a registry fault.
+func TestFleetDeadlineIsNotAnUnreadableRegistry(t *testing.T) {
+	env := healthyEnv()
+	env.Fleet = hungFleet{}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	f := checkFleet(ctx, hungProbes{}, env)
+	if f.Status != StatusFail {
+		t.Fatalf("fleet = %+v, want FAIL for a timed-out read", f)
+	}
+	if strings.Contains(f.Detail, "cannot read portfolio registry") {
+		t.Fatalf("fleet detail %q blames the registry for a deadline", f.Detail)
+	}
+	if !strings.Contains(f.Detail, context.DeadlineExceeded.Error()) {
+		t.Fatalf("fleet detail %q must name the deadline", f.Detail)
 	}
 }

@@ -44,7 +44,7 @@ func TestSweepRegistryForgetsVanishedProjects(t *testing.T) {
 	}
 
 	// The call the serve path makes on every maintenance tick.
-	sweepRegistry(ctx, "sqlite")
+	sweepRegistry(ctx, "sqlite", t.TempDir())
 
 	rows, err := portfolioreg.Projects(ctx, portfolioreg.Options{DBPath: registry})
 	if err != nil {
@@ -75,7 +75,7 @@ func TestSweepRegistryKeepsLiveProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sweepRegistry(ctx, "sqlite")
+	sweepRegistry(ctx, "sqlite", t.TempDir())
 
 	rows, err := portfolioreg.Projects(ctx, portfolioreg.Options{DBPath: registry})
 	if err != nil {
@@ -102,7 +102,7 @@ func TestServePathSweepsTheRegistry(t *testing.T) {
 		t.Fatalf("read main.go: %v", err)
 	}
 	body := string(src)
-	if !strings.Contains(body, "sweepRegistry(fctx, eng)") {
+	if !strings.Contains(body, "sweepRegistry(fctx, eng, dir)") {
 		t.Error("the serve path never calls sweepRegistry — the registry sweep would never fire")
 	}
 	// The call must be on the maintenance tick, not a one-off at start-up:
@@ -120,7 +120,7 @@ func TestServePathSweepsTheRegistry(t *testing.T) {
 	if end := strings.Index(tail, "}, maintain.Options{"); end > 0 {
 		tail = tail[:end]
 	}
-	if !strings.Contains(tail, "sweepRegistry(fctx, eng)") {
+	if !strings.Contains(tail, "sweepRegistry(fctx, eng, dir)") {
 		t.Error("sweepRegistry is not called inside the maintenance tick — it would not run once per tick")
 	}
 }

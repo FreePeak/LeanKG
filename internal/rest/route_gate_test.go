@@ -53,6 +53,7 @@ func TestWriteRoutesRefuseViewer(t *testing.T) {
 		{http.MethodPost, "/api/v1/memory/session/retain", "{}"},
 		{http.MethodPost, "/api/v2/graph/push", "{}"},
 		{http.MethodPost, "/v1/default/banks/b1/memories", `{"items":[{"content":"x"}]}`},
+		{http.MethodPut, "/v1/default/banks/b1", "{}"},
 		{http.MethodDelete, "/v1/default/banks/b1/documents/d1", ""},
 	}
 	for _, w := range writes {
@@ -66,8 +67,8 @@ func TestWriteRoutesRefuseViewer(t *testing.T) {
 	}
 }
 
-// TestReadRoutesServeViewer sends a Viewer to routes that only read or
-// ensure a bank. None may answer 401 or 403.
+// TestReadRoutesServeViewer sends a Viewer to routes that only read. None may
+// answer 401 or 403.
 func TestReadRoutesServeViewer(t *testing.T) {
 	t.Setenv("LEANKG_TOKEN_VIEWER", "viewer-tok")
 	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "")
@@ -79,7 +80,6 @@ func TestReadRoutesServeViewer(t *testing.T) {
 		{http.MethodPost, "/api/v1/memory/banks/b1/recall", `{"query":"x"}`},
 		{http.MethodPost, "/v1/default/banks/b1/memories/recall", `{"query":"x"}`},
 		{http.MethodPost, "/v1/default/banks/b1/reflect", `{"query":"x"}`},
-		{http.MethodPut, "/v1/default/banks/b1", "{}"},
 		{http.MethodGet, "/v1/default/banks/b1/memories", ""},
 		{http.MethodGet, "/api/v2/graph", ""},
 	}

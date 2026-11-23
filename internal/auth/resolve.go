@@ -22,6 +22,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // errUnknownToken is the one rejection for a bearer token that does not
@@ -165,7 +167,7 @@ func (reg *registry) tokensConfigured(ctx context.Context, st Store) (bool, erro
 	}
 	toks, err := st.TokenList(ctx)
 	if err != nil {
-		return false, fmt.Errorf("auth: token store: %w", err)
+		return false, fmt.Errorf("auth: token store: %w", store.Fail("token list", err))
 	}
 	now := time.Now().Unix()
 	for _, t := range toks {
@@ -179,7 +181,7 @@ func (reg *registry) tokensConfigured(ctx context.Context, st Store) (bool, erro
 	}
 	admin, err := st.AdminExists(ctx)
 	if err != nil {
-		return false, fmt.Errorf("auth: admin store: %w", err)
+		return false, fmt.Errorf("auth: admin store: %w", store.Fail("admin exists", err))
 	}
 	return admin, nil
 }
@@ -204,7 +206,7 @@ func resolveGrant(ctx context.Context, st Store, g Grant, target Target) (AuthCo
 	// its minted role.
 	acct, found, err := st.AccountByID(ctx, g.AccountID)
 	if err != nil {
-		return AuthContext{}, err
+		return AuthContext{}, store.Fail("account by id", err)
 	}
 	if found && acct.Status != "active" {
 		return AuthContext{}, errUnknownToken
@@ -214,7 +216,7 @@ func resolveGrant(ctx context.Context, st Store, g Grant, target Target) (AuthCo
 	if target.Type != "" && target.ID != "" {
 		owns, err := st.IsResourceOwner(ctx, target.Type, target.ID, g.AccountID)
 		if err != nil {
-			return AuthContext{}, err
+			return AuthContext{}, store.Fail("resource owner", err)
 		}
 		if owns {
 			ac.Role, ac.Via = Admin, ViaOwner
@@ -227,7 +229,7 @@ func resolveGrant(ctx context.Context, st Store, g Grant, target Target) (AuthCo
 	// Org ownership (orgs.owner_account_id) outranks a membership row.
 	org, found, err := st.OrgByID(ctx, g.OrgID)
 	if err != nil {
-		return AuthContext{}, err
+		return AuthContext{}, store.Fail("org by id", err)
 	}
 	if found && org.OwnerAccountID == g.AccountID {
 		ac.OrgRole, ac.Role, ac.Via = OrgRoleOwner, Admin, ViaOwner
@@ -236,7 +238,7 @@ func resolveGrant(ctx context.Context, st Store, g Grant, target Target) (AuthCo
 	// A membership role outranks the token's own role.
 	member, found, err := st.OrgMemberOf(ctx, g.OrgID, g.AccountID)
 	if err != nil {
-		return AuthContext{}, err
+		return AuthContext{}, store.Fail("org member", err)
 	}
 	if found && ValidOrgRole(member.Role) {
 		ac.OrgRole, ac.Role, ac.Via = member.Role, OrgRoleToRole(member.Role), ViaOrg

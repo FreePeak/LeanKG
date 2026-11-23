@@ -140,3 +140,122 @@ func TestMarkdownOwnerWalkRefreshOneProducer(t *testing.T) {
 		t.Errorf("second refresh of unchanged tree: index %+v, docindex %+v; want 0 files rewritten", idx2, doc2)
 	}
 }
+
+// ownedNames returns the qualified names of every element a file holds.
+func ownedNames(t *testing.T, st store.Backend, rel string) []string {
+	t.Helper()
+	els, err := st.Elements(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range els {
+		if e.FilePath == rel {
+			names = append(names, e.QualifiedName)
+		}
+	}
+	return names
+}
+
+// TestMarkdownOwnerDocsFirstWalkThenIndex: the store was indexed once, then
+// `import docs` added docs/guide.md, then `index` runs. The docindex rows of
+// the file must not survive: the index owns every markdown file it walks,
+// whatever ran after the other. (On a store the index never stamped, the
+// index re-extracts everything as an upgrade, which hides the order.)
+func TestMarkdownOwnerDocsFirstWalkThenIndex(t *testing.T) {
+	root := t.TempDir()
+	gittest.WriteFile(t, root, "a.go", "package a\n\nfunc Walked() {}\n")
+	st := openOwnershipStore(t)
+	ctx := context.Background()
+	if _, err := index.IndexDir(ctx, st, root); err != nil {
+		t.Fatalf("IndexDir: %v", err)
+	}
+
+	gittest.WriteFile(t, root, "docs/guide.md", ownGuideDoc)
+	if _, err := docindex.IndexDocsUnder(ctx, st, root, filepath.Join(root, "docs")); err != nil {
+		t.Fatalf("IndexDocsUnder: %v", err)
+	}
+	if _, err := index.IndexDir(ctx, st, root); err != nil {
+		t.Fatalf("IndexDir: %v", err)
+	}
+	indexRows, docRows := ownershipRows(t, st, "docs/guide.md")
+	if indexRows == 0 || docRows != 0 {
+		t.Errorf("docs first, then index: index rows=%d docindex rows=%d, want index-only", indexRows, docRows)
+	}
+}
+
+// TestMarkdownOwnerDocsFirstGitThenIndex: the same order in a git repository,
+// where the index keys the file by its blob and must still take it over from
+// the docindex rows.
+func TestMarkdownOwnerDocsFirstGitThenIndex(t *testing.T) {
+	gittest.SkipWithoutGit(t)
+	root := t.TempDir()
+	gittest.Git(t, root, "init", "-q")
+	gittest.WriteFile(t, root, "a.go", "package a\n\nfunc Committed() {}\n")
+	gittest.Git(t, root, "add", ".")
+	gittest.Git(t, root, "commit", "-q", "-m", "fixture")
+	st := openOwnershipStore(t)
+	ctx := context.Background()
+	if _, err := index.IndexDir(ctx, st, root); err != nil {
+		t.Fatalf("IndexDir: %v", err)
+	}
+
+	gittest.WriteFile(t, root, "docs/guide.md", ownGuideDoc)
+	gittest.Git(t, root, "add", ".")
+	gittest.Git(t, root, "commit", "-q", "-m", "docs")
+	if _, err := docindex.IndexDocsUnder(ctx, st, root, filepath.Join(root, "docs")); err != nil {
+		t.Fatalf("IndexDocsUnder: %v", err)
+	}
+	if _, err := index.IndexDir(ctx, st, root); err != nil {
+		t.Fatalf("IndexDir: %v", err)
+	}
+	indexRows, docRows := ownershipRows(t, st, "docs/guide.md")
+	if indexRows == 0 || docRows != 0 {
+		t.Errorf("docs first, then index (git): index rows=%d docindex rows=%d, want index-only", indexRows, docRows)
+	}
+}
+
+// TestMarkdownOwnerIgnoredFileSameInEitherOrder: a markdown file the git index
+// does not list (ignored) is owned by docindex alone, and the result must be
+// the same whether `index` runs before or after `import docs`.
+func TestMarkdownOwnerIgnoredFileSameInEitherOrder(t *testing.T) {
+	gittest.SkipWithoutGit(t)
+	const rel = "private/notes.md"
+	ctx := context.Background()
+	names := map[string][]string{}
+	for _, order := range []string{"index-then-docs", "docs-then-index"} {
+		root := t.TempDir()
+		gittest.Git(t, root, "init", "-q")
+		gittest.WriteFile(t, root, ".gitignore", "private/\n")
+		gittest.WriteFile(t, root, "a.go", "package a\n\nfunc Committed() {}\n")
+		gittest.Git(t, root, "add", ".")
+		gittest.Git(t, root, "commit", "-q", "-m", "fixture")
+		gittest.WriteFile(t, root, rel, ownGuideDoc)
+		st := openOwnershipStore(t)
+		docs := func() {
+			if _, err := docindex.IndexDocsUnder(ctx, st, root, filepath.Join(root, "private")); err != nil {
+				t.Fatalf("%s: IndexDocsUnder: %v", order, err)
+			}
+		}
+		idx := func() {
+			if _, err := index.IndexDir(ctx, st, root); err != nil {
+				t.Fatalf("%s: IndexDir: %v", order, err)
+			}
+		}
+		if order == "index-then-docs" {
+			idx()
+			docs()
+		} else {
+			docs()
+			idx()
+		}
+		names[order] = ownedNames(t, st, rel)
+	}
+	if len(names["docs-then-index"]) == 0 {
+		t.Fatalf("docs then index: the ignored file lost its rows, got none")
+	}
+	if strings.Join(names["index-then-docs"], ",") != strings.Join(names["docs-then-index"], ",") {
+		t.Errorf("ignored file rows differ by order: index-then-docs=%v docs-then-index=%v",
+			names["index-then-docs"], names["docs-then-index"])
+	}
+}
