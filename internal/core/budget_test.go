@@ -97,3 +97,27 @@ func TestEveryQueryActionHasAnExplicitBudget(t *testing.T) {
 		}
 	}
 }
+
+// TestResolveQueryGraphBudgetClampsToTheAnswerRange: a query-graph budget is
+// the caller's token_budget (or the table cap when absent), clamped to 200 to
+// 20000 tokens, so every transport cuts the answer to the same size.
+func TestResolveQueryGraphBudgetClampsToTheAnswerRange(t *testing.T) {
+	cases := []struct {
+		name  string
+		token any
+		want  int
+	}{
+		{"absent is the table cap", nil, 2000},
+		{"below the floor", 50, 200},
+		{"inside the range", 500, 500},
+		{"above the ceiling", 99999, 20000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolveQueryGraphBudget(tc.token)
+			if err != nil || got != tc.want {
+				t.Fatalf("ResolveQueryGraphBudget(%v) = %d, %v; want %d", tc.token, got, err, tc.want)
+			}
+		})
+	}
+}

@@ -69,16 +69,6 @@ type queryGraphResult struct {
 	Path           *shortestPathResult `json:"path,omitempty"`
 }
 
-// queryGraphAction names the budget row query-graph is cut by (ToolBudgets).
-const queryGraphAction = "query_graph"
-
-// nlMinTokenBudget and nlMaxTokenBudget bound the budget query-graph uses after
-// core has validated it. The response reports the value used.
-const (
-	nlMinTokenBudget = 200
-	nlMaxTokenBudget = 20_000
-)
-
 const (
 	nlDefaultMaxDepth    = 2
 	nlMaxSeeds           = 8
@@ -889,12 +879,11 @@ func (h *apiH) queryGraph(w http.ResponseWriter, r *http.Request) {
 		respondEnvelope(w, http.StatusBadRequest, failEnvelope("question must not be empty"))
 		return
 	}
-	budget, err := core.ResolveTokenBudget(queryGraphAction, req.TokenBudget)
+	budget, err := core.ResolveQueryGraphBudget(req.TokenBudget)
 	if err != nil {
 		respondErr(w, err)
 		return
 	}
-	budget = min(max(budget, nlMinTokenBudget), nlMaxTokenBudget)
 
 	snap, err := loadSnapshot(ctx, h.engine)
 	if err != nil {
