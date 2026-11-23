@@ -12,7 +12,7 @@ PG_URL="${LEANKG_TEST_PG_URL:-postgres://postgres:postgres@localhost:5433/leankg
 
 SMOKE=$(mktemp -d)
 # Keep the e2e `leankg index` out of the real ~/.leankg/portfolio.db, which would
-# otherwise register a /private/tmp/tmp.* project on every run.
+# otherwise register a $TMPDIR/tmp.* project on every run.
 export LEANKG_PORTFOLIO_DB="$SMOKE/portfolio.db"
 PG_SCHEMA=""
 cleanup() {

@@ -235,8 +235,8 @@ force a full re-embed.
 > caller resolved to Admin.
 >
 > ```
-> curl http://192.168.100.199:9700/api/v1/status      → 200
-> POST http://192.168.100.199:9700/v1/default/banks/lanprobe-1792524856/memories
+> curl http://<internal-host>:9700/api/v1/status      → 200
+> POST http://<internal-host>:9700/v1/default/banks/lanprobe-1792524856/memories
 >                                                     → 200 {"written":1}
 > ```
 >
@@ -855,15 +855,15 @@ $ leankg migrate --project DIR                   # exit 0, creates DIR/.leankg/
 ```
 
 **The blast radius is not local, and that is what makes it severe.** The
-portfolio registry holds a row for `/private/tmp` (name `tmp`), so a writer
-sweep over the fleet materialises `/private/tmp/.leankg` — and that ONE
+portfolio registry holds a row for `<scratch>` (name `tmp`), so a writer
+sweep over the fleet materialises `<scratch>/.leankg` — and that ONE
 stray directory breaks the WHOLE REPO TEST SUITE:
 
 ```
-$ mkdir -p /private/tmp/.leankg
+$ mkdir -p <scratch>/.leankg
 $ go test ./internal/projectcfg/
 FAIL internal/projectcfg  "no marker: got \"/tmp\", want \"/tmp/TestFindProjectRootWalksUp.../002\""
-$ rm -rf /private/tmp/.leankg
+$ rm -rf <scratch>/.leankg
 $ go test ./internal/projectcfg/    # ok
 ```
 
@@ -2439,7 +2439,7 @@ without erroring. Gate: 62 packages ok, `go vet` clean, `gofmt` clean.
 
 ### v4.15-bare-mcp-url — the client writers can no longer emit a stale `?project=` (2026-10-11)
 
-**Trigger:** on this machine, `xdev mcps` showed leankg online while the Cursor and Claude-plugin configs of the same repo pointed at `http://localhost:9699/mcp?project=/workspace-freepeak` — a Docker mount path that exists nowhere on the host. Every initialize failed with `unknown project "/workspace-freepeak"` (FR-ZCP-02 fail-closed), so the clients reading those configs dropped leankg from their tool list while the same server answered the bare URL normally.
+**Trigger:** on this machine, `xdev mcps` showed leankg online while the Cursor and Claude-plugin configs of the same repo pointed at `http://localhost:9699/mcp?project=/workspace-other` — a Docker mount path that exists nowhere on the host. Every initialize failed with `unknown project "/workspace-other"` (FR-ZCP-02 fail-closed), so the clients reading those configs dropped leankg from their tool list while the same server answered the bare URL normally.
 
 **Why the writers allowed it.** FR-ZCP-04 already says the emitted entry carries the bare URL, but that was prose only: `connect --http --url` and `install --http --url` passed `cfg.URL` straight through to every writer, so a caller carrying a query produced a query in the file.
 
