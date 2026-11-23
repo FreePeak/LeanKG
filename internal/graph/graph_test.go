@@ -406,6 +406,56 @@ func TestCallersOfTypeExcludeOwnMethods(t *testing.T) {
 	}
 }
 
+// A Go method may be declared in another file of its type's package. Its
+// references to the type are the type's own methods and must be dropped too.
+func TestCallersOfTypeDropOtherFileMethodsInSameDirectory(t *testing.T) {
+	st := newSiteFixture(t)
+	ctx := context.Background()
+	if err := st.UpsertElements(ctx, []store.Element{
+		{QualifiedName: "m.go::T.M", ElementType: "method", Name: "M", FilePath: "m.go", LineStart: 5},
+	}); err != nil {
+		t.Fatalf("upsert elements: %v", err)
+	}
+	if err := st.UpsertRelationships(ctx, []store.Relationship{
+		{Source: "m.go::T.M", Target: "t.go::T", RelType: "references", Confidence: 0.5, Metadata: map[string]any{"line": float64(6)}},
+	}); err != nil {
+		t.Fatalf("upsert relationships: %v", err)
+	}
+
+	sites, err := CallSites(ctx, st, []string{"t.go::T"}, true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := SiteEnds(sites), []string{"f.go::F"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Callers(T) = %v, want %v (T.M is declared in m.go, the type's own package directory, and must not appear)", got, want)
+	}
+}
+
+// A type with the same name in another directory is another package's type, so
+// its methods stay external callers.
+func TestCallersOfSameNamedTypeInOtherDirectoryAreKept(t *testing.T) {
+	st := newSiteFixture(t)
+	ctx := context.Background()
+	if err := st.UpsertElements(ctx, []store.Element{
+		{QualifiedName: "pkg/x.go::T.N", ElementType: "method", Name: "N", FilePath: "pkg/x.go", LineStart: 5},
+	}); err != nil {
+		t.Fatalf("upsert elements: %v", err)
+	}
+	if err := st.UpsertRelationships(ctx, []store.Relationship{
+		{Source: "pkg/x.go::T.N", Target: "t.go::T", RelType: "references", Confidence: 0.5, Metadata: map[string]any{"line": float64(6)}},
+	}); err != nil {
+		t.Fatalf("upsert relationships: %v", err)
+	}
+
+	sites, err := CallSites(ctx, st, []string{"t.go::T"}, true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := SiteEnds(sites), []string{"f.go::F", "pkg/x.go::T.N"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Callers(T) = %v, want %v (pkg/x.go::T.N is a different package's T and must stay)", got, want)
+	}
+}
+
 // A caller that uses a callee on several lines carries every use line in the
 // edge's "lines" metadata (unsorted, with a repeat). CallSites emits one site per
 // distinct line, all at the caller, in ascending line order.

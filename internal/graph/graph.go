@@ -8,6 +8,7 @@ package graph
 import (
 	"context"
 	"errors"
+	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -385,7 +386,7 @@ func SitesBySeed(ctx context.Context, st graphStore, seeds []string, incoming bo
 			if err != nil {
 				return nil, err
 			}
-			if incoming && el.ElementType == "method" && methodOwner(el) == seed {
+			if incoming && el.ElementType == "method" && isOwnMethod(el, seed) {
 				continue
 			}
 			site.File = el.FilePath
@@ -444,6 +445,21 @@ func methodOwner(el store.Element) string {
 		return el.ParentQualified
 	}
 	return strings.TrimSuffix(el.QualifiedName, "."+el.Name)
+}
+
+// isOwnMethod reports whether method el is one of seed's own methods. A method
+// declared in seed's file is owned by seed. A Go method may also sit in another
+// file of the same package directory, so a method whose receiver has seed's
+// name in that directory is owned by seed too. A type of that name in another
+// directory is another package's type and is not matched.
+func isOwnMethod(el store.Element, seed string) bool {
+	owner := methodOwner(el)
+	if owner == seed {
+		return true
+	}
+	ownerFile, ownerName, okOwner := strings.Cut(owner, "::")
+	seedFile, seedName, okSeed := strings.Cut(seed, "::")
+	return okOwner && okSeed && ownerName == seedName && path.Dir(ownerFile) == path.Dir(seedFile)
 }
 
 // SiteEnds returns the deduplicated, sorted QN of each site.
