@@ -12,6 +12,7 @@ package auth
 
 import (
 	"errors"
+	"log"
 	"math"
 	"net/http"
 	"time"
@@ -52,6 +53,14 @@ func Routes(st Store) http.Handler {
 			return
 		}
 		if err != nil {
+			// A store failure is a server fault: log the cause and answer generically,
+			// as the dashboard does, so no driver text reaches the client (#601 item 6).
+			if status := httpx.StatusFor(err); status >= http.StatusInternalServerError {
+				log.Printf("auth: register: %v", err)
+				msg := "internal error"
+				httpx.WriteJSON(w, status, apiResponse{Success: false, Error: &msg})
+				return
+			}
 			writeFail(w, err.Error())
 			return
 		}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -599,6 +600,36 @@ func TestAuthBodyOverLimitIs413(t *testing.T) {
 				t.Fatalf("code = %v, want %s", resp["code"], errs.RequestTooLarge.Code)
 			}
 		})
+	}
+}
+
+// upsertDownStore fails every account write with driver text, the way a broken
+// database does.
+type upsertDownStore struct{ Store }
+
+func (upsertDownStore) AccountUpsert(context.Context, store.Account) error {
+	return errors.New(`pq: password authentication failed for user "leankg_svc" dsn=postgres://leankg_svc:hunter2@db.internal:5432/leankg`)
+}
+
+// TestRegisterStoreFailureIsGeneric pins #601 item 6: a store failure answers
+// 500 with a generic message, and the driver text never reaches the client.
+func TestRegisterStoreFailureIsGeneric(t *testing.T) {
+	clearTokenEnv(t)
+	h := Routes(upsertDownStore{openAuthStore(t)})
+	code, resp := doJSON(t, h, "POST", "/api/v1/auth/register", "", map[string]string{
+		"email": "down@example.com", "password": "password123", "name": "Down",
+	})
+	if code != http.StatusInternalServerError || resp["success"] != false {
+		t.Fatalf("= %d %v; want 500 failure envelope", code, resp)
+	}
+	if msg := errString(t, resp); msg != "internal error" {
+		t.Fatalf("error = %q; want generic %q", msg, "internal error")
+	}
+	raw, _ := json.Marshal(resp)
+	for _, leak := range []string{"password authentication", "hunter2", "dsn="} {
+		if strings.Contains(string(raw), leak) {
+			t.Fatalf("response leaks driver text %q: %s", leak, raw)
+		}
 	}
 }
 

@@ -176,7 +176,7 @@ func Register(ctx context.Context, st Store, email, password, name string) (stor
 		return store.Account{}, err
 	}
 	if _, found, err := st.AccountByEmail(ctx, email); err != nil {
-		return store.Account{}, err
+		return store.Account{}, store.Fail("account lookup", err)
 	} else if found {
 		// Spend the PBKDF2 work a new account costs, so a duplicate does not
 		// answer in a fraction of the time and reveal the email (#601 B1).
@@ -202,10 +202,10 @@ func Register(ctx context.Context, st Store, email, password, name string) (stor
 		UpdatedAt:    now,
 	}
 	if err := st.AccountUpsert(ctx, account); err != nil {
-		return store.Account{}, err
+		return store.Account{}, store.Fail("account upsert", err)
 	}
 	if _, err := CreateOrg(ctx, st, name+"'s org", account.ID); err != nil {
-		return store.Account{}, err
+		return store.Account{}, store.Fail("org create", err)
 	}
 	return account, nil
 }
