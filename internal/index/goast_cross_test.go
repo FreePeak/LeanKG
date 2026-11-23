@@ -681,3 +681,29 @@ func TestGoAnonymousInterfaceInEveryDeclarationForm(t *testing.T) {
 		}
 	}
 }
+
+// TestGoDuplicateEdgeKeepsItsHighestConfidence: r.Do() is an interface call
+// (interface-dispatch, 0.3) that reaches Impl.Do and Plain.Do, and x.Do() is a
+// direct call on an Impl value (method-by-name, 0.4). Both reach Impl.Do, and
+// the shared edge must keep the direct call's 0.4 and its resolution even though
+// the interface site is written first.
+func TestGoDuplicateEdgeKeepsItsHighestConfidence(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"p/p.go": "package p\n\ntype Doer interface {\n\tDo()\n}\n\ntype Impl struct{}\n\nfunc (Impl) Do() {}\n\n" +
+			"type Plain struct{}\n\nfunc (Plain) Do() {}\n\nfunc Use(r Doer) {\n\tr.Do()\n\tx := Impl{}\n\tx.Do()\n}\n",
+	})
+	r, ok := edgeTo(t, st, "p/p.go::Use", "p/p.go::Impl.Do", "calls")
+	if !ok {
+		t.Fatalf("no calls edge to Impl.Do; outgoing %v", targetsFrom(t, st, "p/p.go::Use", "calls"))
+	}
+	if r.Confidence != 0.4 {
+		t.Fatalf("Use -> Impl.Do confidence = %v, want 0.4 (the direct call)", r.Confidence)
+	}
+	if got, _ := r.Metadata["resolution"].(string); got != "method-by-name" {
+		t.Fatalf("Use -> Impl.Do resolution = %q, want method-by-name", got)
+	}
+	p, ok := edgeTo(t, st, "p/p.go::Use", "p/p.go::Plain.Do", "calls")
+	if !ok || p.Confidence != 0.3 {
+		t.Fatalf("Use -> Plain.Do = %+v (found %v), want the 0.3 interface-dispatch edge", p, ok)
+	}
+}

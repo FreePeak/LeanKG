@@ -138,7 +138,9 @@ type edgeSet struct {
 func newEdgeSet() *edgeSet { return &edgeSet{at: map[[3]string]int{}} }
 
 // add records r, or the use line it carries, and reports whether r is a new edge.
-// The first edge's metadata is kept.
+// A duplicate with a higher confidence replaces the edge, so its confidence and
+// resolution are those of the strongest use; the use lines of every duplicate
+// are kept.
 func (s *edgeSet) add(r store.Relationship) bool {
 	if r.Source == r.Target {
 		return false
@@ -150,6 +152,8 @@ func (s *edgeSet) add(r store.Relationship) bool {
 		s.at[key] = i
 		s.out = append(s.out, r)
 		s.sites = append(s.sites, nil)
+	} else if r.Confidence > s.out[i].Confidence {
+		s.out[i] = r
 	}
 	if line, ok := r.Metadata["line"].(int); ok {
 		s.sites[i] = append(s.sites[i], line)
@@ -169,6 +173,9 @@ func (s *edgeSet) rels() []store.Relationship {
 		}
 		slices.Sort(sites)
 		sites = slices.Compact(sites)
+		if s.out[i].Metadata == nil {
+			s.out[i].Metadata = map[string]any{}
+		}
 		m := s.out[i].Metadata
 		m["line"] = sites[0]
 		m["lines"] = sites
