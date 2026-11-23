@@ -478,7 +478,7 @@ and keeps it, and removes nothing: a healthy registry is untouched.
 
 | item | status | evidence |
 |---|---|---|
-| The live scope was wrong | **MEASURED** | `~/.local/bin/leankg-serve-wrapper` computed `SCAN_ROOT="${LEANKG_SCAN_ROOT:-$HOME/work}"` and the plist set no `LEANKG_SCAN_ROOT` → 287 repos under `~/work`, **231 of them `other-repo`** (out of scope since 2026-10-13; `other-repo` is served by other-kg) |
+| The live scope was wrong | **MEASURED** | `<launcher-wrapper>` computed `SCAN_ROOT="${LEANKG_SCAN_ROOT:-<workspace>}"` and the plist set no `LEANKG_SCAN_ROOT` → 287 repos under `<workspace>`, **231 of them `other-repo`** (out of scope since 2026-10-13; `other-repo` is served by other-kg) |
 | The scan root is versioned in the repo | **DONE** | `scripts/leankg-serve-wrapper.sh` + `scripts/leankg-scan-repos.sh` — default `SCAN_ROOT="${LEANKG_SCAN_ROOT:-$HOME/work/harvey/freepeak}"` (42 repos), `LEANKG_SCAN_ROOT` overrides it; the wrapper `exec`s `leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:9700 --memory --embed-provider local --hindsight-compat` |
 | The rule is checked, not asserted | **DONE** | `scripts/test-scan-root.sh` (`make scan-root-check`): fake `HOME`, one repo inside the root and one outside, stub `leankg` binary → `SCAN-ROOT OK`. Widening the default back to `$HOME/work` in a copy makes it **fail** on the out-of-scope repo |
 | The docs taught the old scope | **DONE** | `docs/architecture-flow.md` (fleet diagram, runbook, file listing), `docs/mcp-multi-project-scoping.md` (fact row + scope note; the 286 counts kept as the measurement of the defect), the PRD's wildcard-bind examples, and the shared-server hint `scripts/install-go.sh` prints |

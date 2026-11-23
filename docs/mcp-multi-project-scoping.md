@@ -32,7 +32,7 @@ refuses — correctly — and the client has nothing to send.
 **The 286 below are the pre-2026-10-21 fleet.** The scan root was `$HOME/work`,
 so 231 of the repos it found (287 measured on 2026-10-21) were `other-repo`
 company code that was never in scope: LeanKG runs only under
-`~/work/harvey/freepeak`, and `other-repo` is served by other-kg. The scan root is
+`<workspace>/<org>/<group>`, and `other-repo` is served by other-kg. The scan root is
 now `$HOME/work/harvey/freepeak` — 42 repos — and the counts in this document
 are kept as the measurement of the defect. The scope is now versioned in this
 repository: `scripts/leankg-serve-wrapper.sh` and

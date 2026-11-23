@@ -88,7 +88,7 @@ go-ui-dashboard-check:
 dual-engine:
 	bash scripts/test-dual-engine.sh
 
-# The served fleet must stay inside the self-host scan root (~/work/harvey/freepeak).
+# The served fleet must stay inside the self-host scan root (<workspace>/<org>/<group>).
 # Repos outside it (other-repo) are served by other-kg. The check is a script,
 # offline and fast.
 scan-root-check:
