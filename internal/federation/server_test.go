@@ -410,6 +410,35 @@ func TestReceiverStoreFaultOnPushHidesDriverText(t *testing.T) {
 	}
 }
 
+// relationshipsFails fails the read a publish makes after the elements.
+type relationshipsFails struct{ store.Backend }
+
+func (relationshipsFails) RelationshipsAll(context.Context, int) ([]store.Relationship, error) {
+	return nil, errors.New("no such table: relationships")
+}
+
+// TestPublishStoreFaultHidesDriverText: a store fault while publishing answers
+// 500 with no driver text (table and column names); the cause is logged
+// instead. Both reads of a publish are covered.
+func TestPublishStoreFaultHidesDriverText(t *testing.T) {
+	clearTokenEnv(t)
+	st := openStore(t)
+	for name, h := range map[string]http.Handler{
+		"elements read":      Receiver(elementsFails{st}, "/srv/local"),
+		"relationships read": Receiver(relationshipsFails{st}, "/srv/local"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := serve(t, h, http.MethodGet, GraphPath, "", nil)
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "no such table") {
+				t.Fatalf("500 body leaks driver text: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
 // TestReceiverPublishesGraph pins the read envelope a pull consumes: the same
 // keys a push sends, never null arrays, and the serving project's identity.
 func TestReceiverPublishesGraph(t *testing.T) {

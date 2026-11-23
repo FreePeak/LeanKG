@@ -138,12 +138,12 @@ func (h *receiver) publish(w http.ResponseWriter, req *http.Request) {
 	}
 	elements, err := h.st.Elements(req.Context())
 	if err != nil {
-		httpx.WriteMessage(w, http.StatusInternalServerError, fmt.Errorf("federation: read elements: %w", err).Error())
+		httpx.WriteError(w, store.Fail("publish", err))
 		return
 	}
 	relationships, err := readRelationships(req.Context(), h.st)
 	if err != nil {
-		httpx.WriteMessage(w, http.StatusInternalServerError, err.Error())
+		httpx.WriteError(w, store.Fail("publish", err))
 		return
 	}
 	now := time.Now().UTC()
