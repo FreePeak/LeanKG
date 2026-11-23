@@ -253,7 +253,7 @@ func TestSupportedFilesGitRootListsHEAD(t *testing.T) {
 	if _, err := reg.Activate(context.Background(), root); err != nil {
 		t.Fatal(err)
 	}
-	files, err := SupportedFiles(root, reg)
+	files, err := SupportedFiles(context.Background(), root, reg)
 	if err != nil {
 		t.Fatalf("SupportedFiles: %v", err)
 	}

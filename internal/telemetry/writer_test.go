@@ -352,3 +352,21 @@ func TestNopSetLevelHonoursContract(t *testing.T) {
 		t.Fatalf("Nop.Level() = %q after refused SetLevel, want off", rec.Level())
 	}
 }
+
+// TestRecorderRaisedFromOffCloses guards the Off-then-raise path: a recorder
+// built Off closes done at construction, and the writer SetLevel starts must
+// not close it a second time when it exits. Close must return and be
+// idempotent without panicking.
+func TestRecorderRaisedFromOffCloses(t *testing.T) {
+	st := openTestLedger(t)
+	rec := NewRecorder(context.Background(), st, Off, 1024)
+	if err := rec.SetLevel(Metadata); err != nil {
+		t.Fatalf("SetLevel(Metadata): %v", err)
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}

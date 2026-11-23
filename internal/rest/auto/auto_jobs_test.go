@@ -8,8 +8,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/FreePeak/LeanKG/internal/embed"
 )
 
 // writeSource gives the index one element to find.
@@ -162,4 +165,27 @@ func TestEmbedDebounceOutlivesRequest(t *testing.T) {
 		t.Fatalf("embed debounce ran on a cancelled context after the handler returned: %v", err)
 	}
 	jobs.Wait()
+}
+
+// TestAutoEmbedStartsProviderOnce: the auto-embed job resolves its provider once.
+// Before the fix it started one provider to check availability, discarded it,
+// and the refresh embed stage started a second one.
+func TestAutoEmbedStartsProviderOnce(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".leankg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orig := embedDebounce
+	t.Cleanup(func() { embedDebounce = orig })
+	embedDebounce = func(context.Context, time.Duration) bool { return true }
+
+	var starts atomic.Int32
+	start := func(context.Context) (embed.Provider, func(), error) {
+		starts.Add(1)
+		return embed.Deterministic(8), func() {}, nil
+	}
+	startAutoEmbed(context.Background(), dir, 0, start)
+	if n := starts.Load(); n != 1 {
+		t.Fatalf("provider started %d times, want 1", n)
+	}
 }

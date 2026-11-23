@@ -201,8 +201,28 @@ func IsGitKeyed(contentHash string) bool {
 	return isGitKey(contentHash)
 }
 
+// rollbackDir removes the files a directory began writing before it failed or
+// was cancelled, so a rerun re-indexes them. The record goes first: a record
+// that outlived its elements would read as current and be skipped forever,
+// while a missing record makes the rerun extract the file again. The original
+// error is returned; a rollback failure is joined to it.
+func rollbackDir(ctx context.Context, st store.IndexWriter, touched []string, err error) error {
+	for _, p := range touched {
+		if uerr := st.DeleteFileRecord(ctx, p); uerr != nil {
+			return errors.Join(err, uerr)
+		}
+		if uerr := st.DeleteByFile(ctx, p); uerr != nil {
+			return errors.Join(err, uerr)
+		}
+	}
+	return err
+}
+
 // DeleteFiles removes the store content of the given file paths: the
-// elements and relationships the files own, and their file records.
+// elements and relationships the files own, and their file records. The
+// elements go first: the record is what makes a rerun see a missing file
+// again, so a failure between the two converges. rollbackDir takes the
+// opposite order for a file that is still on disk.
 //
 // It is the shared delete step of the incremental index reconcile (a file the
 // walk does not see any more) and of the maintenance reconcile against HEAD
@@ -220,8 +240,8 @@ func DeleteFiles(ctx context.Context, st store.IndexWriter, paths []string) (int
 		if err := ctx.Err(); err != nil {
 			return n, err
 		}
-		// The pair runs detached from ctx: a cancel never leaves a record
-		// whose elements are already gone.
+		// The pair runs detached from ctx, so a cancel never stops it between
+		// the elements and the record.
 		wctx := context.WithoutCancel(ctx)
 		if err := st.DeleteByFile(wctx, p); err != nil {
 			return n, err
@@ -306,9 +326,15 @@ func checkRoot(ctx context.Context, st store.KV, dir string, hasFiles bool) erro
 // and explicit instantiations seed call edges, generic receivers are named alike
 // in both Go tiers, external test packages stay out of the package's name table,
 // and the per-file edge ceiling counts call edges only) changes Go edges and
-// element names that no v18 store has. A store recorded under another version
-// re-extracts every file once.
-const extractorVersion = "19"
+// element names that no v18 store has.
+// v20 (main's #601 regex-tier lexer, merged into this branch): brace-bounded
+// spans and comments that make no call edge, in every non-Go language and in
+// a Go file the parser rejects. Main recorded that as v5 (stores indexed
+// before it hold a span that runs into the next declaration's comment, and a
+// false calls edge from that comment); v5 is already taken above by the
+// doc-comment boundaries, so the merged bump is 20.
+// A store recorded under another version re-extracts every file once.
+const extractorVersion = "20"
 
 const extractorKVKey = "extractor_version"
 
@@ -331,9 +357,13 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 	if err != nil {
 		return res, err
 	}
+	// A docindex-keyed record is another producer's: it is neither trusted
+	// (the index re-extracts the file) nor deleted (docindex owns it).
 	prevByRel := make(map[string]store.FileRecord, len(prev))
 	for _, f := range prev {
-		prevByRel[f.Path] = f
+		if !IsDocKeyed(f.ContentHash) {
+			prevByRel[f.Path] = f
+		}
 	}
 	if err := checkRoot(ctx, st, dir, len(prev) > 0); err != nil {
 		return res, err
@@ -547,23 +577,32 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 			}
 		}
 		files := byDir[d]
+		// A rollback of this directory returns the counts as they stood before
+		// it: nothing the directory wrote is stored after the rollback.
+		dirStart := res
 		pending := make([]pendingFile, 0, len(files))
+		var touched []string // files whose writes began in this directory, specialists included
 		for _, f := range files {
 			if err := ctx.Err(); err != nil {
-				return res, err
+				return dirStart, rollbackDir(wctx, st, touched, err)
 			}
 			src, err := f.content(rd)
 			if err != nil {
-				return res, err
+				return dirStart, rollbackDir(wctx, st, touched, err)
 			}
-			if handled, err := indexSpecialistFile(wctx, st, f.rel, src, f.size, f.mtimeNS, f.hash, &res); err != nil {
-				return res, err
-			} else if handled {
+			handled, err := indexSpecialistFile(wctx, st, f.rel, src, f.size, f.mtimeNS, f.hash, &res)
+			if handled {
+				touched = append(touched, f.rel) // its writes began, so a rollback covers it
+			}
+			if err != nil {
+				return dirStart, rollbackDir(wctx, st, touched, err)
+			}
+			if handled {
 				continue // the specialist own its extraction AND its writes
 			}
 			fe, err := extractFileAs(ctx, f.rel, src, f.lang)
 			if err != nil {
-				return res, err
+				return dirStart, rollbackDir(wctx, st, touched, err)
 			}
 			if fe.fallbackErr != nil {
 				res.ParseFallbacks++
@@ -584,7 +623,7 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 			}
 			sib, err := extractSiblings(ctx, dirCands[d], changed, rd)
 			if err != nil {
-				return res, err
+				return dirStart, rollbackDir(wctx, st, touched, err)
 			}
 			siblings = sib
 		}
@@ -609,11 +648,11 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 		// changed files' records stale, so the rerun redoes the whole directory.
 		for _, fe := range siblings {
 			if err := ctx.Err(); err != nil {
-				return res, err
+				return dirStart, rollbackDir(wctx, st, touched, err)
 			}
 			rels := callEdges(fileRelationships(fe, names.forFile(cx, fe)))
 			if err := st.ReplaceFileRelationships(wctx, fe.rel, callEdgeTypes, rels); err != nil {
-				return res, err
+				return dirStart, rollbackDir(wctx, st, touched, err)
 			}
 		}
 		// The package of a Go directory is written before its files, like the
@@ -626,10 +665,9 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 			}
 			fes = append(fes, siblings...)
 			if err := writeGoPackage(ctx, st, pr, d, goImports(fes), &res); err != nil {
-				return res, err
+				return dirStart, rollbackDir(wctx, st, touched, err)
 			}
 		}
-		var touched []string // files whose writes began in this directory
 		err := func() error {
 			for _, p := range pending {
 				if err := ctx.Err(); err != nil {
@@ -665,10 +703,7 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 			return nil
 		}()
 		if err != nil {
-			if _, uerr := DeleteFiles(wctx, st, touched); uerr != nil {
-				err = errors.Join(err, uerr)
-			}
-			return res, err
+			return dirStart, rollbackDir(wctx, st, touched, err)
 		}
 		if reextract && d > cursor {
 			cursor = d

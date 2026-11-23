@@ -120,9 +120,10 @@ func IndexDocsUnder(ctx context.Context, st store.IndexWriter, root, dir string)
 		return res, err
 	}
 
-	// Deleted files: previously indexed docs, absent on disk.
-	for rel := range prevByRel {
-		if onDisk[rel] {
+	// Deleted files: previously indexed docs, absent on disk. A record the
+	// index wrote is the index's to delete.
+	for rel, rec := range prevByRel {
+		if onDisk[rel] || !index.IsDocKeyed(rec.ContentHash) {
 			continue
 		}
 		if err := ctx.Err(); err != nil {
@@ -146,10 +147,10 @@ func IndexDocsUnder(ctx context.Context, st store.IndexWriter, root, dir string)
 			return res, err
 		}
 		rec, seen := prevByRel[rel]
-		// A record keyed to a git blob was written by internal/index from HEAD,
-		// which owns the file's rows. Re-extracting it here would replace the
-		// index's rows with docindex's on every refresh (CX-10).
-		if seen && index.IsGitKeyed(rec.ContentHash) {
+		// A record the index wrote (a git blob or a walked SHA-256) is owned by
+		// internal/index. Re-extracting it here would replace the index's rows
+		// with docindex's on every refresh (CX-10).
+		if seen && !index.IsDocKeyed(rec.ContentHash) {
 			res.Skipped++
 			continue
 		}
@@ -161,7 +162,8 @@ func IndexDocsUnder(ctx context.Context, st store.IndexWriter, root, dir string)
 		if err != nil {
 			return res, err
 		}
-		if seen && rec.ContentHash == sum {
+		key := index.DocContentKey(sum)
+		if seen && rec.ContentHash == key {
 			res.Skipped++
 			continue
 		}
@@ -182,7 +184,7 @@ func IndexDocsUnder(ctx context.Context, st store.IndexWriter, root, dir string)
 		}
 		if err := st.UpsertFiles(ctx, []store.FileRecord{{
 			Path: rel, Size: info.Size(), MtimeNS: info.ModTime().UnixNano(),
-			ContentHash: sum,
+			ContentHash: key,
 		}}); err != nil {
 			return res, err
 		}

@@ -11,6 +11,7 @@ import (
 	"os"
 	"sort"
 
+	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/telemetry"
 	"github.com/FreePeak/LeanKG/internal/telemetry/report"
@@ -53,23 +54,23 @@ func (s *Server) consentPost(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxConsentBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
-		httpx.WriteMessage(w, http.StatusBadRequest, "invalid JSON body")
+		httpx.WriteError(w, errs.NewError(errs.InvalidParam, "invalid JSON body", "send the consent choice as a JSON object, e.g. {\"capture\":\"off\"}"))
 		return
 	}
 	level := telemetry.Level(req.Capture)
 	switch level {
 	case telemetry.Off, telemetry.Metadata, telemetry.Bodies:
 	default:
-		httpx.WriteMessage(w, http.StatusBadRequest, "capture must be off, metadata or bodies")
+		httpx.WriteError(w, errs.NewError(errs.InvalidParam, "capture must be off, metadata or bodies", "set capture to off, metadata or bodies"))
 		return
 	}
 	if req.Purge && level != telemetry.Off {
-		httpx.WriteMessage(w, http.StatusBadRequest, "purge needs capture=off")
+		httpx.WriteError(w, errs.NewError(errs.InvalidParam, "purge needs capture=off", "send purge only together with capture set to off"))
 		return
 	}
 	clients, err := s.knownClients(req.Sessions)
 	if err != nil {
-		httpx.WriteMessage(w, http.StatusBadRequest, err.Error())
+		httpx.WriteError(w, err)
 		return
 	}
 	cfg, err := s.config()
@@ -117,7 +118,7 @@ func (s *Server) knownClients(in []string) ([]string, error) {
 	out := []string{}
 	for _, c := range in {
 		if !known[c] {
-			return nil, fmt.Errorf("unknown client %q", c)
+			return nil, errs.NewError(errs.InvalidParam, fmt.Sprintf("unknown client %q", c), "list only the clients the dashboard reports under clients")
 		}
 		if !seen[c] {
 			seen[c] = true

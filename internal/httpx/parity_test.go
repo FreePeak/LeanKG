@@ -124,13 +124,16 @@ func TestBadInputAnswersOneEnvelopeOnEveryTransport(t *testing.T) {
 	t.Run("malformed JSON", func(t *testing.T) {
 		rs, rb := post(t, restSrv.URL+"/api/v1/query", `{"query":`)
 		ws, wb := post(t, webSrv.URL+"/api/query", `{"query":`)
-		rmsg, _ := envelopeOf(t, rb)
-		wmsg, _ := envelopeOf(t, wb)
+		rmsg, rcode := envelopeOf(t, rb)
+		wmsg, wcode := envelopeOf(t, wb)
 		if rs != http.StatusBadRequest || ws != http.StatusBadRequest {
 			t.Fatalf("status rest=%d web=%d, want 400 on both", rs, ws)
 		}
 		if rmsg != wmsg || !strings.HasPrefix(rmsg, "invalid JSON body: ") {
 			t.Fatalf("rest %q, web %q; want the same invalid JSON body text", rmsg, wmsg)
+		}
+		if rcode != wcode || rcode != "LEANKG_ERROR_INVALID_PARAM" {
+			t.Fatalf("code rest=%q web=%q, want LEANKG_ERROR_INVALID_PARAM", rcode, wcode)
 		}
 	})
 }

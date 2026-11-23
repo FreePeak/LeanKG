@@ -130,7 +130,8 @@ func New(st store.Backend, opts Options) *Engine {
 
 // Close releases what the engine started: the LSP servers and the pool's idle
 // janitor. The store and the memory layer belong to the caller, who closes
-// them. Close is idempotent; a query after Close answers an error (CX-45).
+// them. Close is idempotent. After Close only the LSP queries answer an error
+// (errEngineClosed, CX-45); the other queries still run against the store.
 func (e *Engine) Close() {
 	e.lspMu.Lock()
 	defer e.lspMu.Unlock()
@@ -1151,7 +1152,8 @@ func looksLikeIdentifier(s string) bool {
 // exactly itself. A bare name shared by callable elements (Store.X and
 // PGStore.X) resolves to all of them, shortest qualified name first, so one
 // verb call answers for every same-named function or method. Any other bare
-// name resolves to the shortest match, as FindExact ranks it. Unknown seeds
+// name resolves to the best FindExact match: an exact-case match first, then the
+// shorter qualified name, then path and qualified name. Unknown seeds
 // pass through unchanged so graph.ErrUnknownNode still fires for true misses.
 // When neither the exact nor the bare-name lookup finds anything, the package
 // and path-suffix forms of seedAliases are tried; aliased reports that they

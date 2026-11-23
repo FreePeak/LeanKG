@@ -458,4 +458,34 @@ CREATE TRIGGER IF NOT EXISTS knowledge_fts_delete AFTER DELETE ON knowledge_entr
 	DELETE FROM knowledge_fts WHERE entry_id = old.id;
 END;
 `})
+	// Migration 19 kept each index row's rowid independent of its entry, so
+	// the triggers could only delete by the UNINDEXED entry_id (a full scan)
+	// and an update left the index row on a drifted rowid. This rebuild puts
+	// every index row on its entry's rowid and the triggers delete by rowid.
+	migrations = append(migrations, migration{20, "knowledge-fts-rowid", knowledgeFTSRebuild})
 }
+
+// knowledgeFTSRebuild puts every knowledge_fts row on its entry's rowid and
+// re-creates the triggers that delete by rowid. Migration 20 runs it once;
+// realignKnowledgeFTS reruns it after every VACUUM.
+const knowledgeFTSRebuild = `
+DROP TRIGGER IF EXISTS knowledge_fts_insert;
+DROP TRIGGER IF EXISTS knowledge_fts_update;
+DROP TRIGGER IF EXISTS knowledge_fts_delete;
+DROP TABLE IF EXISTS knowledge_fts;
+CREATE VIRTUAL TABLE knowledge_fts USING fts5(
+	entry_id UNINDEXED, title, content
+);
+INSERT INTO knowledge_fts (rowid, entry_id, title, content)
+	SELECT rowid, id, title, content FROM knowledge_entries;
+CREATE TRIGGER knowledge_fts_insert AFTER INSERT ON knowledge_entries BEGIN
+	INSERT INTO knowledge_fts (rowid, entry_id, title, content) VALUES (new.rowid, new.id, new.title, new.content);
+END;
+CREATE TRIGGER knowledge_fts_update AFTER UPDATE ON knowledge_entries BEGIN
+	DELETE FROM knowledge_fts WHERE rowid = old.rowid;
+	INSERT INTO knowledge_fts (rowid, entry_id, title, content) VALUES (new.rowid, new.id, new.title, new.content);
+END;
+CREATE TRIGGER knowledge_fts_delete AFTER DELETE ON knowledge_entries BEGIN
+	DELETE FROM knowledge_fts WHERE rowid = old.rowid;
+END;
+`

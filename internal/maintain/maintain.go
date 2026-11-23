@@ -354,7 +354,12 @@ func Pass(ctx context.Context, st Store, opts Options) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return res, err
 	}
+	// A step that failed because ctx was cancelled ends the pass with that
+	// cancel, so an interrupted run is never reported as a success.
 	if r, err := st.Maintain(ctx, store.MaintainOp{Kind: store.MaintainCheckpoint}); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return res, cerr
+		}
 		logf("maintain: checkpoint: %v", err)
 	} else if r.Skipped == "" {
 		res.Checkpointed = true
@@ -364,6 +369,9 @@ func Pass(ctx context.Context, st Store, opts Options) (Result, error) {
 		res.After = after.SizeBytes
 		res.FreeAfter = after.FreeBytes
 	} else {
+		if cerr := ctx.Err(); cerr != nil {
+			return res, cerr
+		}
 		logf("maintain: re-probe space: %v", err)
 	}
 	// The signed delta is split into its two halves, so a pass that grew the

@@ -49,6 +49,11 @@ func checkKnowledgeKeywordSearch(t *testing.T, s knowledgeKeywordStore) {
 	hits, err := s.KnowledgeEntriesSearch(ctx, "socket resume", "", "", 10)
 	expectIDs(`"socket resume"`, hits, err, "K-old")
 
+	// A partial word is no index term, so only the substring arm finds it:
+	// both engines must recall K-old for "sock" (issue #588).
+	hits, err = s.KnowledgeEntriesSearch(ctx, "sock", "", "", 10)
+	expectIDs(`"sock" partial word`, hits, err, "K-old")
+
 	// Ranked, not newest-first: K-new is the newest hit but K-mid carries both
 	// terms more often, so K-mid comes first. K-old lacks "link" and is excluded.
 	hits, err = s.KnowledgeEntriesSearch(ctx, "resume link", "", "", 10)

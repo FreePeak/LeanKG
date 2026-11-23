@@ -2,8 +2,10 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestRoleSufficientOrgHierarchy ports the Rust role_sufficient table: owner >
@@ -220,5 +222,54 @@ func TestCreateOrgOwnsAndClaimsResource(t *testing.T) {
 	owned, err := IsResourceOwner(context.Background(), st, "knowledge", "entry-1", account.ID)
 	if err != nil || !owned {
 		t.Fatalf("is resource owner = %v, %v; want true", owned, err)
+	}
+}
+
+// TestRegisterDuplicateErrorDoesNotEchoEmail pins #586 at the store seam: the
+// duplicate error names no email, so no caller can echo it back.
+func TestRegisterDuplicateErrorDoesNotEchoEmail(t *testing.T) {
+	clearTokenEnv(t)
+	st := openAuthStore(t)
+	if _, err := Register(context.Background(), st, "echo@example.com", "password123", "Echo"); err != nil {
+		t.Fatalf("first register: %v", err)
+	}
+	_, err := Register(context.Background(), st, "ECHO@example.com", "password123", "Echo2")
+	if err == nil {
+		t.Fatal("duplicate email must be rejected")
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "echo@example.com") {
+		t.Fatalf("duplicate error echoes the email: %q", err.Error())
+	}
+}
+
+// TestRegisterDuplicateSpendsHashingWork pins #601 B1: a duplicate email must
+// spend one PBKDF2 verification, or its response time reveals which emails are
+// registered. There is no seam to count PBKDF2 calls, so this times one
+// verification as the baseline (best of three, so a slow run cannot inflate it)
+// and requires the duplicate to take at least half of it. The new-account time
+// is not the baseline: it also pays a database write whose latency varies.
+func TestRegisterDuplicateSpendsHashingWork(t *testing.T) {
+	clearTokenEnv(t)
+	st := openAuthStore(t)
+	const email = "timing@example.com"
+	if _, err := Register(context.Background(), st, email, "password123", "Timing"); err != nil {
+		t.Fatalf("first register: %v", err)
+	}
+
+	baseline := time.Duration(1<<63 - 1)
+	for range 3 {
+		start := time.Now()
+		_ = VerifyPassword("password123", dummyVerifier)
+		baseline = min(baseline, time.Since(start))
+	}
+
+	start := time.Now()
+	_, err := Register(context.Background(), st, email, "password123", "Timing")
+	dup := time.Since(start)
+	if !errors.Is(err, ErrAccountExists) {
+		t.Fatalf("duplicate err = %v, want ErrAccountExists", err)
+	}
+	if dup < baseline/2 {
+		t.Fatalf("duplicate answered in %v, one PBKDF2 verification takes %v: the duplicate path skips the hashing work", dup, baseline)
 	}
 }

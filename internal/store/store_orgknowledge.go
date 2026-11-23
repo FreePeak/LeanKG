@@ -300,11 +300,18 @@ func (s *Store) KnowledgeEntriesByEnvironment(ctx context.Context, environment s
 // The keyword hits come from knowledge_fts: bm25 ranked, and every query term
 // must appear, as on PostgreSQL. Substring matches the index cannot see (a
 // partial word, for one) follow newest first, so recall never falls below
-// substring search. A query with no terms, or an index error, is substring-only.
+// substring search. A query with no terms is substring-only.
+//
+// The error is non-nil only when the substring arm fails. An unavailable
+// keyword arm (a store that predates the index, or an index error) is not an
+// error: the hits are still complete, the order is recency only, and one
+// warning is logged (warnRankingDegraded). Callers check err first and keep
+// the hits.
 func (s *Store) KnowledgeEntriesSearch(ctx context.Context, query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
 	ranked, err := s.knowledgeRanked(ctx, query, knowledgeType, environment, limit)
 	if err != nil {
-		ranked = nil // degrade to substring recall, as PostgreSQL does
+		ranked = nil
+		warnRankingDegraded(err)
 	}
 	if limit > 0 && len(ranked) >= limit {
 		return ranked, nil
@@ -313,19 +320,7 @@ func (s *Store) KnowledgeEntriesSearch(ctx context.Context, query, knowledgeType
 	if err != nil {
 		return nil, err
 	}
-	seen := make(map[string]bool, len(ranked))
-	for _, e := range ranked {
-		seen[e.ID] = true
-	}
-	for _, e := range substring {
-		if limit > 0 && len(ranked) >= limit {
-			break
-		}
-		if !seen[e.ID] {
-			ranked = append(ranked, e)
-		}
-	}
-	return ranked, nil
+	return fillKnowledgeRecall(ranked, substring, limit), nil
 }
 
 // knowledgeRanked is the keyword arm over knowledge_fts: hits ordered by bm25,
@@ -354,6 +349,12 @@ func (s *Store) knowledgeRanked(ctx context.Context, query, knowledgeType, envir
 
 // knowledgeSubstringSearch substring-matches title or content (optionally
 // narrowed by knowledge type and environment), newest first.
+//
+// LIMITATION (SQLite, ASCII only): the needle is lowercased in Go by likeContains
+// with Unicode rules, but SQLite's LOWER() and LIKE fold ASCII only. So a
+// non-ASCII partial word misses an entry in another case: "école" does not match
+// "ÉCOLE". PostgreSQL's lower() is locale-aware and matches. The package has no
+// SQLite scalar-function hook for a Unicode fold, so this is documented, not fixed.
 func (s *Store) knowledgeSubstringSearch(ctx context.Context, query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
 	b := &whereBuilder{ph: func(int) string { return "?" }}
 	where := searchWhere(query, knowledgeType, environment, b)

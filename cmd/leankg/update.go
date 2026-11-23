@@ -52,6 +52,8 @@ func cmdUpdate(ctx context.Context, args []string) error {
 		// The one failure with a known fix: print it as a copy-paste command.
 		fmt.Fprintln(os.Stderr, pe)
 		return cliexit.Code(1)
+	case errors.Is(err, context.Canceled):
+		return fmt.Errorf("update: %w", err) // cliexit.Finish exits 130
 	case err != nil:
 		fmt.Fprintf(os.Stderr, "update: %v\n", err)
 		return cliexit.Code(1)

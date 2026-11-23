@@ -527,3 +527,72 @@ func TestKVBatchCacheIsPruned(t *testing.T) {
 	}
 	var _ store.Backend = f.st
 }
+
+// cancelAfterOneCall lets the first synthesis call through and then cancels
+// the run: the shape of a SIGINT that lands between two batches.
+type cancelAfterOneCall struct {
+	Chat
+	cancel context.CancelFunc
+}
+
+func (c cancelAfterOneCall) Complete(ctx context.Context, req Request) (string, error) {
+	text, err := c.Chat.Complete(ctx, req)
+	c.cancel()
+	return text, err
+}
+
+// A cancelled run keeps the batch it finished and the cached entry of the batch
+// it never reached: the save runs after the cancel, and it must not erase the
+// unreached entry.
+func TestSynthCacheSurvivesCancelledRun(t *testing.T) {
+	f := newFixture(t, map[string]string{})
+	srv := newFakeServer(t, nil)
+	big := strings.Repeat("x", 30000)
+	items := []fileSummary{{Path: "a.go", Summary: big}, {Path: "b.go", Summary: big}}
+	ws := []work{{path: "a.go", hash: "h-a", summary: big}, {path: "b.go", hash: "h-b", summary: big}}
+	hashByPath := map[string]string{"a.go": "h-a", "b.go": "h-b"}
+	batches := batchSummaries(items, BatchCharBudget)
+	if len(batches) != 2 {
+		t.Fatalf("batches = %d, want 2 so the cancel lands between them", len(batches))
+	}
+	keyA, keyB := batchKey(batches[0], hashByPath), batchKey(batches[1], hashByPath)
+
+	seeded, _ := json.Marshal(map[string][]cleanedNode{keyB: {{Name: "old b", Type: "system", Summary: "from an earlier run"}}})
+	if err := f.st.KVSet(context.Background(), synthCacheNamespace, synthCacheKey, string(seeded)); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := &pipeline{st: f.st, opts: runOpts(f.dir, cancelAfterOneCall{Chat: srv.chat(), cancel: cancel}), dir: f.dir}
+	p.pass2(ctx, ws)
+
+	cache := loadCacheForTest(t, f.st)
+	if _, ok := cache[keyA]; !ok {
+		t.Errorf("the batch finished before the cancel was not saved: keys %v", cacheKeys(cache))
+	}
+	if _, ok := cache[keyB]; !ok {
+		t.Errorf("the batch the cancel never reached lost its cached entry: keys %v", cacheKeys(cache))
+	}
+}
+
+func loadCacheForTest(t *testing.T, st store.Backend) map[string][]cleanedNode {
+	t.Helper()
+	raw, _, err := st.KVGet(context.Background(), synthCacheNamespace, synthCacheKey)
+	if err != nil {
+		t.Fatalf("KVGet: %v", err)
+	}
+	var cache map[string][]cleanedNode
+	if err := json.Unmarshal([]byte(raw), &cache); err != nil {
+		t.Fatalf("cache must be JSON: %v", err)
+	}
+	return cache
+}
+
+func cacheKeys(cache map[string][]cleanedNode) []string {
+	keys := make([]string, 0, len(cache))
+	for k := range cache {
+		keys = append(keys, k)
+	}
+	return keys
+}

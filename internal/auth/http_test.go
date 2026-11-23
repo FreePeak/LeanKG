@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -45,10 +47,17 @@ func doJSON(t *testing.T, h http.Handler, method, path, bearer string, body any)
 	if err := json.Unmarshal(rec.Body.Bytes(), &decoded); err != nil {
 		t.Fatalf("%s %s: response is not JSON (%d): %s", method, path, rec.Code, rec.Body.String())
 	}
-	for _, key := range []string{"success", "data", "error"} {
-		if _, ok := decoded[key]; !ok {
-			t.Fatalf("%s %s: envelope missing %q key: %v", method, path, key, decoded)
+	if rec.Code < http.StatusBadRequest {
+		for _, key := range []string{"success", "data", "error"} {
+			if _, ok := decoded[key]; !ok {
+				t.Fatalf("%s %s: envelope missing %q key: %v", method, path, key, decoded)
+			}
 		}
+		return rec.Code, decoded
+	}
+	// An error answers the shared httpx body, {error} plus code, with no envelope keys.
+	if _, ok := decoded["success"]; ok {
+		t.Fatalf("%s %s: error answer %d carries a success key: %v", method, path, rec.Code, decoded)
 	}
 	return rec.Code, decoded
 }
@@ -223,7 +232,7 @@ func TestAuthRoutesDenied(t *testing.T) {
 
 	t.Run("missing bearer", func(t *testing.T) {
 		code, resp := doJSON(t, h, "GET", "/api/v1/auth/token", "", nil)
-		if code != http.StatusBadRequest || resp["success"] != false {
+		if code != http.StatusBadRequest {
 			t.Fatalf("= %d %v", code, resp)
 		}
 		if msg := errString(t, resp); !strings.Contains(msg, "missing bearer token") {
@@ -467,7 +476,7 @@ func TestTokenRevokeNeedsOwnerOrAdmin(t *testing.T) {
 	t.Run("viewer cannot revoke another account's token", func(t *testing.T) {
 		victimSecret, victim := mint("victim-a", "viewer", owner)
 		code, resp := revoke(outsiderBearer, victim.ID)
-		if code != http.StatusForbidden || resp["success"] != false {
+		if code != http.StatusForbidden {
 			t.Fatalf("= %d %v; want 403", code, resp)
 		}
 		if code, _ := doJSON(t, h, "GET", "/api/v1/auth/token", victimSecret, nil); code != http.StatusOK {
@@ -497,4 +506,260 @@ func TestTokenRevokeNeedsOwnerOrAdmin(t *testing.T) {
 			t.Fatalf("= %d %v; want 200 false", code, resp)
 		}
 	})
+}
+
+// TestTokenListScopesProcessLevelCallers pins #586: an env token has no
+// account, so it is a process-level caller. A process-level viewer must not see
+// other accounts' token rows. Only a process-level admin sees the full list.
+func TestTokenListScopesProcessLevelCallers(t *testing.T) {
+	clearTokenEnv(t)
+	st := openAuthStore(t)
+	h := newAuthServer(t, st)
+	for _, acct := range []string{"acct-scope-one", "acct-scope-two"} {
+		if _, _, err := Mint(context.Background(), st, MintRequest{Name: acct, Role: "viewer", AccountID: acct}); err != nil {
+			t.Fatalf("mint %s: %v", acct, err)
+		}
+	}
+	t.Setenv("LEANKG_TOKEN_VIEWER", "env-viewer")
+	t.Setenv("LEANKG_TOKEN_ADMIN", "env-admin")
+
+	rowsFor := func(bearer string) []any {
+		t.Helper()
+		code, resp := doJSON(t, h, "GET", "/api/v1/auth/token", bearer, nil)
+		if code != http.StatusOK {
+			t.Fatalf("list as %s = %d %v; want 200", bearer, code, resp)
+		}
+		rows, ok := resp["data"].([]any)
+		if !ok {
+			t.Fatalf("list data = %v; want an array", resp["data"])
+		}
+		return rows
+	}
+	if rows := rowsFor("env-viewer"); len(rows) != 0 {
+		t.Fatalf("process-level viewer listed %d token rows; want 0", len(rows))
+	}
+	if rows := rowsFor("env-admin"); len(rows) != 2 {
+		t.Fatalf("process-level admin listed %d token rows; want 2", len(rows))
+	}
+}
+
+// TestRegisterDuplicateEmailIsGeneric pins #586: registering an email that
+// already exists must not reveal that it exists. The duplicate answers the same
+// 400 envelope and generic text as the other registration failure, and never
+// echoes the email back.
+func TestRegisterDuplicateEmailIsGeneric(t *testing.T) {
+	clearTokenEnv(t)
+	st := openAuthStore(t)
+	h := newAuthServer(t, st)
+	const email = "taken@example.com"
+	body := func(pw string) map[string]string {
+		return map[string]string{"email": email, "password": pw, "name": "Taken"}
+	}
+
+	if code, resp := doJSON(t, h, "POST", "/api/v1/auth/register", "", body("password123")); code != http.StatusOK {
+		t.Fatalf("first register = %d %v", code, resp)
+	}
+	code, dup := doJSON(t, h, "POST", "/api/v1/auth/register", "", body("password123"))
+	if code != http.StatusBadRequest {
+		t.Fatalf("duplicate register = %d %v; want 400 failure", code, dup)
+	}
+	if got, _ := dup["error"].(string); got != "registration failed" {
+		t.Fatalf("duplicate error = %q; want generic %q", got, "registration failed")
+	}
+	raw, _ := json.Marshal(dup)
+	if strings.Contains(strings.ToLower(string(raw)), "taken@example.com") {
+		t.Fatalf("duplicate response echoes the email: %s", raw)
+	}
+
+	code, other := doJSON(t, h, "POST", "/api/v1/auth/register", "", body("short"))
+	if code != http.StatusBadRequest {
+		t.Fatalf("short-password register = %d %v; want 400 failure", code, other)
+	}
+}
+
+// TestAuthBodyOverLimitIs413 pins #601 item 5: an unauthenticated auth body over
+// the 1 MiB cap answers 413 in the envelope with the catalog code, on every
+// route that decodes a body.
+func TestAuthBodyOverLimitIs413(t *testing.T) {
+	clearTokenEnv(t)
+	h := newAuthServer(t, openAuthStore(t))
+	const limit = 1 << 20
+	cases := []struct{ path, prefix, suffix string }{
+		{"/api/v1/auth/register", `{"email":"big@example.com","password":"`, `"}`},
+		{"/api/v1/auth/org", `"`, `"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			raw := tc.prefix + strings.Repeat("p", limit+1-len(tc.prefix)-len(tc.suffix)) + tc.suffix
+			req := httptest.NewRequest("POST", tc.path, strings.NewReader(raw))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			var resp map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("response is not JSON (%d): %s", rec.Code, rec.Body.String())
+			}
+			if rec.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("= %d %v; want 413 failure envelope", rec.Code, resp)
+			}
+			if resp["code"] != errs.RequestTooLarge.Code {
+				t.Fatalf("code = %v, want %s", resp["code"], errs.RequestTooLarge.Code)
+			}
+		})
+	}
+}
+
+// upsertDownStore fails every account write with driver text, the way a broken
+// database does.
+type upsertDownStore struct{ Store }
+
+func (upsertDownStore) AccountUpsert(context.Context, store.Account) error {
+	return errors.New(`pq: password authentication failed for user "leankg_svc" dsn=postgres://leankg_svc:hunter2@db.internal:5432/leankg`)
+}
+
+// TestRegisterStoreFailureIsGeneric pins #601 item 6: a store failure answers
+// 500 with a generic message, and the driver text never reaches the client.
+func TestRegisterStoreFailureIsGeneric(t *testing.T) {
+	clearTokenEnv(t)
+	h := Routes(upsertDownStore{openAuthStore(t)})
+	code, resp := doJSON(t, h, "POST", "/api/v1/auth/register", "", map[string]string{
+		"email": "down@example.com", "password": "password123", "name": "Down",
+	})
+	if code != http.StatusInternalServerError {
+		t.Fatalf("= %d %v; want 500 failure envelope", code, resp)
+	}
+	if msg := errString(t, resp); msg != "internal server error" {
+		t.Fatalf("error = %q; want generic %q", msg, "internal server error")
+	}
+	raw, _ := json.Marshal(resp)
+	for _, leak := range []string{"password authentication", "hunter2", "dsn="} {
+		if strings.Contains(string(raw), leak) {
+			t.Fatalf("response leaks driver text %q: %s", leak, raw)
+		}
+	}
+}
+
+// tokenListDownStore fails the token listing, the way a broken database does.
+type tokenListDownStore struct{ Store }
+
+func (tokenListDownStore) TokenList(context.Context) ([]store.Token, error) {
+	return nil, errors.New("database disk image is malformed: /var/lib/leankg/db.sqlite")
+}
+
+// TestAuthRoutesStoreFailureIsGeneric pins the #601 driver-text rule on the
+// token routes: a store failure answers 500 with the generic text and never the
+// driver message. An env admin bearer resolves without a store call, so the
+// route's own TokenList is the call that fails.
+func TestAuthRoutesStoreFailureIsGeneric(t *testing.T) {
+	clearTokenEnv(t)
+	t.Setenv("LEANKG_TOKEN_ADMIN", "env-admin-secret")
+	h := Routes(tokenListDownStore{openAuthStore(t)})
+	cases := []struct {
+		name, method, path string
+		body               any
+	}{
+		{"token list", "GET", "/api/v1/auth/token", nil},
+		{"token revoke", "POST", "/api/v1/auth/token/revoke", map[string]string{"token_id": "x"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, resp := doJSON(t, h, tc.method, tc.path, "env-admin-secret", tc.body)
+			if code != http.StatusInternalServerError {
+				t.Fatalf("= %d %v; want 500 failure envelope", code, resp)
+			}
+			if msg := errString(t, resp); msg != "internal server error" {
+				t.Fatalf("error = %q; want generic %q", msg, "internal server error")
+			}
+			raw, _ := json.Marshal(resp)
+			for _, leak := range []string{"disk image", "/var/lib", "malformed"} {
+				if strings.Contains(string(raw), leak) {
+					t.Fatalf("response leaks driver text %q: %s", leak, raw)
+				}
+			}
+		})
+	}
+}
+
+// TestAuthRoutesValidationMessageUnchanged pins that a client error keeps its
+// message and status: a bearer that does not authenticate is still 400
+// "auth: unknown token", even on a store that is broken.
+func TestAuthRoutesValidationMessageUnchanged(t *testing.T) {
+	clearTokenEnv(t)
+	t.Setenv("LEANKG_TOKEN_ADMIN", "env-admin-secret")
+	h := Routes(tokenListDownStore{openAuthStore(t)})
+	code, resp := doJSON(t, h, "GET", "/api/v1/auth/token", "not-a-real-token", nil)
+	if code != http.StatusBadRequest || errString(t, resp) != "auth: unknown token" {
+		t.Fatalf("= %d %v; want 400 %q", code, resp, "auth: unknown token")
+	}
+}
+
+// TestClaimWithoutRequiredFieldIsClientError pins that a missing claim field is
+// a 400 with its message. The required check runs before the store, so the
+// store's own required-field error is not classified as a store fault.
+func TestClaimWithoutRequiredFieldIsClientError(t *testing.T) {
+	clearTokenEnv(t)
+	st := openAuthStore(t)
+	acct, err := Register(context.Background(), st, "claimer@example.com", "password123", "C")
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	secret, _, err := Mint(context.Background(), st, MintRequest{Name: "c", Role: "admin", AccountID: acct.ID})
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	code, resp := doJSON(t, newAuthServer(t, st), "POST", "/api/v1/auth/resource/claim", secret, map[string]string{
+		"resource_type": "", "resource_id": "r1",
+	})
+	const want = "resource claim: resource_type, resource_id and owner_account_id are required"
+	if code != http.StatusBadRequest || errString(t, resp) != want {
+		t.Fatalf("= %d %v; want 400 %q", code, resp, want)
+	}
+}
+
+// TestTokenIssueNeedsWriteForProcessCaller pins #601 B2: an env token has no
+// account, so it cannot own a minted token. An env viewer must not persist a DB
+// token through the public issuance route; an env contributor or admin still can.
+func TestTokenIssueNeedsWriteForProcessCaller(t *testing.T) {
+	st := openAuthStore(t)
+	h := newAuthServer(t, st)
+	const secret = "env-secret-for-issuance"
+	cases := []struct {
+		name, env string
+		want      int
+	}{
+		{"viewer refused", "LEANKG_TOKEN_VIEWER", http.StatusForbidden},
+		{"contributor allowed", "LEANKG_TOKEN_CONTRIBUTOR", http.StatusOK},
+		{"admin allowed", "LEANKG_TOKEN_ADMIN", http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearTokenEnv(t)
+			t.Setenv(tc.env, secret)
+			before, err := st.TokenList(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			code, resp := doJSON(t, h, "POST", "/api/v1/auth/token", secret, map[string]any{
+				"name": "persist", "role": "viewer",
+			})
+			after, err := st.TokenList(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if code != tc.want {
+				t.Fatalf("status = %d %v, want %d", code, resp, tc.want)
+			}
+			if tc.want == http.StatusForbidden {
+				if !strings.Contains(errString(t, resp), "write access required") {
+					t.Fatalf("refusal = %v, want a failure envelope naming write access", resp)
+				}
+				if len(after) != len(before) {
+					t.Fatalf("token rows %d -> %d; a refused issuance must mint nothing", len(before), len(after))
+				}
+			} else if len(after) != len(before)+1 {
+				t.Fatalf("token rows %d -> %d, want one minted", len(before), len(after))
+			}
+		})
+	}
 }

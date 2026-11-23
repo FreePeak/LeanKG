@@ -15,6 +15,7 @@ package store
 
 import (
 	"encoding/json"
+	"log"
 	"strings"
 )
 
@@ -158,6 +159,33 @@ func incidentWhere(q IncidentQuery, b *whereBuilder) string {
 
 // searchWhere renders the Rust search_knowledge_entries filters (substring
 // over title or content, then optional exact type/environment).
+// fillKnowledgeRecall appends the substring hits the keyword arm did not
+// return, after the keyword hits and in their own order, until limit (0 means
+// no limit). Both engines share it so the recall contract is one rule.
+func fillKnowledgeRecall(ranked, substring []KnowledgeEntry, limit int) []KnowledgeEntry {
+	seen := make(map[string]bool, len(ranked))
+	for _, e := range ranked {
+		seen[e.ID] = true
+	}
+	for _, e := range substring {
+		if limit > 0 && len(ranked) >= limit {
+			break
+		}
+		if !seen[e.ID] {
+			ranked = append(ranked, e)
+		}
+	}
+	return ranked
+}
+
+// warnRankingDegraded writes the one line both engines log when a keyword
+// search answers in recency order because its relevance order is unavailable.
+// The results stay complete (the substring arm carries recall), so this is a
+// warning, not an error.
+func warnRankingDegraded(err error) {
+	log.Printf("store: knowledge keyword ranking degraded, ordering by recency: %v", err)
+}
+
 func searchWhere(query, knowledgeType, environment string, b *whereBuilder) string {
 	t, c := b.bind(likeContains(query)), b.bind(likeContains(query))
 	conds := []string{"(LOWER(title) LIKE " + t + " ESCAPE '\\' OR LOWER(content) LIKE " + c + " ESCAPE '\\')"}

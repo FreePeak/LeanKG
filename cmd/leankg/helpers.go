@@ -173,7 +173,7 @@ func openEngine(ctx context.Context, dir string, mode store.Mode) (*core.Engine,
 	}
 	var langReg *langs.Registry
 	reg := langs.DefaultRegistry()
-	if _, aerr := reg.Activate(context.Background(), dir); aerr == nil {
+	if _, aerr := reg.Activate(ctx, dir); aerr == nil {
 		langReg = reg
 	}
 	return core.New(st, core.Options{Embedder: embedder, ProjectDir: dir, Langs: langReg}), st, nil

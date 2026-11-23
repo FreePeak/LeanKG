@@ -283,7 +283,13 @@ func (m *Memory) Append(ctx context.Context, path, content string) error {
 	if err != nil {
 		return err
 	}
-	if err := bound(key, content); err != nil {
+	// The bound is on the file as it will be after the append, not on the
+	// fragment alone. Only a core file is bounded, so only it is read back.
+	var prior []byte
+	if isCoreFile(key) {
+		prior, _ = os.ReadFile(full) // an absent file reads as empty
+	}
+	if err := bound(key, string(prior)+content); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -418,15 +424,20 @@ func replaceOnce(content, old, new string) (string, error) {
 	return strings.Replace(content, old, new, 1), nil
 }
 
-// bound enforces the core-file byte limit (error-not-truncate).
+// bound enforces the core-file byte limit (error-not-truncate). It measures
+// the redacted text, the bytes writeMemoryFile puts on disk: redaction can
+// lengthen a value, so the raw length is not the file's length.
 func bound(key, content string) error {
-	if key == "MEMORY.md" || key == "USER.md" {
-		if len(content) > CoreFileBytes {
-			return ErrOverflow{File: key, Used: len(content), Limit: CoreFileBytes}
+	if isCoreFile(key) {
+		if used := len(Redact(content)); used > CoreFileBytes {
+			return ErrOverflow{File: key, Used: used, Limit: CoreFileBytes}
 		}
 	}
 	return nil
 }
+
+// isCoreFile reports whether key is a bounded core file (MEMORY.md, USER.md).
+func isCoreFile(key string) bool { return key == "MEMORY.md" || key == "USER.md" }
 
 // writeMemoryFile is the ONE place memory bytes reach the filesystem: every
 // write verb calls it, so redaction (FR-SMA-06) cannot be skipped by a new
@@ -452,6 +463,7 @@ func Redact(content string) string { return telemetry.Redact(content) }
 // masked by Redact. The bank write path applies it once per row, so the JSONL
 // file and the FTS index are built from the same redacted text.
 func redactEntry(e Entry) Entry {
+	e.ID = Redact(e.ID) // the id is derived from the client session id
 	e.Content = Redact(e.Content)
 	e.Metadata = redactMetadata(e.Metadata)
 	return e

@@ -58,3 +58,29 @@ func TestLessonsAreReadable(t *testing.T) {
 		t.Errorf("lessons.json not where the reader looks: %v", err)
 	}
 }
+
+// TestLessonsAreRedactedBeforeTheyAreStored pins that a lesson is masked on
+// write, like every other memory writer: the file on disk, the dedupe key and
+// the text read back all hold the redacted form, never the pasted key.
+func TestLessonsAreRedactedBeforeTheyAreStored(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	const (
+		id     = "sess-redact-lesson"
+		secret = "sk-abc123def456ghi789jkl"
+	)
+	if _, err := s.AddLesson(id, "rotate the key "+secret+" after the incident"); err != nil {
+		t.Fatal(err)
+	}
+	raw := readLessons(t, filepath.Join(dir, ".leankg", "sessions", id, "lessons.json"))
+	if strings.Contains(raw, secret) {
+		t.Fatalf("lessons.json holds the raw key: %s", raw)
+	}
+	got, err := s.Lessons(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || strings.Contains(got[0], secret) || !strings.Contains(got[0], "[REDACTED:key]") {
+		t.Fatalf("Lessons = %q, want one redacted lesson", got)
+	}
+}

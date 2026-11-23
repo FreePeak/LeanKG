@@ -13,23 +13,39 @@ var redactRules = []struct {
 	re   *regexp.Regexp
 	repl string
 }{
-	// PEM private key blocks, terminated or cut off at the end of the input.
-	{regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?:.*?-----END [A-Z0-9 ]*PRIVATE KEY-----|.*)`), "[REDACTED:pem]"},
-	// Bearer credentials in headers or pasted logs.
-	{regexp.MustCompile(`(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]{8,}`), "${1}[REDACTED]"},
+	// PEM private key blocks: a terminated block, or a truncated one whose
+	// base64 body follows its BEGIN line. The marker must start a line, so a
+	// source line that quotes it is left alone.
+	{regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----`), "[REDACTED:pem]"},
+	{regexp.MustCompile(`(?m)^-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?:\n[A-Za-z0-9+/=]+)*`), "[REDACTED:pem]"},
+	// Bearer credentials in headers or pasted logs. A token must carry a digit,
+	// so prose such as "bearer authentication" is kept.
+	{regexp.MustCompile(`(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]*[0-9][A-Za-z0-9._~+/=-]*`), "${1}[REDACTED]"},
+	// Basic credentials only in an Authorization header.
+	{regexp.MustCompile(`(?i)(\bauthorization:[ \t]*basic[ \t]+)[A-Za-z0-9+/=]{4,}`), "${1}[REDACTED]"},
+	// Password in a URL's userinfo: scheme://user:password@host keeps the user.
+	{regexp.MustCompile(`(://[^\s:/@]+:)[^\s/@]+@`), "${1}[REDACTED]@"},
 	// JSON Web Tokens: three base64url segments, the first a JSON header.
 	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}`), "[REDACTED:jwt]"},
 	// Provider keys. The Anthropic form is listed before the generic sk- form.
 	{regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{10,}`), "[REDACTED:key]"},
 	{regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{16,}`), "[REDACTED:key]"},
+	{regexp.MustCompile(`\bsk_live_[A-Za-z0-9]{16,}`), "[REDACTED:key]"},
 	{regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{20,}`), "[REDACTED:key]"},
 	{regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{20,}`), "[REDACTED:key]"},
 	{regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`), "[REDACTED:key]"},
+	{regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}`), "[REDACTED:key]"},
 	{regexp.MustCompile(`\bxox[bpaors]-[A-Za-z0-9-]{10,}`), "[REDACTED:key]"},
-	// key=value and JSON "key": "value" pairs whose key names a secret.
-	// The prefix may carry a qualifier (db_password), but "max_tokens" does
-	// not match because "token" must be followed by the separator.
-	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*(?:password|passwd|secret|token|api[_-]?key)"?\s*[=:]\s*"?)[^\s"',;&}]+`), "${1}[REDACTED]"},
+	// LeanKG bearer tokens: lkg_<32hex>_<8hex> (internal/auth.NewSecret), or the
+	// bare lkg_<32hex> key id a log line may carry without its suffix.
+	{regexp.MustCompile(`\blkg_[0-9a-f]{32}(?:_[0-9a-f]{8})?`), "[REDACTED:key]"},
+	// key=value and JSON "key": "value" pairs whose key names a secret. The
+	// separator stays on one line, and the value must not start with an
+	// operator (so `token := x` and `token == x` are code, not secrets) and
+	// must be at least 6 characters (so `token: 5` is kept). The prefix may
+	// carry a qualifier (db_password), but "max_tokens" does not match because
+	// "token" must be followed by the separator.
+	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*(?:password|passwd|secret|token|api[_-]?key|secret[_-]access[_-]key)"?[ \t]*[=:][ \t]*"?)[^\s"'=,;&}][^\s"',;&}]{5,}`), "${1}[REDACTED]"},
 }
 
 // Redact masks secrets (bearer/JWT, sk-/ghp_/AKIA keys, password=, PEM

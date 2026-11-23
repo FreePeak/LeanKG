@@ -243,7 +243,7 @@ func telemetryPurge(ctx context.Context, home string, before time.Time, out io.W
 		fmt.Fprintf(out, "no telemetry ledger at %s; nothing to purge\n", telemetry.DBPath(home))
 		return nil
 	}
-	st, err := telemetry.OpenStore(context.Background(), home, false)
+	st, err := telemetry.OpenStore(ctx, home, false)
 	if err != nil {
 		return err
 	}
@@ -310,7 +310,7 @@ func telemetryStatus(ctx context.Context, home string, asJSON bool, out io.Write
 		MaxBodyBytes:    cfg.MaxBodyBytes,
 	}
 	if v.DBPresent {
-		if st, err := telemetry.OpenStore(context.Background(), home, true); err != nil {
+		if st, err := telemetry.OpenStore(ctx, home, true); err != nil {
 			v.StatsError = err.Error()
 		} else {
 			stats, err := st.Stats(ctx)
@@ -480,17 +480,41 @@ func telemetryRecorder(ctx context.Context) telemetry.Recorder {
 	return telemetry.Nop{}
 }
 
-// closeTelemetry stops the retention sweep then flushes the process Recorder.
+// telemetryCloseBudget bounds the shutdown wait for the retention sweep and the
+// ledger flush. Past it the flush is abandoned, so a slow or blocked ledger
+// cannot hold the process; the events still queued are lost.
+const telemetryCloseBudget = 2 * time.Second
+
+// closeTelemetry stops the retention sweep then flushes the process Recorder,
+// within telemetryCloseBudget.
 func closeTelemetry() {
-	telemetryStopMu.Lock()
-	stop := telemetryStop
-	telemetryStop = nil
-	telemetryStopMu.Unlock()
-	if stop != nil {
-		stop()
-	}
-	if rec := telemetrySinks.current(); rec != nil {
-		_ = rec.Close()
+	closeTelemetryWithin(telemetryCloseBudget, os.Stderr)
+}
+
+// closeTelemetryWithin runs the close on its own goroutine and waits at most
+// budget. A close still running at the budget is abandoned, and one line naming
+// it is written to w.
+func closeTelemetryWithin(budget time.Duration, w io.Writer) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		telemetryStopMu.Lock()
+		stop := telemetryStop
+		telemetryStop = nil
+		telemetryStopMu.Unlock()
+		if stop != nil {
+			stop()
+		}
+		if rec := telemetrySinks.current(); rec != nil {
+			_ = rec.Close()
+		}
+	}()
+	timer := time.NewTimer(budget)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		fmt.Fprintf(w, "telemetry: ledger flush did not finish within %s; abandoned, queued events are lost\n", budget)
 	}
 }
 

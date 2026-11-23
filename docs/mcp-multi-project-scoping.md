@@ -21,18 +21,18 @@ refuses — correctly — and the client has nothing to send.
 | Fact | Evidence |
 |---|---|
 | The self-host serves **42 projects** from one process | `LEANKG_PROJECT_DIRS` is built by `leankg-scan-repos` (maxdepth 4, every git repo under the scan root) and exported by `~/.local/bin/leankg-serve-wrapper`. The scan root is `$HOME/work/harvey/freepeak` (`LEANKG_SCAN_ROOT` overrides it) |
-| The MCP surface refuses a project-less call when several projects are registered | `internal/mcp/server.go:109` (`engineFor`) |
-| The refusal is deliberate, and the reason is measured | `internal/mcp/server.go:119-124` — a term absent from the served project still returned 10 hits from it |
-| A `project` argument exists and works | tool schema property `project`; `internal/projects/projects.go:169` (`resolve`) accepts a directory path, a project name, or a path inside one |
+| The MCP surface refuses a project-less call when several projects are registered | `internal/mcp/server.go:116` (`engineFor`) |
+| The refusal is deliberate, and the reason is measured | `internal/mcp/server.go:126-131` (the measurement); the refusal is at `:139-141`, and the single-project answer at `:118` and `:137` — a term absent from the served project still returned 10 hits from it |
+| A `project` argument exists and works | tool schema property `project`; `internal/projects/projects.go:169` (`resolve`) accepts a directory path, a project name, or a path inside one. The `?project=` URL is the other input, routed in `cmd/leankg/multiproject.go:37-49` |
 | A `?project=` URL parameter works | `cmd/leankg/multiproject.go:41` (`routeByProject`) |
 | The failing client is xdev | `~/.xdev/agent/mcp.yml` registers `leankg` at `http://localhost:9699/mcp` — the projectless URL |
 | xdev's MCP client cannot add a project | `xdev/internal/mcpclient/mcp.go:30` (`ServerConfig`) has no field that can carry one; `mcp.go:324` (`remoteTool.Execute`) forwards the agent's arguments verbatim |
-| The Go engine has **no** project auto-resolution | `grep -rn "roots/list\|ListRoots" internal/ cmd/` → no implementation; only comments (`cmd/leankg/connect.go:104`) that assume it exists |
+| The Go engine has **no** project auto-resolution | `grep -rn "roots/list\|ListRoots" internal/ cmd/` → no implementation; only comments (`cmd/leankg/connect.go:105`) that record its removal on 2026-11-18 |
 
 **The 286 below are the pre-2026-10-21 fleet.** The scan root was `$HOME/work`,
-so 231 of the repos it found (287 measured on 2026-10-21) were `~/work/be`
+so 231 of the repos it found (287 measured on 2026-10-21) were `other-repo`
 company code that was never in scope: LeanKG runs only under
-`~/work/harvey/freepeak`, and `~/work/be` is served by be-kg. The scan root is
+`<workspace>/<org>/<group>`, and `other-repo` is served by other-kg. The scan root is
 now `$HOME/work/harvey/freepeak` — 42 repos — and the counts in this document
 are kept as the measurement of the defect. The scope is now versioned in this
 repository: `scripts/leankg-serve-wrapper.sh` and
@@ -228,8 +228,8 @@ The evidence from three clients on this machine is worth weighing:
 
 | Client | How it scopes the shared server | Cost |
 |---|---|---|
-| opencode | `?project=/Users/linh.doan/work/harvey/freepeak/leankg` in its config | the path is baked into a global config — exactly what the v4.15-bare-mcp-url wave removed from the writers as "stale the moment the config leaves the machine" |
-| Claude Code / DSH | the `be-kg` entry is scoped to `/Users/linh.doan/work/be` | scoped to one workspace; the local graph needs another entry |
+| opencode | `?project=<repo-path>` in its config | the path is baked into a global config — exactly what the v4.15-bare-mcp-url wave removed from the writers as "stale the moment the config leaves the machine" |
+| Claude Code / DSH | the `other-kg` entry is scoped to `other-repo` | scoped to one workspace; the local graph needs another entry |
 | xdev | **nothing** | the reported failure |
 
 **The question FR-ZCP-01 should now answer is not "which mechanism resolves
@@ -246,10 +246,16 @@ that knowledge for its own REST graph client. So the durable shape is:
 3. the auto-resolution path (if it is wanted) waits for a non-deprecated
    mechanism.
 
-**Recommendation:** land the interim contract (done), port FR-ZCP-01 clause 2
-to the Go engine **only if** a non-deprecated mechanism appears, and
-re-point the client writers at the explicit argument rather than at a bare
-URL in the meantime.
+**Decision (2026-11-18): FR-ZCP-01 clause 2 is dropped, not ported.** The
+HTTP handler is stateless (`internal/mcp/server.go:284`), so there is no
+server-to-client channel for a `roots/list` probe, and the mechanism is
+deprecated as of protocol 2026-07-28. The interim contract stands: a
+projectless HTTP call to a multi-project server is refused before any engine
+runs (`internal/mcp/server.go:139-141`, the refusal in `engineFor` at `:116`), and the client names the
+project as the `project` tool argument. The client writers still emit a bare
+URL (`cmd/leankg/connect.go:114-125`, `bareURL` and `mergedURL`); moving them to a per-server project
+setting is a follow-up. FR-ZCP-01 clause 3 (a server-side cwd-to-project
+table) stays open, so FR-ZCP-01 remains IN_PROGRESS.
 
 ---
 

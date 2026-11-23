@@ -40,14 +40,16 @@ func TestBackendOnlyInCompositionRoots(t *testing.T) {
 // the composition roots to openBackendSites.
 func TestOpenBackendOnlyAtKnownSites(t *testing.T) {
 	_, files := scanLibrary(t)
-	counts := countPerFile(files, func(n ast.Node) bool { return isPkgCall(n, "store", "OpenBackend") })
+	counts := countPerFile(files, func(f *sourceFile, n ast.Node) bool {
+		return isPkgCall(f, n, storePkg, "OpenBackend")
+	})
 	compareFileBudget(t, "openBackendSites", "store.OpenBackend calls",
 		"open the store through a role or add the site to openBackendSites deliberately", counts, openBackendSites)
 }
 
 // countPerFile counts hits per repo-relative file among the non-test files
 // outside cmd/ and internal/store, keeping only files with at least one hit.
-func countPerFile(files []sourceFile, hit func(ast.Node) bool) map[string]int {
+func countPerFile(files []sourceFile, hit nodeHit) map[string]int {
 	counts := map[string]int{}
 	for _, f := range files {
 		if underDir(f.Dir, "cmd") || underDir(f.Dir, "internal/store") {
@@ -55,7 +57,7 @@ func countPerFile(files []sourceFile, hit func(ast.Node) bool) map[string]int {
 		}
 		hits := 0
 		ast.Inspect(f.AST, func(n ast.Node) bool {
-			if hit(n) {
+			if hit(&f, n) {
 				hits++
 			}
 			return true
@@ -86,14 +88,13 @@ func compareFileBudget(t *testing.T, mapName, what, hint string, counts, budget 
 	}
 }
 
+// storePkg is the import path of the store package whose calls are pinned.
+const storePkg = "github.com/FreePeak/LeanKG/internal/store"
+
 // isBackendRef reports whether n is the selector store.Backend.
-func isBackendRef(n ast.Node) bool {
+func isBackendRef(f *sourceFile, n ast.Node) bool {
 	sel, ok := n.(*ast.SelectorExpr)
-	if !ok {
-		return false
-	}
-	pkg, ok := sel.X.(*ast.Ident)
-	return ok && pkg.Name == "store" && sel.Sel.Name == "Backend"
+	return ok && isQualified(f, sel, storePkg, "Backend")
 }
 
 // underDir reports whether dir is root or below it.

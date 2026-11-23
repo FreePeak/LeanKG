@@ -2,6 +2,7 @@ package embedenv
 
 import (
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -75,5 +76,18 @@ func TestLoadSidecarFromEnvironment(t *testing.T) {
 	}
 	if want := []string{"-m", "/models/x.gguf", "--embeddings"}; !reflect.DeepEqual(s.Args, want) {
 		t.Fatalf("sidecar args = %q, want %q", s.Args, want)
+	}
+}
+
+// The text-cap pin's upper bound is the embed package's own cap, so the two
+// cannot drift: the largest cap embed writes is accepted, one more is refused.
+func TestTextCapPinUpperBoundIsEmbedCap(t *testing.T) {
+	at := strconv.Itoa(embed.MaxContentChars)
+	if _, err := Load(lookupFrom(map[string]string{"LEANKG_EMBED_TEXT_CAP": at})); err != nil {
+		t.Fatalf("LEANKG_EMBED_TEXT_CAP=%s: %v", at, err)
+	}
+	over := strconv.Itoa(embed.MaxContentChars + 1)
+	if _, err := Load(lookupFrom(map[string]string{"LEANKG_EMBED_TEXT_CAP": over})); err == nil {
+		t.Fatalf("LEANKG_EMBED_TEXT_CAP=%s: Load returned no error", over)
 	}
 }

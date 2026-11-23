@@ -553,11 +553,14 @@ func (s *Store) FindByNameToken(ctx context.Context, query string, limit int, f 
 }
 
 // FindExact implements the L1 rung: exact (case-insensitive) match on element
-// name or qualified name.
+// name or qualified name. An exact-case match ranks first, then the shorter
+// qualified name, then path and qualified name ascending, so the order never
+// depends on the order the rows were written.
 func (s *Store) FindExact(ctx context.Context, name string) ([]Element, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+elementCols+` FROM code_elements ce
 		WHERE ce.name = ? COLLATE NOCASE OR ce.qualified_name = ? COLLATE NOCASE
-		ORDER BY length(ce.qualified_name) LIMIT 200`, name, name)
+		ORDER BY (ce.name = ? OR ce.qualified_name = ?) DESC, length(ce.qualified_name) ASC,
+			ce.file_path ASC, ce.qualified_name ASC LIMIT 200`, name, name, name, name)
 	if err != nil {
 		return nil, err
 	}

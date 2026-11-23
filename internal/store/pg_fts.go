@@ -316,12 +316,29 @@ func (s *PGStore) searchElementsTrigram(ctx context.Context, query string, limit
 
 // KnowledgeEntriesSearch is the knowledge_entries keyword search over the
 // migration-012 tsvector of (title, content): relevance-ranked with recency
-// breaking ties, degrading to knowledgeSubstringSearch (substring, newest
-// first) for a query with no lexemes or any tsvector-side error. The filters
-// are the same on both paths, so callers see one contract.
+// breaking ties. Substring matches the tsvector cannot see (a partial word)
+// follow the keyword hits, as on SQLite, so recall never falls below substring
+// search. The filters are the same on both arms.
 func (s *PGStore) KnowledgeEntriesSearch(ctx context.Context, query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
+	ranked, err := s.knowledgeRankedPG(ctx, query, knowledgeType, environment, limit)
+	if err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(ranked) >= limit {
+		return ranked, nil
+	}
+	substring, err := s.knowledgeSubstringSearch(ctx, query, knowledgeType, environment, limit)
+	if err != nil {
+		return nil, err
+	}
+	return fillKnowledgeRecall(ranked, substring, limit), nil
+}
+
+// knowledgeRankedPG is the tsvector arm: nil for a query with no lexemes or a
+// tsvector-side query error (the substring arm then carries recall).
+func (s *PGStore) knowledgeRankedPG(ctx context.Context, query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
 	if !tsqueryUsable(query) {
-		return s.knowledgeSubstringSearch(ctx, query, knowledgeType, environment, limit)
+		return nil, nil
 	}
 	// $1 is the query text, bound once and reused by the predicate and the
 	// rank expression; the optional filters and the limit follow it.
@@ -343,7 +360,8 @@ func (s *PGStore) KnowledgeEntriesSearch(ctx context.Context, query, knowledgeTy
 		WHERE `+strings.Join(conds, " AND ")+`
 		ORDER BY score DESC, updated_at DESC, id ASC`+clause, args...)
 	if err != nil {
-		return s.knowledgeSubstringSearch(ctx, query, knowledgeType, environment, limit)
+		warnRankingDegraded(err)
+		return nil, nil
 	}
 	return s.scanKnowledgeRanked(rows)
 }

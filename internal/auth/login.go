@@ -43,23 +43,27 @@ var dummyVerifier = fmt.Sprintf("%s$%d$%s$%s", passwordScheme, passwordIteration
 // account exists. The email is matched case-insensitively.
 func verifyLogin(ctx context.Context, throttle *LoginThrottle, st Store, email, password string, adminOnly bool) (store.Account, error) {
 	key := NormalizeEmail(email)
-	if throttle.Blocked(key) {
+	// The attempt is reserved before any lookup or PBKDF2 work, so concurrent
+	// attempts for one username cannot all pass the lockout check. A failure
+	// keeps the reservation; only a success releases it.
+	if !throttle.Reserve(key) {
 		return store.Account{}, fmt.Errorf("%w: %w", ErrInvalidAdminLogin, ErrAdminLoginRateLimited)
 	}
 	account, found, err := st.AccountByEmail(ctx, key)
 	if err != nil {
-		return store.Account{}, fmt.Errorf("auth: login: %w", err)
+		// A store failure says nothing about the password, so it must not count
+		// toward the lockout (#601 S1).
+		throttle.Release(key)
+		return store.Account{}, fmt.Errorf("auth: login: %w", store.Fail("account lookup", err))
 	}
 	if !found {
 		_ = VerifyPassword(password, dummyVerifier)
-		throttle.Failure(key)
 		return store.Account{}, ErrInvalidAdminLogin
 	}
 	// The status and admin checks run after the same PBKDF2 work as a password
 	// miss, so a disabled account is not distinguishable by timing.
 	allowed := account.Status == "active" && (!adminOnly || account.SiteAdmin)
 	if !VerifyPassword(password, account.PasswordHash) || !allowed {
-		throttle.Failure(key)
 		return store.Account{}, ErrInvalidAdminLogin
 	}
 	throttle.Success(key)

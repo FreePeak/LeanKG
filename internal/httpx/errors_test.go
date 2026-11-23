@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/errs"
+	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 func TestStatusForIsTheOneErrorTable(t *testing.T) {
@@ -30,6 +31,7 @@ func TestStatusForIsTheOneErrorTable(t *testing.T) {
 		{"unknown action is a bad request", errs.NewError(errs.UnknownAction, "nope", ""), http.StatusBadRequest},
 		{"invalid parameter is a bad request", errs.NewError(errs.InvalidParam, "limit", ""), http.StatusBadRequest},
 		{"uncoded error is a bad request", errors.New("boom"), http.StatusBadRequest},
+		{"store failure is a server fault", store.Fail("status", errors.New("no such table")), http.StatusInternalServerError},
 		{"cancelled call", context.Canceled, StatusClientClosedRequest},
 		{"wrapped cancelled call", fmt.Errorf("walk: %w", context.Canceled), StatusClientClosedRequest},
 	}
@@ -70,6 +72,32 @@ func TestWriteErrorUncodedHasNoCodeField(t *testing.T) {
 	}
 	if _, ok := body["code"]; ok || body["error"] != "boom" || rec.Code != http.StatusBadRequest {
 		t.Fatalf("status %d body %v; want 400 {error: boom} with no code", rec.Code, body)
+	}
+}
+
+// TestWriteErrorAsFixesOnlyTheClientStatus: a transport whose client errors are
+// one class (the auth envelope's 400) answers that status for any client
+// error, keeping the catalog code, while a server fault keeps its own status
+// and the generic message.
+func TestWriteErrorAsFixesOnlyTheClientStatus(t *testing.T) {
+	rec := httptest.NewRecorder()
+	WriteErrorAs(rec, http.StatusBadRequest, errs.NewError(errs.PermissionDenied, "the reader role", ""))
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest || body["code"] != errs.PermissionDenied.Code {
+		t.Fatalf("client error: status %d body %v; want 400 with code %s", rec.Code, body, errs.PermissionDenied.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	WriteErrorAs(rec, http.StatusBadRequest, store.Fail("token list", errors.New("no such table: tokens")))
+	body = map[string]any{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusInternalServerError || body["error"] != "internal server error" {
+		t.Fatalf("server fault: status %d body %v; want 500 generic", rec.Code, body)
 	}
 }
 
@@ -119,5 +147,37 @@ func TestNoDuplicateErrorWriters(t *testing.T) {
 	}
 	if len(hits) > 0 {
 		t.Fatalf("duplicate HTTP writers outside internal/httpx:\n%s", strings.Join(hits, "\n"))
+	}
+}
+
+// TestMessageKeepsServerFaultsGeneric: a server fault answers the catalog's
+// static text or a generic line, never the driver or cause text it wraps. A
+// refused body keeps its plain cause, and a client error keeps its full text.
+func TestMessageKeepsServerFaultsGeneric(t *testing.T) {
+	const driver = "no such table: elements"
+	cases := []struct {
+		name     string
+		err      error
+		want     string
+		contains string
+	}{
+		{"store failure is generic", store.Fail("status", errors.New(driver)), "internal server error", ""},
+		{"unreachable Postgres keeps its code and static text", errs.NewError(errs.PGUnreachable, "dial tcp 10.0.0.1: refused", ""), errs.PGUnreachable.Message(), errs.PGUnreachable.Code},
+		{"refused body keeps its plain cause", InvalidBody(errors.New("unexpected EOF")), "invalid JSON body: unexpected EOF", ""},
+		{"client error keeps its catalog text", errs.NewError(errs.PermissionDenied, "the reader role", ""), errs.NewError(errs.PermissionDenied, "the reader role", "").Error(), ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Message(tc.err)
+			if tc.want != "" && got != tc.want {
+				t.Fatalf("Message = %q; want %q", got, tc.want)
+			}
+			if tc.contains != "" && !strings.Contains(got, tc.contains) {
+				t.Fatalf("Message = %q; want it to carry %q", got, tc.contains)
+			}
+			if strings.Contains(got, driver) || strings.Contains(got, "dial tcp") {
+				t.Fatalf("Message = %q leaks driver text", got)
+			}
+		})
 	}
 }

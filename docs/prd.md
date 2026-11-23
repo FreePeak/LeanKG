@@ -153,8 +153,8 @@ all three; a second pass over the same stores was a no-op.
 
 **The first fleet run destroyed 30,680 vectors, and the fix is the rule
 it violated.** The fleet's first pass dropped the ONLY collection of
-three projects (`be-knowledge-graph` 22,064, `be-restaurant` 5,332,
-`be-food-finder` 3,284). The cause: those stores were embedded under
+three projects (`svc-a` 22,064, `svc-b` 5,332,
+`svc-c` 3,284). The cause: those stores were embedded under
 model id `local` — the old default, before `LEANKG_EMBED_MODEL` became
 `embeddinggemma-2` — while the server's embedder reported
 `embeddinggemma-2`. The sweep saw a collection outside the keep set and
@@ -306,8 +306,8 @@ this branch (the server refuses with the fix named).
 > And "the store is present" was a pure ENOENT probe
 > (`portfolioreg.go:408-430`): a store whose **recorded index root** no
 > longer matches the directory it sits in counted as present. Measured on
-> this machine: `…/work/be/backend/be-qa-data-migration/.leankg/leankg.db`
-> (14.3 MB) records the root `…/work/be/platform-saas/be-doppel` — a
+> this machine: `<other-repo>/backend/svc-e/.leankg/leankg.db`
+> (14.3 MB) records the root `<other-repo>/platform-saas/svc-d` — a
 > directory that is GONE — while the directory it now sits in is a
 > different, live git repo. That store can never be repaired either: the
 > index root guard (`internal/index/index.go:185-206`) refuses to walk a
@@ -365,7 +365,7 @@ maintenance tick.
 
 ```
 removed=0 kept=9 no_store=1 unreadable=0 root_mismatch=0
-  NO_STORE /Users/linh.doan/work/harvey/freepeak/games
+  NO_STORE <scan-root>/games
 ```
 
 The live registry has no row whose directory is gone, so the sweep
@@ -987,7 +987,7 @@ the copy honest.
 
 | measured | before |
 |---|---|
-| `be-knowledge-graph` store: paths HEAD no longer contains | **1,397** (13,006 elements — 59 % of its 22,164) |
+| `svc-a` store: paths HEAD no longer contains | **1,397** (13,006 elements — 59 % of its 22,164) |
 | how far behind HEAD that store was | **5.3 days** |
 | `x-trader` store: stale files | 5 files = 67 elements + 198 relationships + 67 vectors |
 | in-scope stores reporting `freshness: fresh` | **16 of 16**, including the 59 %-behind one |
@@ -1153,7 +1153,7 @@ Run `leankg index` (or watch mode) to refresh; a large delta usually means the
 index was built from a different root or env.
 ```
 
-Three facts it already had, all discarded. It walked the tree: it could print the two paths. It ran against `env.ProjectRoot`: it never said which root. And its own escape hatch — "the delta usually means a different root" — is exactly the case the reader **cannot rule out, because the root is not in the message.** The STALE branch one case above already samples three paths; this branch threw the same information away, and this is the branch users hit most. It now reads `4 missing file(s) … under /Users/…/leankg/.worktrees/agent-infinity; e.g. cmd/leankg/refusalstore_test.go, internal/budget/cut_test.go, …`, and the hint tells the reader to compare that root with the one the check named.
+Three facts it already had, all discarded. It walked the tree: it could print the two paths. It ran against `env.ProjectRoot`: it never said which root. And its own escape hatch — "the delta usually means a different root" — is exactly the case the reader **cannot rule out, because the root is not in the message.** The STALE branch one case above already samples three paths; this branch threw the same information away, and this is the branch users hit most. It now reads `4 missing file(s) … under <repo-path>/.worktrees/agent-infinity; e.g. cmd/leankg/refusalstore_test.go, internal/budget/cut_test.go, …`, and the hint tells the reader to compare that root with the one the check named.
 
 **`embedding-coverage` had a percentage with two opposite fixes and no way to tell them apart.** `1% uncovered (9350/9386 embedded)` is identical whether vectors were never built for new elements (`leankg-embed run`) or the collection was built for a **different model** (`leankg-embed full` — the rebuild the stamp guard exists to make safe). The advice was a coin flip and the model was nowhere in the finding. It now reads the STORE's own stamp (`emb_stamp`, behind an optional probe so no existing `Probes` implementation has to change) and says `… embedded; collection: bge-small-en-v1.5-f16.gguf; e.g. internal/docgen/docgen.go::WriteFileTo, …`, with a hint covering both causes.
 
@@ -1259,7 +1259,7 @@ the index has, so run `leankg index .` if this project is stale, or `leankg quer
 
 ### v4.18-scan-root-scope — the served fleet must be the projects LeanKG owns (2026-10-21)
 
-**Trigger:** the self-host scope rule (2026-10-13) says LeanKG runs only under `~/work/harvey/freepeak`, and `~/work/be` is served by be-kg. The served fleet said otherwise. `~/.local/bin/leankg-serve-wrapper` computed `SCAN_ROOT="${LEANKG_SCAN_ROOT:-$HOME/work}"` and the launchd plist set no `LEANKG_SCAN_ROOT`, so the wrapper swept **every** git repo under `~/work`. Measured 2026-10-21: **287 repos, 231 of them `~/work/be`** company code that was never in scope. That is why the live server answered for projects nobody put it in charge of — and why a project-less call was refused at all: the multi-project refusal fires on fleet size, and the fleet was mostly out-of-scope code.
+**Trigger:** the self-host scope rule (2026-10-13) says LeanKG runs only under `<workspace>/<org>/<group>`, and `other-repo` is served by other-kg. The served fleet said otherwise. `<launcher-wrapper>` computed `SCAN_ROOT="${LEANKG_SCAN_ROOT:-<workspace>}"` and the launchd plist set no `LEANKG_SCAN_ROOT`, so the wrapper swept **every** git repo under `<workspace>`. Measured 2026-10-21: **287 repos, 231 of them `other-repo`** company code that was never in scope. That is why the live server answered for projects nobody put it in charge of — and why a project-less call was refused at all: the multi-project refusal fires on fleet size, and the fleet was mostly out-of-scope code.
 
 **The definition was not in the repository.** The scan root lived in two files outside it (`~/.local/bin/leankg-serve-wrapper`, `~/.local/bin/leankg-scan-repos`) plus the launchd plist, so it could not be reviewed, diffed or tested — only re-measured on the live machine, and the wrong default survived every re-measure because nobody could see it in a diff.
 
@@ -1267,7 +1267,7 @@ the index has, so run `leankg index .` if this project is stale, or `leankg quer
 
 - **`scripts/leankg-serve-wrapper.sh`** — the wrapper, drop-in installable as `~/.local/bin/leankg-serve-wrapper`. Default `SCAN_ROOT="${LEANKG_SCAN_ROOT:-$HOME/work/harvey/freepeak}"`; `LEANKG_SCAN_ROOT` overrides it. The scan is the same `find … -maxdepth 4 -name .git -type d`; the serve invocation is the same, with **loopback** binds: `--http 127.0.0.1:9699 --rest 127.0.0.1:9700 --memory --embed-provider local --hindsight-compat`.
 - **`scripts/leankg-scan-repos.sh`** — the standalone scanner, same default root, same output format.
-- **`scripts/test-scan-root.sh`** (`make scan-root-check`) — builds a fake `HOME` holding one repo inside the root and one outside it, runs the real scripts against it with a stub `leankg` binary (no server is started, nothing outside the temp dir is touched), and asserts: the in-scope repo **is** registered, the out-of-scope `~/work/be` repo is **not**, the two scripts agree, the binds are loopback, and `LEANKG_SCAN_ROOT` still widens the scope on purpose. It fails when the default is widened back to `$HOME/work` — verified by widening the default in a copy of the scripts, where the test fails on the out-of-scope repo.
+- **`scripts/test-scan-root.sh`** (`make scan-root-check`) — builds a fake `HOME` holding one repo inside the root and one outside it, runs the real scripts against it with a stub `leankg` binary (no server is started, nothing outside the temp dir is touched), and asserts: the in-scope repo **is** registered, the out-of-scope `other-repo` repo is **not**, the two scripts agree, the binds are loopback, and `LEANKG_SCAN_ROOT` still widens the scope on purpose. It fails when the default is widened back to `<workspace>` — verified by widening the default in a copy of the scripts, where the test fails on the out-of-scope repo.
 - **The docs that taught the old scope now teach the new one:** `docs/architecture-flow.md` (the fleet diagram, the runbook, the file listing), `docs/mcp-multi-project-scoping.md` (the fact row; the 286 counts stay as the measurement of the defect), the wildcard-bind examples in this PRD, and the shared-server hint `scripts/install-go.sh` prints.
 
 **Verified:** `bash scripts/test-scan-root.sh` → `SCAN-ROOT OK`; `sh -n` clean on all three scripts; `go build -p=2 ./...` clean; `go vet ./...` clean; `go test ./cmd/leankg/ -count=1` green with the embed env cleared.
@@ -1856,7 +1856,7 @@ deprecation window (at least twelve months)" (go-sdk `mcp/server.go`,
 feature and would need **every** client to implement it. On this machine
 the three clients solve the same problem three different ways — opencode
 bakes an absolute path into its config (what the bare-mcp-url wave removed
-as stale), Claude Code scopes to `/Users/linh.doan/work/be`, xdev cannot
+as stale), Claude Code scopes to `other-repo`, xdev cannot
 scope at all. The question the FR should now answer is "who supplies the
 project", not "which mechanism resolves it": the server cannot know the
 caller's repository (no cwd on the wire; roots is going away), and the
@@ -3143,6 +3143,8 @@ The 6→15 upgrade ran live against this repo's real 53 MB store by starting the
 **Narrative.** Like mnemopi's banks and zg's `root`: the project is derived from context, never typed by the user. The connection IS the scope.
 
 **FR-ZCP-01 — Contextual project resolution (Must Have, P0)**
+
+> **Decision 2026-11-18: clause 2 (HTTP `roots/list`, step 2 below) is DROPPED.** The HTTP handler is stateless and `roots/list` is deprecated as of protocol 2026-07-28. A projectless HTTP call to a multi-project server is refused with `LEANKG_ERROR_MISSING_PARAM` and the client sends `project` as a tool argument. Clause 1 (stdio process cwd) stands; clause 3 (cwd-to-project registration table) is still open. Full rationale: `docs/mcp-multi-project-scoping.md` section 4.
 
 - Resolution order (first match wins):
   0. **Nearest repo marker wins**: walk up from the request cwd to the nearest `.leankg`/repo root (existing `find_leankg_for_path`, `server.rs:588-605`); that root IS the project. A cwd **outside** any repo marker (a container/workspace parent) resolves to the **portfolio scope**, never to a project (FR-ZCP-09).

@@ -22,9 +22,9 @@ const (
 	Query
 )
 
-// maxContentChars bounds the text sent to a provider; content over this
+// MaxContentChars bounds the text sent to a provider; content over this
 // counts one truncation per element (contract §internal/embed).
-const maxContentChars = 8000
+const MaxContentChars = 8000
 
 // maxLocalTextChars is the query-side fallback budget for the local sidecar
 // family (TextCap, when /props gives no budget). The write path never uses it:

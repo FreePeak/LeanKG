@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 
@@ -89,7 +90,7 @@ func Mint(ctx context.Context, st Store, req MintRequest) (string, store.Token, 
 		tok.ExpiresAt = now + int64(req.TTL/time.Second)
 	}
 	if err := st.TokenUpsert(ctx, tok); err != nil {
-		return "", store.Token{}, fmt.Errorf("auth: mint token: %w", err)
+		return "", store.Token{}, fmt.Errorf("auth: mint token: %w", store.Fail("token upsert", err))
 	}
 	tok.Secret = store.HashToken(secret)
 	return secret, tok, nil
@@ -118,6 +119,11 @@ type Grant struct {
 func Verify(ctx context.Context, st Store, secret string) (Grant, bool, error) {
 	tok, found, err := st.TokenFind(ctx, secret)
 	if err != nil {
+		// A revoked or expired row is a rejection the client gets as a 400, not a
+		// store fault, so only other failures are classified as store errors.
+		if !errors.Is(err, store.ErrTokenRevoked) && !errors.Is(err, store.ErrTokenExpired) {
+			err = store.Fail("token find", err)
+		}
 		return Grant{}, false, fmt.Errorf("auth: token store: %w", err)
 	}
 	if !found {

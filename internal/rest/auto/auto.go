@@ -2,7 +2,6 @@ package auto
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -45,8 +44,8 @@ var (
 
 func decodeJSON[T any](w http.ResponseWriter, r *http.Request, into *T) bool {
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewDecoder(r.Body).Decode(into); err != nil {
-		httpx.WriteMessage(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+	if err := httpx.DecodeJSON(w, r, into); err != nil {
+		httpx.WriteError(w, err)
 		return false
 	}
 	return true
@@ -285,9 +284,10 @@ func startAutoEmbed(ctx context.Context, dir string, debounceSecs int,
 		return
 	}
 	defer release()
-	_ = provider
+	// The provider is already started: refresh gets it back, not a second start.
+	reuse := func(context.Context) (embed.Provider, func(), error) { return provider, func() {}, nil }
 
-	res, err := refresh.Run(ctx, refresh.Options{Project: dir, Path: dir, Start: start})
+	res, err := refresh.Run(ctx, refresh.Options{Project: dir, Path: dir, Start: reuse})
 	if err != nil {
 		log.Printf("auto-config: embed failed: %v", err)
 		return

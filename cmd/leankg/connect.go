@@ -100,9 +100,10 @@ func jsonContainer(client string) string {
 	return "mcpServers"
 }
 
-// bareURL drops any query/fragment from a remote URL. Per-request project
-// resolution (FR-ZCP-01: stdio process cwd; HTTP roots/list) makes a
-// `?project=` suffix unnecessary on the happy path, and an absolute path
+// bareURL drops any query/fragment from a remote URL. Stdio resolves the
+// project from the process cwd (FR-ZCP-01 clause 1); HTTP callers name the
+// project as the `project` tool argument (roots/list dropped 2026-11-18, see
+// docs/mcp-multi-project-scoping.md section 4). An absolute path
 // baked into a shared config is stale the moment that config leaves the
 // machine it was written on. Measured on this machine 2026-10-11: three
 // configs carrying `?project=/workspace-freepeak` — a Docker mount path that

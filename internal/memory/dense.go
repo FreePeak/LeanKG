@@ -8,6 +8,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/FreePeak/LeanKG/internal/embed"
@@ -154,6 +155,9 @@ const (
 	denseEmbedBatch  = 32
 	denseEmbedPerRun = 256 // rows embedded per recall call; the rest catch up on later calls
 	rrfK             = 60
+	// denseRecallTimeout bounds one whole dense recall (probe, vectors, query
+	// embedding and scan). A recall cut by it falls back to the keyword arm.
+	denseRecallTimeout = 20 * time.Second
 )
 
 // ensureVectors embeds bank rows of the given banks that have no vector in
@@ -211,10 +215,12 @@ func (m *Memory) denseCandidates(ctx context.Context, v *denseArm, banks []strin
 	if wordCount(query) < denseMinWords {
 		return nil
 	}
+	// One deadline for the whole dense recall, not one per batch: a hung query
+	// embedder cannot hold the recall, and BM25 still answers when it is cut.
+	ctx, cancel := context.WithTimeout(ctx, denseRecallTimeout)
+	defer cancel()
 	// Resolve the vector space (a sidecar's revision) before its key and its
-	// calibrated floor are read. No memory-side deadline: the caller's ctx stops
-	// it on a disconnect, and the embed client's request timeout bounds a hung
-	// endpoint.
+	// calibrated floor are read.
 	if err := v.p.Probe(ctx); err != nil {
 		return nil
 	}

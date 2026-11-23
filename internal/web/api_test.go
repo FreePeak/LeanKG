@@ -872,3 +872,26 @@ func TestQueryHonorsParamsLimit(t *testing.T) {
 		t.Fatalf("limit=%d hits=%d, want limit 1 honored", data.Result.Limit, len(data.Result.Hits))
 	}
 }
+
+// TestQueryGraphRejectsBadBudgetAndBodyWithCodes: a zero budget is InvalidParam
+// (core's rule) instead of a silent clamp, and a malformed body carries the
+// same code. The floor and ceiling still apply to a valid budget.
+func TestQueryGraphRejectsBadBudgetAndBodyWithCodes(t *testing.T) {
+	srv, _ := newServer(t)
+	cases := map[string]string{
+		"zero budget":    `{"question":"auth","token_budget":0}`,
+		"malformed body": `{"question":`,
+	}
+	for name, body := range cases {
+		var raw struct {
+			Error string `json:"error"`
+			Code  string `json:"code"`
+		}
+		if code := postJSON(t, srv.URL+"/api/query-graph", body, &raw); code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", name, code)
+		}
+		if raw.Code != "LEANKG_ERROR_INVALID_PARAM" {
+			t.Errorf("%s: code %q, want LEANKG_ERROR_INVALID_PARAM", name, raw.Code)
+		}
+	}
+}

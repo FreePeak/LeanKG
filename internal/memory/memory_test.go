@@ -813,3 +813,42 @@ func readFirstLine(t *testing.T, path string) []byte {
 	}
 	return []byte(lines[0])
 }
+
+// TestCoreFileBoundMeasuresWhatLands pins that the core-file bound measures
+// the bytes that reach disk. Redaction can lengthen a value (a seven-byte
+// password becomes a 10-byte marker), so a write whose raw text fits must be
+// refused when its redacted text does not. An append is bounded against the
+// whole file, not the appended fragment.
+func TestCoreFileBoundMeasuresWhatLands(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("create bounds the redacted text", func(t *testing.T) {
+		m := openTest(t)
+		raw := "password=hunter2 " + strings.Repeat("a", CoreFileBytes-len("password=hunter2 "))
+		if len(raw) != CoreFileBytes {
+			t.Fatalf("setup: raw = %d bytes, want %d", len(raw), CoreFileBytes)
+		}
+		err := m.Create(ctx, "MEMORY.md", raw)
+		var eo ErrOverflow
+		if !errors.As(err, &eo) {
+			t.Fatalf("Create: err = %v, want ErrOverflow for the redacted text", err)
+		}
+		if c, _ := m.View(ctx, "MEMORY.md", 0); c != "" {
+			t.Errorf("refused write mutated file: %q", c)
+		}
+	})
+
+	t.Run("append bounds the whole file", func(t *testing.T) {
+		m := openTest(t)
+		if err := m.Create(ctx, "MEMORY.md", strings.Repeat("x", CoreFileBytes-4)); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		var eo ErrOverflow
+		if err := m.Append(ctx, "MEMORY.md", "yyyyyyyy"); !errors.As(err, &eo) {
+			t.Fatalf("Append: err = %v, want ErrOverflow for the whole file", err)
+		}
+		if c, _ := m.View(ctx, "MEMORY.md", 0); len(c) != CoreFileBytes-4 {
+			t.Errorf("refused append changed file to %d bytes", len(c))
+		}
+	})
+}

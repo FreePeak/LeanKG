@@ -83,6 +83,7 @@ func TestCatalogTableMatchesAccessors(t *testing.T) {
 		AutoAttachFailed, Unauthorized, UnknownTool, NoVectors, TrgmUnavailable,
 		MethodNotFound, ReadOnly, UnknownAction, MissingParam, PermissionDenied,
 		PathOutsideProject, IndexRootMismatch, InvalidParam,
+		RequestTooLarge, IndexUnavailable,
 	}
 	if len(consts) != len(Catalog) {
 		t.Fatalf("const count %d != catalog size %d", len(consts), len(Catalog))
@@ -272,15 +273,7 @@ func TestEveryErrorLiteralHasACatalogEntry(t *testing.T) {
 // The Rust original could assert "every entry has a use site" because it landed
 // with its call sites; this port lands the catalog first, so the audit reports
 // the remaining work instead of failing the build on it.
-var pendingWiring = map[string]bool{
-	"LEANKG_ERROR_PROJECT_NOT_INITIALIZED": true,
-	"LEANKG_ERROR_UNKNOWN_PROJECT":         true,
-	"LEANKG_ERROR_AUTO_ATTACH_FAILED":      true,
-	"LEANKG_ERROR_NO_VECTORS":              true,
-	"LEANKG_ERROR_TRGM_UNAVAILABLE":        true,
-	"LEANKG_ERROR_METHOD_NOT_FOUND":        true,
-	"LEANKG_ERROR_READ_ONLY":               true,
-}
+var pendingWiring = map[string]bool{}
 
 // TestCatalogWiringAudit reports every catalog entry no call site can reach
 // (the Rust `every_catalog_entry_is_referenced_by_a_site` check). It fails only

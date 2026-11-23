@@ -37,20 +37,30 @@ func NewLoginThrottle(now func() time.Time) *LoginThrottle {
 	return &LoginThrottle{now: now, entries: map[string]*loginState{}}
 }
 
-// Blocked reports whether username is inside a lockout right now.
-func (t *LoginThrottle) Blocked(username string) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	st := t.live(username, t.now())
-	return st != nil && !st.lockedUntil.IsZero()
-}
-
-// Failure records one failed attempt. The fifth consecutive failure in a streak
-// starts a lockout.
-func (t *LoginThrottle) Failure(username string) {
+// Reserve counts one attempt for username before its password check runs. It
+// returns false, without counting, while username is locked. Otherwise the
+// attempt is recorded as a failure, so concurrent attempts cannot all pass the
+// lockout check before any of them is counted. A failed attempt keeps its
+// reservation; a successful one releases it through Success.
+func (t *LoginThrottle) Reserve(username string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
+	if t.lockedAt(username, now) {
+		return false
+	}
+	t.recordFailure(username, now)
+	return true
+}
+
+// lockedAt reports whether username is inside a lockout at now. Caller holds mu.
+func (t *LoginThrottle) lockedAt(username string, now time.Time) bool {
+	st := t.live(username, now)
+	return st != nil && !st.lockedUntil.IsZero()
+}
+
+// recordFailure adds one failure for username at now. Caller holds mu.
+func (t *LoginThrottle) recordFailure(username string, now time.Time) {
 	t.sweep(now)
 	st := t.live(username, now)
 	if st == nil {
@@ -61,6 +71,26 @@ func (t *LoginThrottle) Failure(username string) {
 	st.lastFailure = now
 	if st.failures >= loginMaxFailures {
 		st.lockedUntil = now.Add(loginLockout)
+	}
+}
+
+// Release gives back the failure Reserve counted for an attempt that never
+// reached a credential check, such as a store error. The count drops by one,
+// and a lockout that attempt started ends with it. Unlike Success it keeps the
+// rest of the streak.
+func (t *LoginThrottle) Release(username string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	st := t.live(username, t.now())
+	if st == nil {
+		return
+	}
+	st.failures--
+	if st.failures < loginMaxFailures {
+		st.lockedUntil = time.Time{}
+	}
+	if st.failures <= 0 {
+		delete(t.entries, username)
 	}
 }
 

@@ -30,6 +30,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/cliargs"
 	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/embed"
+	"github.com/FreePeak/LeanKG/internal/projectcfg"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -54,9 +55,9 @@ func runVerb(ctx context.Context, argv []string) int {
 	var err error
 	switch argv[0] {
 	case "run":
-		err = runEmbed(ctx, argv[1:], "incremental")
+		err = runEmbed(ctx, argv[1:], "run", "incremental")
 	case "full":
-		err = runEmbed(ctx, argv[1:], "full")
+		err = runEmbed(ctx, argv[1:], "full", "full")
 	case "export":
 		err = cmdExport(ctx, argv[1:])
 	case "import":
@@ -65,6 +66,9 @@ func runVerb(ctx context.Context, argv []string) int {
 		err = cmdStatus(ctx, argv[1:])
 	case "version":
 		fmt.Println("leankg-embed " + Version())
+	case "help", "-h", "--help":
+		usage()
+		return 0
 	default:
 		usage()
 		return 2
@@ -121,7 +125,7 @@ func openStore(ctx context.Context, project string) (store.Backend, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, err := store.OpenBackend(ctx, store.OpenOptions{ProjectDir: dir, Engine: envOr("LEANKG_DB_ENGINE", "sqlite"), PGURL: os.Getenv("LEANKG_PG_URL"), DBPath: "", Mode: store.RW})
+	st, err := store.OpenBackend(ctx, store.OpenOptions{ProjectDir: dir, Engine: envOr("LEANKG_DB_ENGINE", "sqlite"), PGURL: projectcfg.PGURL(dir), DBPath: "", Mode: store.RW})
 	if err != nil {
 		return nil, err
 	}
@@ -150,11 +154,11 @@ func bindPositional(verb string, fs *flag.FlagSet, args []string, project *strin
 		return fmt.Errorf("%s: %w", verb, err)
 	}
 	if len(positional) > 1 {
-		return fmt.Errorf("%s: too many arguments (%s)", verb, strings.Join(positional, " "))
+		return cliexit.Usage(fmt.Errorf("%s: too many arguments (%s)", verb, strings.Join(positional, " ")))
 	}
 	if len(positional) == 1 {
 		if *project != "" && *project != positional[0] {
-			return fmt.Errorf("%s: positional %q conflicts with --project %q", verb, positional[0], *project)
+			return cliexit.Usage(fmt.Errorf("%s: positional %q conflicts with --project %q", verb, positional[0], *project))
 		}
 		*project = positional[0]
 	}
@@ -197,10 +201,10 @@ func lock(dir string) (func(), error) {
 // deferred sidecar release, store close and lock release all run before the
 // process exits; a log.Fatal after the sidecar starts orphaned it. A run
 // stopped through ctx returns context.Canceled.
-func runEmbed(ctx context.Context, args []string, mode string) error {
-	fs := flag.NewFlagSet(mode, flag.ContinueOnError)
+func runEmbed(ctx context.Context, args []string, verb, mode string) error {
+	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
-	if err := bindPositional(mode, fs, args, project); err != nil {
+	if err := bindPositional(verb, fs, args, project); err != nil {
 		return err
 	}
 	dir, err := projectDir(*project)
@@ -251,7 +255,7 @@ func cmdExport(ctx context.Context, args []string) error {
 	}
 	st, err := openStore(ctx, *project)
 	if err != nil {
-		return fmt.Errorf("store: %v", err)
+		return fmt.Errorf("store: %w", err)
 	}
 	defer st.Close()
 	w := os.Stdout
@@ -268,7 +272,7 @@ func cmdExport(ctx context.Context, args []string) error {
 		return fmt.Errorf("provider: %w", err)
 	}
 	if err := embed.ExportNDJSON(ctx, st, cfg, *modelID, w); err != nil {
-		return fmt.Errorf("export: %v", err)
+		return fmt.Errorf("export: %w", err)
 	}
 	return nil
 }
@@ -295,7 +299,7 @@ func cmdImport(ctx context.Context, args []string) error {
 	defer unlock()
 	st, err := openStore(ctx, *project)
 	if err != nil {
-		return fmt.Errorf("store: %v", err)
+		return fmt.Errorf("store: %w", err)
 	}
 	defer st.Close()
 	r := os.Stdin
@@ -313,7 +317,7 @@ func cmdImport(ctx context.Context, args []string) error {
 	}
 	report, err := embed.ImportNDJSON(ctx, st, cfg, *modelID, *revision, *distance, *dims, r)
 	if err != nil {
-		return fmt.Errorf("import: %v", err)
+		return fmt.Errorf("import: %w", err)
 	}
 	b, _ := json.Marshal(report)
 	fmt.Println(string(b))
@@ -328,22 +332,22 @@ func cmdStatus(ctx context.Context, args []string) error {
 	}
 	st, err := openStore(ctx, *project)
 	if err != nil {
-		return fmt.Errorf("store: %v", err)
+		return fmt.Errorf("store: %w", err)
 	}
 	defer st.Close()
 	out := map[string]any{}
 	if stamps, err := st.Stamps(ctx); err != nil {
-		return fmt.Errorf("status: stamps: %v", err)
+		return fmt.Errorf("status: stamps: %w", err)
 	} else {
 		out["stamps"] = stamps
 	}
 	if run, err := st.LastEmbedRunAny(ctx); err != nil {
-		return fmt.Errorf("status: last run: %v", err)
+		return fmt.Errorf("status: last run: %w", err)
 	} else if run != nil {
 		out["last_run"] = run
 	}
 	if els, err := st.ElementCount(ctx); err != nil {
-		return fmt.Errorf("status: elements: %v", err)
+		return fmt.Errorf("status: elements: %w", err)
 	} else {
 		out["elements"] = els
 	}

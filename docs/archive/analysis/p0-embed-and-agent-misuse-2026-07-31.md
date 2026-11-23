@@ -17,7 +17,7 @@ Two compounding bugs made the BE monorepo's LeanKG graph look useless to agents,
 | A (`55c86289…`) | no | 2 (3%) | 23 (35%) | 1 empty `semantic_search` → abandon graph |
 | B (`d7cdc895…`) | yes | 8 (14%) | 26 (45%) | 3 schema errors + 3 empty → 81% raw tools |
 
-**1. Product bug** (P0): the embed resume path can hit a fixed point where `embedding_state` reports 628,259 fresh rows but `embedding_vectors` is empty. `should_skip_hnsw_rebuild` reads the dirty set only, so the rebuild is skipped forever and every `semantic_search` / `search_code` returns `status: ok, results: []` in 13s. Reproduced on `/workspace-be` (630,624 elements, 0 vectors).
+**1. Product bug** (P0): the embed resume path can hit a fixed point where `embedding_state` reports 628,259 fresh rows but `embedding_vectors` is empty. `should_skip_hnsw_rebuild` reads the dirty set only, so the rebuild is skipped forever and every `semantic_search` / `search_code` returns `status: ok, results: []` in 13s. Reproduced on `/workspace-other` (630,624 elements, 0 vectors).
 
 **2. Agent-contract bugs** (P0–P3): even with the product fix, agents racing `Grep` against the health gate, guessing wrong arg names, and treating the cited file path as a destination rather than a seed. Two sessions produced different wrong answers to the same question.
 
@@ -36,7 +36,7 @@ Measured on the source transcript: **65 tool calls, 2 LeanKG (3%), 58 raw** (`Gr
 ### Reproduction
 
 ```bash
-curl -s -X POST 'http://localhost:9699/mcp?project=/workspace-be' \
+curl -s -X POST 'http://localhost:9699/mcp?project=/workspace-other' \
   -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"semantic_search",
        "arguments":{"query":"CheckUserPermission merchant login forgot password skip list","limit":10}}}'
@@ -95,7 +95,7 @@ flowchart TD
     J --> A
 ```
 
-**How the state got inconsistent**: `/workspace-be/.leankg/embed_status.json` is a Jul 22 artifact of the Cozo-era run against the now-abandoned 5.3 GB `leankg.db` (Jul 17). Live storage is RocksDB at `/data/leankg-rocksdb/projects/workspace-be-6917453a1780`. The state rows carried across the backend switch; the vectors did not.
+**How the state got inconsistent**: `/workspace-other/.leankg/embed_status.json` is a Jul 22 artifact of the Cozo-era run against the now-abandoned 5.3 GB `leankg.db` (Jul 17). Live storage is RocksDB at `/data/leankg-rocksdb/projects/workspace-other-6917453a1780`. The state rows carried across the backend switch; the vectors did not.
 
 ### Fix (committed in `6affc36`)
 
@@ -109,7 +109,7 @@ flowchart TD
 ### Two findings that only surfaced during implementation
 
 **1. `build_index_parallel` has the same deadlock — and it is the path Docker uses.**
-The fix initially landed only in `run()` (the serial path). `build_index_parallel` (`src/embeddings/build.rs:836`) repeats the identical `should_skip_hnsw_rebuild(to_embed.is_empty(), orphan_rows.is_empty())` decision, and `embed_status.json` on `/workspace-be` records `workers: 8` — so production never touches the serial path. The default-feature build hides this: `embeddings` is off by default (`Cargo.toml`), so `cargo test --lib` compiles neither call site. Both paths now carry the guard and the escalation.
+The fix initially landed only in `run()` (the serial path). `build_index_parallel` (`src/embeddings/build.rs:836`) repeats the identical `should_skip_hnsw_rebuild(to_embed.is_empty(), orphan_rows.is_empty())` decision, and `embed_status.json` on `/workspace-other` records `workers: 8` — so production never touches the serial path. The default-feature build hides this: `embeddings` is off by default (`Cargo.toml`), so `cargo test --lib` compiles neither call site. Both paths now carry the guard and the escalation.
 
 **2. The existing e2e test encoded the deadlock as the expected contract.**
 `incremental_build_skips_when_all_rows_fresh` (`tests/embed_build_resume_e2e.rs`) seeds `embedding_state` with fresh rows and **never inserts a vector**, then asserts `embedded_count == 0`. That is the pathological state, asserted as correct — the fix made it fail (`left: 3, right: 0`). Real code only marks a row fresh *after* writing its vector, so the fixture described a state the system cannot legitimately reach. Fixed by seeding `embedding_vectors` alongside the state rows, which preserves the actual requirement (FR-EMBED-RESUME-02: fresh **and** vectors present → cheap no-op, no ONNX load) and keeps that test at 0 embeds.
@@ -129,16 +129,9 @@ The fix initially landed only in `run()` (the serial path). `build_index_paralle
 | 5 | Self-heal writes real vectors (`index_size >= 3` after rebuild) | pass |
 | 6 | `cargo fmt --check`; `cargo clippy --features embeddings` | clean (one pre-existing `kind` warning) |
 | 7 | Pre-commit hook on the amended commit | pass |
-<<<<<<< HEAD
-| 8 | `embed_control status` shows `file_status_stale: true` on `/workspace-be` | **not yet** — needs container rebuild |
-| 9 | `embed_control action=on force_full=true` moves `to_embed` off 0 | **not yet** |
-| 10 | The reproduction query returns non-empty `results` | **not yet** |
-
-Items 8–10 require: rebuild binary, rebuild Docker image, restart `leankg-leankg-1`, then re-run. **Not in the commit; tracked as next steps.**
-=======
 | 8 | Linux binary built via `rust:1-bookworm` builder, 105 MB ELF aarch64, deployed via `docker cp` | pass |
-| 9 | Container `/workspace-be` (with workspace mount) + `LEANKG_MCP_PROJECT=/workspace-be`; `/health` returns 200 | pass |
-| 10 | `embed_control status` shows `file_status_stale: true` on `/workspace-be` (file_status.completed but live vectors=0) | pass |
+| 9 | Container `/workspace-other` (with workspace mount) + `LEANKG_MCP_PROJECT=/workspace-other`; `/health` returns 200 | pass |
+| 10 | `embed_control status` shows `file_status_stale: true` on `/workspace-other` (file_status.completed but live vectors=0) | pass |
 | 11 | `semantic_search` on the empty-vector project emits `vectors_missing: true` + a hint pointing at `search_code`/`find_function` and the rebuild command | pass |
 | 12 | `search_code("CheckUserPermission")` returns 4 hits (was 0 before the rebuild) | pass |
 | 13 | `find_function("CheckUserPermission")` returns 10 hits including the proto definition | pass |
@@ -165,7 +158,6 @@ Before the fix this exact query returned `status: ok, results: []` in 13s. After
 **How HNSW was completed without waiting for the full 373k-item embed:** the 373k embed stalled at 197,408 / 373,593 after 1.5h due to RSS throttling. With 51,239 vectors in the table (the embed wrote them but the bulk-insert loop never finished, so HNSW was never recreated), the deadlock was verifiably broken but `semantic_search` errored with `Index vec_idx not found`. After stopping the running `leankg-leankg-1` to release the DB lock, a one-shot `leankg status` invocation recreated the HNSW on the existing 51,239 vectors (`created HNSW index embedding_vectors:vec_idx` in the log). Restarting the MCP server, `semantic_search` returns 10 hits.
 
 This is the deadlock reproduction query from the original P0 transcript. **End-to-end verified.**
->>>>>>> 24adaa6d (docs: confirm item 15 — semantic_search returns non-empty end-to-end)
 
 One pre-existing failure in the full suite, **not caused by this change**: `embed_doc_inventory::index_inventory_updates_after_code_index` (`tests/embed_doc_inventory.rs:149`). Reproduced on clean `main` with no Rust changes, single-threaded. Tracked separately.
 
@@ -265,7 +257,7 @@ A separate class of bug — SSE discovery stripping `?project=` (PR #153) — wa
 
 ## Part 4 — Rollout order (practical)
 
-1. **Today (Part 3 verification):** rebuild binary, rebuild Docker image, restart container, run `embed_control action=on force_full=true project=/workspace-be`, confirm `total_vectors > 0` and the reproduction query returns non-empty `results`.
+1. **Today (Part 3 verification):** rebuild binary, rebuild Docker image, restart container, run `embed_control action=on force_full=true project=/workspace-other`, confirm `total_vectors > 0` and the reproduction query returns non-empty `results`.
 2. **Same day (Part 3 P1 aliases):** add the four alias keys in `src/mcp/server.rs` with tests. Single small commit, builds on `6affc36`.
 3. **Same week (Part 3 P0 skill/rules):** rewrite `using-leankg` and `leankg-graph-first.mdc` with serial gate, schema cheat-sheet, "no Grep same turn as health", `get_context` as the right follow-up to a hit, "cited file is a seed not a destination."
 4. **Next (Part 3 P1 errors + P2 bootstrap):** structured invalid-arg errors; optional `kg_agent_bootstrap`.

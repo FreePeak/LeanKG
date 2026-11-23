@@ -167,9 +167,15 @@ func ImportNDJSON(ctx context.Context, st Store, cfg Config, modelID, revision, 
 	}
 	want, native := target.stamp, target.native
 	width := want.Dimensions
+	// stop is the exit for a failure before the run's ledger row starts: a stop
+	// still leaves that row, as cancelled (recordStopped).
+	stop := func(err error) (Report, error) {
+		recordStopped(ctx, st, want.ModelID, "import")
+		return rep, err
+	}
 	cur, err := st.Stamp(ctx, want.ModelID)
 	if err != nil {
-		return rep, err
+		return stop(err)
 	}
 	// Provider-label-only differences are never cleared here: Matches ignores the
 	// label, so a matching stored stamp is left as it is, text_cap included. An
@@ -179,19 +185,19 @@ func ImportNDJSON(ctx context.Context, st Store, cfg Config, modelID, revision, 
 	// because the old cap described vectors that are gone.
 	if cur != nil && !cur.Matches(want) {
 		if err := st.ClearVectors(ctx, want.ModelID); err != nil {
-			return rep, err
+			return stop(err)
 		}
 		cur = nil
 	}
 	if cur == nil {
 		if err := st.WriteStamp(ctx, want); err != nil {
-			return rep, err
+			return stop(err)
 		}
 	}
 
 	elems, err := readElements(ctx, st)
 	if err != nil {
-		return rep, err
+		return stop(err)
 	}
 	elementByQN := make(map[string]string, len(elems)) // qn -> current content hash
 	for _, e := range elems {
@@ -199,7 +205,7 @@ func ImportNDJSON(ctx context.Context, st Store, cfg Config, modelID, revision, 
 	}
 	resume, err := st.EmbeddingStateMap(ctx, want.ModelID)
 	if err != nil {
-		return rep, err
+		return stop(err)
 	}
 
 	runID, err := st.StartEmbedRun(ledger, want.ModelID, "import", 0)
@@ -207,7 +213,7 @@ func ImportNDJSON(ctx context.Context, st Store, cfg Config, modelID, revision, 
 		return rep, err
 	}
 	fail := func(err error) (Report, error) {
-		_ = st.FinishEmbedRun(ledger, runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
+		_ = st.FinishEmbedRun(ledger, runID, failedStatus(ctx, err), rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
 		return rep, err
 	}
 

@@ -15,6 +15,7 @@ make go-build-tstree     # build with the tree-sitter tier (-tags tstree, CGO)
 make go-test-tstree      # test that same tier
 make dual-engine         # sqlite + live-PostgreSQL acceptance gate (needs :5433 pgvector)
 make go-ui-assets        # build ui-v2 and sync dist/ into internal/web/embed
+make live-test           # local-only live harness (scripts/live/): exits 1 on the baseline binary by design; not for CI
 ```
 
 Store contract: `internal/store/roles.go` (one interface per role) and `internal/store/backend.go` (`Backend` composes the roles; SQLite = *Store, PostgreSQL = PGStore). PG tests gate on `LEANKG_TEST_PG_URL` (local fixture: docker pgvector :5433, creds postgres/postgres, db leankg).

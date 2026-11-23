@@ -11,32 +11,6 @@ import (
 // wordRe tokenizes element content into whole identifiers.
 var wordRe = regexp.MustCompile(`\w+`)
 
-// trailingLineComment matches a `//` comment that follows whitespace, to the
-// end of the line.
-var trailingLineComment = regexp.MustCompile(`\s//.*$`)
-
-// stripLineComments removes line comments from code in the syntax of style: a
-// whole line that starts with a line-comment prefix, and a trailing `//` after
-// whitespace. String literals are not parsed (a documented ceiling of the regex
-// tier).
-func stripLineComments(code string, style commentStyle) string {
-	if len(style.line) == 0 {
-		return code
-	}
-	lines := strings.Split(code, "\n")
-	for i, l := range lines {
-		t := strings.TrimSpace(l)
-		if slices.ContainsFunc(style.line, func(p string) bool { return strings.HasPrefix(t, p) }) {
-			lines[i] = ""
-			continue
-		}
-		if slices.Contains(style.line, "//") {
-			lines[i] = trailingLineComment.ReplaceAllString(l, "")
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
 // callEdgeTypes are the edge types relationships() derives from element names.
 // An incremental run replaces exactly these on an unchanged sibling; contains
 // and every resource or framework edge stay as they are.
@@ -330,12 +304,14 @@ func addRelationships(set *edgeSet, els []indexedElem, names nameTable) {
 		} else {
 			outgoing := 0
 			// Scan the code only: the leading doc block (docLen bytes) is prose,
-			// not a call site, and line comments in the body are not code.
+			// not a call site, and comments in the body are not code.
 			code := e.content
 			if e.docLen > 0 && e.docLen <= len(code) {
 				code = code[e.docLen:]
 			}
-			code = stripLineComments(code, commentStyles[e.lang])
+			// A comment in the body, line or block, is prose as well: a name in it is
+			// no call.
+			code = stripComments(code, e.lang)
 			// A name used only in the declaration's signature — a parameter,
 			// return or receiver type — is a reference, not a call: `Engine.Query`
 			// does not call `Engine`. Names in the body (Python `Greeter()`, Go

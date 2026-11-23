@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/FreePeak/LeanKG/internal/store"
 )
@@ -176,5 +177,42 @@ func TestRunStopsOn401NamesKeyWithoutValue(t *testing.T) {
 	}
 	if n := calls.Load(); n != 1 {
 		t.Fatalf("embeddings requests = %d, want 1", n)
+	}
+}
+
+// A caller queued behind a slow /props probe returns its cancelled ctx at once.
+// Before the fix it waited for the first probe's fetch timeout and then went on.
+func TestProbeWaiterReturnsOnCancelledCtx(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/props" {
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+			<-release
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) }) // runs before srv.Close
+
+	p, _, err := Attach(Config{Provider: ProviderLocal, BaseURL: srv.URL + "/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lp := p.(*localProvider)
+	go func() { _ = lp.Probe(context.Background()) }()
+	<-entered // the first probe is now blocked inside /props
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	if err := lp.Probe(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("waiter Probe error = %v, want context.Canceled", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("waiter returned after %s; it should not queue behind the probe", d)
 	}
 }

@@ -8,6 +8,7 @@ package federation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/auth"
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -343,7 +345,7 @@ func TestReceiverRejectsMalformedGraph(t *testing.T) {
 				[]wireRelationship{{SourceQualified: "pkg.Fine", TargetQualified: "pkg.Other"}}),
 			want: "missing source, target or type",
 		},
-		"not json": {body: `{"elements":`, want: "decode push body"},
+		"not json": {body: `{"elements":`, want: "invalid JSON body"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			before := elementCount(t, st)
@@ -358,6 +360,115 @@ func TestReceiverRejectsMalformedGraph(t *testing.T) {
 				t.Errorf("element count changed from %d to %d on a rejected document", before, after)
 			}
 		})
+	}
+}
+
+// TestReceiverRefusesAPushOverOneMiBWith413 pins the body cap on the push
+// route: an oversize document is refused before it is decoded or applied.
+func TestReceiverRefusesAPushOverOneMiBWith413(t *testing.T) {
+	clearTokenEnv(t)
+	st := openStore(t)
+	seedGraph(t, st)
+	token := mint(t, st, "contributor")
+	h := Receiver(st, "/srv/p")
+
+	body := `{"elements":"` + strings.Repeat("a", httpx.MaxBodyBytes) + `"}`
+	before := elementCount(t, st)
+	rec := serve(t, h, http.MethodPost, PushPath, body, map[string]string{"Authorization": "Bearer " + token})
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", rec.Code)
+	}
+	if after := elementCount(t, st); after != before {
+		t.Errorf("element count changed from %d to %d on a refused push", before, after)
+	}
+}
+
+// elementsFails fails the read a push that carries elements makes before it
+// applies them, so applyGraph returns a store fault the handler must not echo.
+type elementsFails struct{ store.Backend }
+
+func (elementsFails) Elements(context.Context) ([]store.Element, error) {
+	return nil, errors.New("no such table: elements")
+}
+
+// TestReceiverStoreFaultOnPushHidesDriverText: a store fault while applying a
+// push answers 500 with no driver text (table and column names); the cause is
+// logged instead.
+func TestReceiverStoreFaultOnPushHidesDriverText(t *testing.T) {
+	clearTokenEnv(t)
+	st := openStore(t)
+	token := mint(t, st, "contributor")
+	h := Receiver(elementsFails{st}, "/srv/p")
+
+	body := pushDoc(t, "local", "svc", []wireElement{{QualifiedName: "pkg.Fine", Name: "Fine"}}, nil)
+	rec := serve(t, h, http.MethodPost, PushPath, body, map[string]string{"Authorization": "Bearer " + token})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("500 body leaks driver text: %s", rec.Body.String())
+	}
+}
+
+// relationshipsFails fails the read a publish makes after the elements.
+type relationshipsFails struct{ store.Backend }
+
+func (relationshipsFails) RelationshipsAll(context.Context, int) ([]store.Relationship, error) {
+	return nil, errors.New("no such table: relationships")
+}
+
+// TestPublishStoreFaultHidesDriverText: a store fault while publishing answers
+// 500 with no driver text (table and column names); the cause is logged
+// instead. Both reads of a publish are covered.
+func TestPublishStoreFaultHidesDriverText(t *testing.T) {
+	clearTokenEnv(t)
+	st := openStore(t)
+	for name, h := range map[string]http.Handler{
+		"elements read":      Receiver(elementsFails{st}, "/srv/local"),
+		"relationships read": Receiver(relationshipsFails{st}, "/srv/local"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := serve(t, h, http.MethodGet, GraphPath, "", nil)
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "no such table") {
+				t.Fatalf("500 body leaks driver text: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+// relationshipsCapped reads a full page and reports more rows than the page
+// holds, the case the publish cap refuses.
+type relationshipsCapped struct{ store.Backend }
+
+func (relationshipsCapped) RelationshipsAll(_ context.Context, limit int) ([]store.Relationship, error) {
+	return make([]store.Relationship, limit), nil
+}
+
+func (relationshipsCapped) RelationshipCount(context.Context) (int, error) {
+	return maxRelationships + 3, nil
+}
+
+// TestPublishRelationshipCapStaysVisible: the cap is an operator-actionable
+// limit, not a driver fault, so its message is sent (500, as before) while
+// driver text stays masked.
+func TestPublishRelationshipCapStaysVisible(t *testing.T) {
+	clearTokenEnv(t)
+	restore := maxRelationships
+	maxRelationships = 2
+	t.Cleanup(func() { maxRelationships = restore })
+	st := openStore(t)
+	h := Receiver(relationshipsCapped{st}, "/srv/local")
+
+	rec := serve(t, h, http.MethodGet, GraphPath, "", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	want := "local graph has 5 relationships, above the 2 publish cap"
+	if msg := decodeError(t, rec); !strings.Contains(msg, want) {
+		t.Fatalf("error = %q, want it to carry %q", msg, want)
 	}
 }
 

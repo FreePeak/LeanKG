@@ -111,9 +111,9 @@ func (k *Knowledge) AnnotationsForEnvironment(ctx context.Context, environment s
 
 // SearchAnnotations is the Rust db::search_knowledge lookup: keyword search
 // over title or content, optional exact knowledge type and environment.
-// SQLite answers it with the substring search (newest first, no relevance
-// signal); the PostgreSQL backend ranks its migration-012 tsvector with
-// ts_rank and degrades to substring search internally (issue #273).
+// SQLite ranks its knowledge_fts keyword hits by bm25 and appends the substring
+// matches newest first; the PostgreSQL backend ranks its migration-012 tsvector
+// with ts_rank and degrades to substring search internally (issue #273).
 func (k *Knowledge) SearchAnnotations(ctx context.Context, query, knowledgeType, environment string, limit int) ([]store.KnowledgeEntry, error) {
 	return k.st.KnowledgeEntriesSearch(ctx, query, knowledgeType, environment, limit)
 }

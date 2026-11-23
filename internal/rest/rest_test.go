@@ -454,3 +454,25 @@ func TestInjectReportsInjectedIDs(t *testing.T) {
 		t.Fatalf("text = %q, want the injected content", out.Text)
 	}
 }
+
+// TestMalformedBodyAnswersInvalidParamCode: a body that is not JSON is a 400
+// with the catalog code, so clients branch on the token like every other 400.
+func TestMalformedBodyAnswersInvalidParamCode(t *testing.T) {
+	e, _ := newEngine(t)
+	srv := httptest.NewServer(gatedHandler(e, nil))
+	defer srv.Close()
+	res, err := http.Post(srv.URL+"/api/v1/query", "application/json", strings.NewReader(`{"query":`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var env struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&env); err != nil {
+		t.Fatalf("body is not JSON: %v", err)
+	}
+	if res.StatusCode != http.StatusBadRequest || env.Code != "LEANKG_ERROR_INVALID_PARAM" {
+		t.Fatalf("status %d code %q, want 400 LEANKG_ERROR_INVALID_PARAM", res.StatusCode, env.Code)
+	}
+}

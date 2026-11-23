@@ -524,7 +524,7 @@ afterSidecars:
 		ExtraDirs:  projects.ParseDirs(os.Getenv("LEANKG_PROJECT_DIRS")),
 		Mode:       mode,
 		EngineName: eng,
-		PGURL:      os.Getenv("LEANKG_PG_URL"),
+		PGURL:      projectcfg.PGURL(dir),
 		Memory:     *withMemory,
 		Embedder:   embedder,
 		Logf:       log.Printf,
@@ -589,7 +589,7 @@ afterSidecars:
 			// maintenance: a row for a project that left the fleet must not
 			// outlive it, and nothing else ever pruned the registry. The
 			// callback runs once per pass, so this is once per tick.
-			sweepRegistry(fctx, eng)
+			sweepRegistry(fctx, eng, dir)
 			return fleetTargets(fctx, dir, st, mem, router.List(), eng, keepModelIDs)
 		}, maintain.Options{Logf: log.Printf, KeepModelIDs: keepModelIDs}, interval, maintain.FirstIdle), shutdownTimeout)
 		defer cancelFleet()
@@ -795,10 +795,10 @@ func maintenanceStoreExists(ctx context.Context, dir, engine string) bool {
 // Like the store maintenance it rides, the sweep does not run when the
 // maintenance loop is disabled (LEANKG_VACUUM_INTERVAL_HOURS=0): the
 // registry is swept as often as the fleet is maintained, and not more often.
-func sweepRegistry(ctx context.Context, eng string) {
+func sweepRegistry(ctx context.Context, eng, dir string) {
 	rep, err := portfolioreg.AutoSweep(ctx, portfolioreg.Options{
 		Engine: eng,
-		PGURL:  os.Getenv("LEANKG_PG_URL"),
+		PGURL:  projectcfg.PGURL(dir),
 	})
 	if err != nil {
 		log.Printf("maintenance: registry sweep: %v", err)
@@ -1093,7 +1093,7 @@ func cmdIndex(ctx context.Context, args []string) error {
 		case errors.Is(err, context.Canceled):
 			return fmt.Errorf("index: interrupted; the directories finished so far are kept, the one in progress is rolled back; rerun to finish: %w", err)
 		}
-		return fmt.Errorf("index: %v", err)
+		return fmt.Errorf("index: %w", err)
 	}
 	if !*noEmbed {
 		indexEmbed(hardCtx, storeDir, *hook)

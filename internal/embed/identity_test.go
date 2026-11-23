@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/FreePeak/LeanKG/internal/store"
 )
@@ -89,5 +91,67 @@ func TestReadCalibrationAcceptsPreCX40Identity(t *testing.T) {
 	floor, ok := ReadCalibration(context.Background(), st, stamp)
 	if !ok || floor != 0.5 {
 		t.Fatalf("ReadCalibration = (%v, %v), want (0.5, true) for the pre-CX-40 identity", floor, ok)
+	}
+}
+
+// TestProbeSerialisesConcurrentCallers: a second caller that arrives while the
+// first probe is still reading /props must wait for that answer. Returning early
+// would let it read the legacy identity (no GGUF revision, TextBudget 0), and
+// memory dense keys written under that identity never match again.
+func TestProbeSerialisesConcurrentCallers(t *testing.T) {
+	const sha = "0123456789abcdef0123456789abcdef01234567"
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/props" {
+			http.NotFound(w, r)
+			return
+		}
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-release
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model_path":                  "/models/snapshots/" + sha + "/m.gguf",
+			"default_generation_settings": map[string]any{"n_ctx": 512},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(unblock)
+
+	p, _, err := Attach(Config{Provider: "local", BaseURL: srv.URL + "/v1"})
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	ctx := context.Background()
+	aDone := make(chan error, 1)
+	go func() { aDone <- p.Probe(ctx) }()
+	<-entered
+
+	bRev := make(chan string, 1)
+	go func() {
+		_ = p.Probe(ctx)
+		bRev <- p.Identity().Revision
+	}()
+	var got string
+	select {
+	case got = <-bRev:
+		// The second caller returned while the first probe was unanswered.
+		unblock()
+		<-aDone
+		t.Fatalf("second Probe returned before the first /props answer: Identity revision %q", got)
+	case <-time.After(200 * time.Millisecond):
+		// Expected: the second caller is waiting on the first probe.
+		unblock()
+		got = <-bRev
+	}
+	if err := <-aDone; err != nil {
+		t.Fatalf("first Probe: %v", err)
+	}
+	if want := "local:m.gguf@" + sha; got != want {
+		t.Fatalf("second caller Identity revision = %q, want %q", got, want)
 	}
 }

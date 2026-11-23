@@ -68,8 +68,51 @@ func EnforceBudget(v any, action string, override int) (any, budget.Stats) {
 // decimal string (the proto wire carries strings) must be a positive whole
 // number.
 func tokenBudgetArg(args map[string]any) (int, error) {
-	v, ok := args["token_budget"]
-	if !ok || v == nil {
+	return ParseTokenBudget(args["token_budget"])
+}
+
+// ResolveTokenBudget is the token cap one answer of action gets, by the rule
+// QueryAnswer applies: the caller's token_budget when set, else the action's
+// table cap. A transport with its own request field calls it so its answer is
+// cut by the same rule as every other transport.
+func ResolveTokenBudget(action string, token any) (int, error) {
+	override, err := ParseTokenBudget(token)
+	if err != nil {
+		return 0, err
+	}
+	if override > 0 {
+		return override, nil
+	}
+	return budget.TokenBudget{}.MaxTokensForTool(action), nil
+}
+
+// queryGraphAction names the budget row query-graph is cut by (ToolBudgets).
+const queryGraphAction = "query_graph"
+
+// The query-graph answer is sized between these bounds after the caller's
+// budget is resolved: below the floor it is too thin to read, above the
+// ceiling it is too large to return.
+const (
+	queryGraphMinTokens = 200
+	queryGraphMaxTokens = 20_000
+)
+
+// ResolveQueryGraphBudget is the token cap a query-graph answer gets: the
+// ResolveTokenBudget cap clamped to [200, 20000]. Every transport that answers
+// query-graph calls it, so the clamp has one home.
+func ResolveQueryGraphBudget(token any) (int, error) {
+	n, err := ResolveTokenBudget(queryGraphAction, token)
+	if err != nil {
+		return 0, err
+	}
+	return min(max(n, queryGraphMinTokens), queryGraphMaxTokens), nil
+}
+
+// ParseTokenBudget reads a token budget from a decoded request value: a JSON
+// number, a Go integer or a decimal string. nil is absent (0). Anything else
+// must be a positive whole number.
+func ParseTokenBudget(v any) (int, error) {
+	if v == nil {
 		return 0, nil
 	}
 	var n int64
