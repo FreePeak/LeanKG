@@ -1,6 +1,8 @@
 package index
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -84,5 +86,37 @@ func TestExtractWorkManagerFixture(t *testing.T) {
 	}
 	if got := countRels(rels, "workmanager_works_on"); got != 2 {
 		t.Fatalf("workmanager_works_on = %d, want 2", got)
+	}
+}
+
+// TestWorkManagerRequestEdgeSurvivesOrphanSweep: the request edge's source is
+// its file, which has no element. The orphan sweep must keep it while the file
+// exists (also on a run that changes another file) and drop it once the file
+// is deleted.
+func TestWorkManagerRequestEdgeSurvivesOrphanSweep(t *testing.T) {
+	const sync = "class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, params) {\n" +
+		"    override fun doWork(): Result = Result.success()\n}\n\n" +
+		"val request = OneTimeWorkRequestBuilder<SyncWorker>().build()\n"
+	const edge, from = "workmanager_works_on", "Sync.kt"
+	const target = "Sync.kt::WorkManager:SyncWorker"
+	st, dir := newCrossTree(t)
+	putFiles(t, dir, map[string]string{from: sync})
+	indexTree(t, st, dir)
+	if _, ok := edgeTo(t, st, from, target, edge); !ok {
+		t.Fatal("request edge of a fresh index was not stored")
+	}
+
+	putFiles(t, dir, map[string]string{"Other.kt": "package app\n\nfun Other() {}\n"})
+	indexTree(t, st, dir)
+	if _, ok := edgeTo(t, st, from, target, edge); !ok {
+		t.Fatal("the orphan sweep of a run that changed another file dropped the request edge")
+	}
+
+	if err := os.Remove(filepath.Join(dir, from)); err != nil {
+		t.Fatal(err)
+	}
+	indexTree(t, st, dir)
+	if _, ok := edgeTo(t, st, from, target, edge); ok {
+		t.Fatal("request edge of a deleted file survived the sweep")
 	}
 }

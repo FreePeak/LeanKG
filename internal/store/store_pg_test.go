@@ -165,6 +165,36 @@ func TestPGElementOps(t *testing.T) {
 	}
 }
 
+// TestPGFileSourcedEdgeSurvivesOrphanPurge mirrors the SQLite test: a file
+// path is a live endpoint while its code_files row exists (gated on
+// LEANKG_TEST_PG_URL).
+func TestPGFileSourcedEdgeSurvivesOrphanPurge(t *testing.T) {
+	s := openPGTest(t)
+	ctx := context.Background()
+	if err := s.UpsertElements(ctx, []Element{
+		{QualifiedName: "Sync.kt::WorkManager:SyncWorker", ElementType: "workmanager_worker", Name: "SyncWorker", FilePath: "Sync.kt", Language: "kotlin"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertFiles(ctx, []FileRecord{{Path: "Sync.kt", Size: 1, MtimeNS: 1, ContentHash: "h"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertRelationships(ctx, []Relationship{
+		{Source: "Sync.kt", Target: "Sync.kt::WorkManager:SyncWorker", RelType: "workmanager_works_on"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.DeleteOrphanRelationships(ctx); err != nil || n != 0 {
+		t.Fatalf("gc with the file present purged %d edges (err %v), want 0", n, err)
+	}
+	if err := s.DeleteFileRecord(ctx, "Sync.kt"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.DeleteOrphanRelationships(ctx); err != nil || n != 1 {
+		t.Fatalf("gc after the file record went purged %d edges (err %v), want 1", n, err)
+	}
+}
+
 // TestPGOrphanPurges exercises both gc purges against the real PostgreSQL
 // backend (gated on LEANKG_TEST_PG_URL): the DeleteOrphanRelationships that
 // #409 merged without a PG mirror, and the new per-model DeleteOrphanVectors.
