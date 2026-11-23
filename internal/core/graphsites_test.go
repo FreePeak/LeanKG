@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
+	"github.com/FreePeak/LeanKG/internal/graph"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -465,5 +467,68 @@ func TestCallersUnknownSeedKeepsHitsAndReachable(t *testing.T) {
 		if got := out["resolved"]; got != false {
 			t.Errorf("%s: resolved = %v, want false", verb, got)
 		}
+	}
+}
+
+// TestSeedsTruncatedAtTheStoreRowCap pins the silent seed cut: FindExact returns
+// at most graph.StoreFindExactLimit rows, so a bare name held by more elements
+// than that resolves to a partial seed set. The answer must say so.
+func TestSeedsTruncatedAtTheStoreRowCap(t *testing.T) {
+	e, _ := newEngine(t)
+	var els []store.Element
+	for i := 0; i < 250; i++ {
+		els = append(els, store.Element{QualifiedName: fmt.Sprintf("pkg/f%03d.go::Same", i), ElementType: "function",
+			Name: "Same", FilePath: fmt.Sprintf("pkg/f%03d.go", i), LineStart: 1, Language: "go"})
+	}
+	if err := e.st.UpsertElements(context.Background(), els); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "callers", Query: "Same"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(out["seeds"].([]string)); got != graph.StoreFindExactLimit {
+		t.Errorf("seeds = %d, want the store cap %d", got, graph.StoreFindExactLimit)
+	}
+	if got := out["seeds_truncated"]; got != true {
+		t.Errorf("seeds_truncated = %v, want true for 250 same-named elements", got)
+	}
+	if g, _ := out["guidance"].(string); !strings.Contains(g, "qualified name") {
+		t.Errorf("guidance = %q, want it to name the qualified-name retry", g)
+	}
+}
+
+// TestCallersCappedAtTheCallerLimit pins the caller list cap: callers are built
+// from every site, so 201 or 250 callers are cut to graphCallerLimit (200) and
+// the answer says so. Fewer callers keep the list whole and set no flag.
+func TestCallersCappedAtTheCallerLimit(t *testing.T) {
+	for _, tc := range []struct {
+		callers   int
+		wantLen   int
+		truncated bool
+	}{{150, 150, false}, {201, graphCallerLimit, true}, {250, graphCallerLimit, true}} {
+		t.Run(fmt.Sprint(tc.callers), func(t *testing.T) {
+			e, _ := newEngine(t)
+			qns := fanIn(t, e, "lib/t.go::Target", "Target", "lib/t.go", tc.callers, "svc/c")
+
+			out, err := e.Query(context.Background(), QueryRequest{Action: "callers", Query: "lib/t.go::Target"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, _ := out["callers"].([]string)
+			if len(got) != tc.wantLen {
+				t.Fatalf("callers = %d, want %d", len(got), tc.wantLen)
+			}
+			if tc.truncated {
+				sort.Strings(qns)
+				if !reflect.DeepEqual(got, qns[:tc.wantLen]) {
+					t.Errorf("the kept callers must be the first %d in qualified-name order", tc.wantLen)
+				}
+			}
+			if got, want := out["callers_truncated"] == true, tc.truncated; got != want {
+				t.Errorf("callers_truncated = %v, want %v", out["callers_truncated"], want)
+			}
+		})
 	}
 }

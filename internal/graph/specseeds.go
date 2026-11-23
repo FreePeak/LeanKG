@@ -83,10 +83,10 @@ func ExpandSpecSeeds(ctx context.Context, st graphStore, seeds []string) ([]stri
 // specSeedLimit caps the seeds one expansion adds to the given ones.
 const specSeedLimit = 64
 
-// storeFindExactLimit is the row cap of FindExact: LIMIT 200 in
+// StoreFindExactLimit is the row cap of FindExact: LIMIT 200 in
 // internal/store/elements.go:559 and internal/store/store_pg.go:329. A lookup
 // that returns this many rows may have dropped some.
-const storeFindExactLimit = 200
+const StoreFindExactLimit = 200
 
 // specExpander memoizes the dispatch targets of each spec for one expansion, so
 // a name shared by many specs reads each caller's edges once.
@@ -147,7 +147,7 @@ func (x specExpander) sharingSpecs(ctx context.Context, el store.Element, impls 
 	if err != nil {
 		return nil, false, err
 	}
-	truncated := len(cands) >= storeFindExactLimit
+	truncated := len(cands) >= StoreFindExactLimit
 	want := map[string]bool{}
 	for _, qn := range impls {
 		want[qn] = true

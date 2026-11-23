@@ -1142,19 +1142,23 @@ func looksLikeIdentifier(s string) bool {
 // and path-suffix forms of seedAliases are tried; aliased reports that they
 // resolved the seed. The result is never empty; index 0 is the seed the
 // single-seed verbs use.
-func (e *Engine) resolveGraphSeeds(ctx context.Context, seed string) (seeds []string, aliased bool, err error) {
+//
+// truncated reports that a name lookup hit the store's row cap
+// (graph.StoreFindExactLimit), so the seed set may be a partial one.
+func (e *Engine) resolveGraphSeeds(ctx context.Context, seed string) (seeds []string, aliased, truncated bool, err error) {
 	seed = strings.TrimSpace(seed)
 	if seed == "" {
-		return []string{seed}, false, nil
+		return []string{seed}, false, false, nil
 	}
 	els, err := e.st.FindExact(ctx, seed)
 	if err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
+	truncated = len(els) >= graph.StoreFindExactLimit
 	var callables []string
 	for _, el := range els {
 		if el.QualifiedName == seed {
-			return []string{el.QualifiedName}, false, nil
+			return []string{el.QualifiedName}, false, truncated, nil
 		}
 		if strings.EqualFold(el.Name, seed) && (el.ElementType == "function" || el.ElementType == "method") {
 			callables = append(callables, el.QualifiedName)
@@ -1168,18 +1172,18 @@ func (e *Engine) resolveGraphSeeds(ctx context.Context, seed string) (seeds []st
 			}
 			return callables[i] < callables[j]
 		})
-		return callables, false, nil
+		return callables, false, truncated, nil
 	case len(els) > 0:
-		return []string{els[0].QualifiedName}, false, nil
+		return []string{els[0].QualifiedName}, false, truncated, nil
 	}
-	alias, err := e.seedAliases(ctx, seed)
+	alias, aliasTruncated, err := e.seedAliases(ctx, seed)
 	if err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
 	if len(alias) > 0 {
-		return alias, true, nil
+		return alias, true, truncated || aliasTruncated, nil
 	}
-	return []string{seed}, false, nil
+	return []string{seed}, false, truncated, nil
 }
 
 // aliasElementTypes are the element kinds a package or path seed may name: the
@@ -1198,19 +1202,20 @@ var aliasElementTypes = map[string]bool{
 //     qualified name ends in the seed at a path-segment boundary.
 //
 // Both look the element up by its last name segment (FindExact), so no new
-// store lookup is needed. It returns nil when no element matches.
-func (e *Engine) seedAliases(ctx context.Context, seed string) ([]string, error) {
+// store lookup is needed. It returns nil when no element matches, and truncated
+// when that lookup hit the store's row cap.
+func (e *Engine) seedAliases(ctx context.Context, seed string) (out []string, truncated bool, err error) {
 	name := seedName(seed)
 	if name == "" {
-		return nil, nil
+		return nil, false, nil
 	}
 	els, err := e.st.FindExact(ctx, name)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	truncated = len(els) >= graph.StoreFindExactLimit
 	pkg, tail, dotted := strings.Cut(seed, ".")
 	pathSuffix := strings.Contains(seed, "::")
-	var out []string
 	for _, el := range els {
 		if !aliasElementTypes[el.ElementType] {
 			continue
@@ -1228,7 +1233,7 @@ func (e *Engine) seedAliases(ctx context.Context, seed string) ([]string, error)
 		}
 	}
 	sort.Strings(out)
-	return out, nil
+	return out, truncated, nil
 }
 
 // didYouMeanLimit caps the candidate names an unknown seed is offered.

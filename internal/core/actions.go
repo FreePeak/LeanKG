@@ -343,7 +343,7 @@ func graphFanQuery(verb graphFanVerb) actionHandler[QueryRequest] {
 		if err != nil {
 			return nil, err
 		}
-		seeds, aliased, err := e.resolveGraphSeeds(ctx, req.Query)
+		seeds, aliased, truncated, err := e.resolveGraphSeeds(ctx, req.Query)
 		if err != nil {
 			return nil, err
 		}
@@ -354,14 +354,24 @@ func graphFanQuery(verb graphFanVerb) actionHandler[QueryRequest] {
 			s.resp["resolved_from"] = req.Query
 		}
 		out, err := verb(e, ctx, req, a, seeds, s.resp)
-		if err != nil || !aliased || len(seeds) < 2 {
+		if err != nil {
 			return out, err
 		}
-		note := fmt.Sprintf("The seed %q matched %d elements (%s); retry with one qualified name to narrow it.", req.Query, len(seeds), strings.Join(seeds, ", "))
-		if prev, _ := out["guidance"].(string); prev != "" {
-			note += " " + prev
+		var notes []string
+		if aliased && len(seeds) >= 2 {
+			notes = append(notes, fmt.Sprintf("The seed %q matched %d elements (%s); retry with one qualified name to narrow it.", req.Query, len(seeds), strings.Join(seeds, ", ")))
 		}
-		out["guidance"] = note
+		if truncated {
+			out["seeds_truncated"] = true
+			notes = append(notes, fmt.Sprintf("The name %q matched %d or more elements, the most the store returns for one name, so the seeds are a partial set; pass a qualified name for the full answer.", req.Query, graph.StoreFindExactLimit))
+		}
+		if len(notes) == 0 {
+			return out, nil
+		}
+		if prev, _ := out["guidance"].(string); prev != "" {
+			notes = append(notes, prev)
+		}
+		out["guidance"] = strings.Join(notes, " ")
 		return out, nil
 	})
 }
@@ -434,7 +444,7 @@ func (e *Engine) graphPath(ctx context.Context, req QueryRequest, a graphArgs, s
 	if toRaw == "" {
 		return nil, fmt.Errorf("query path requires args.to (target qualified name)")
 	}
-	tos, _, err := e.resolveGraphSeeds(ctx, toRaw)
+	tos, _, _, err := e.resolveGraphSeeds(ctx, toRaw)
 	if err != nil {
 		return nil, err
 	}
@@ -498,6 +508,10 @@ func (e *Engine) graphCallees(ctx context.Context, req QueryRequest, a graphArgs
 // found, so a cut answer says how much it left out.
 const graphSiteLimit = 50
 
+// graphCallerLimit caps the caller names a callers or callees answer lists, and
+// callers_truncated says when it cut. The sites are capped separately.
+const graphCallerLimit = 200
+
 // graphSeedLead is how many seeds the guidance names, by caller count, when a
 // bare name resolves to more seeds than this.
 const graphSeedLead = 3
@@ -526,8 +540,8 @@ func (e *Engine) graphCallSites(ctx context.Context, req QueryRequest, a graphAr
 		return nil, err
 	}
 	walk := seeds
+	var expandTruncated bool
 	if incoming {
-		var expandTruncated bool
 		walk, expandTruncated, err = graph.ExpandSpecSeeds(ctx, e.st, seeds)
 		if err != nil {
 			return nil, err
@@ -544,6 +558,10 @@ func (e *Engine) graphCallSites(ctx context.Context, req QueryRequest, a graphAr
 	bySeed = keepSiteFiles(bySeed, keep)
 	sites := graph.UnionSites(walk, bySeed)
 	callers := graph.SiteEnds(sites)
+	if len(callers) > graphCallerLimit {
+		callers = callers[:graphCallerLimit]
+		resp[key+"_truncated"] = true
+	}
 	counts := seedCounts(walk, bySeed)
 	// A site without a use line is still a caller (callers above), but it has
 	// no line to list, so the site list and its total count only lined sites.
@@ -573,6 +591,10 @@ func (e *Engine) graphCallSites(ctx context.Context, req QueryRequest, a graphAr
 		resp["guidance"] = graphEmptyGuidance(key, strings.Join(seeds, ", "))
 	} else if g := graphSitesGuidance(seeds, counts, len(shown), len(lined)); g != "" {
 		resp["guidance"] = g
+	}
+	if expandTruncated {
+		g, _ := resp["guidance"].(string)
+		resp["guidance"] = strings.TrimSpace("Some implementers of this interface spec were not expanded (seeds_truncated is true), so the answer covers the expanded seeds only. " + g)
 	}
 	return graphDone(resp, req)
 }
