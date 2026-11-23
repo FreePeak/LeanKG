@@ -91,7 +91,7 @@ func runCommand(ctx context.Context, argv []string, compressOut bool) (string, i
 		}
 		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() && (ws.Signal() == syscall.SIGINT || ws.Signal() == syscall.SIGTERM) {
 			// Interrupted, not failed: wrapping context.Canceled makes cliexit.Finish exit 130.
-			return string(raw), 130, fmt.Errorf("%s: interrupted by %v: %w", cmdLine, ws.Signal(), context.Canceled)
+			return string(raw), cliexit.ExitCancelled, fmt.Errorf("%s: interrupted by %v: %w", cmdLine, ws.Signal(), context.Canceled)
 		}
 		code := ee.ExitCode()
 		if code <= 0 {
