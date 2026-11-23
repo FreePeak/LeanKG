@@ -288,6 +288,22 @@ func TestGoAstSeedsAreNotCutByPerElementCeiling(t *testing.T) {
 	}
 }
 
+// TestGoInterfaceSpecsDoNotStarveCallEdges: a 600-method interface links each
+// method spec to it with a contains edge. Those contains edges must not spend
+// the per-file call ceiling, so a call in a later function still links.
+func TestGoInterfaceSpecsDoNotStarveCallEdges(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("package a\n\ntype Big interface {\n")
+	for i := range 600 {
+		fmt.Fprintf(&b, "\tM%d()\n", i)
+	}
+	b.WriteString("}\n\nfunc GatherAll() {}\n\nfunc Caller() {\n\tGatherAll()\n}\n")
+	st := indexedGraph(t, map[string]string{"a.go": b.String()})
+	if _, ok := edgeTo(t, st, "a.go::Caller", "a.go::GatherAll", "calls"); !ok {
+		t.Fatal("contains edges of the interface specs cut the call edge Caller -> GatherAll")
+	}
+}
+
 // precisionTree writes files and indexes them into a fresh store. The
 // precision tests below read edges back by source and target.
 func precisionTree(t *testing.T, files map[string]string) store.Backend {

@@ -212,10 +212,18 @@ func relationships(els []indexedElem, names nameTable) []store.Relationship {
 
 // addRelationships adds the element edges of one file to set (see relationships).
 func addRelationships(set *edgeSet, els []indexedElem, names nameTable) {
+	// fileCalls counts the call and reference edges this file added. The
+	// per-file ceiling reads it, so contains edges (one per child, e.g. an
+	// interface's method specs) never cut the calls behind them.
+	fileCalls := 0
 	add := func(src, dst, typ string, conf float64, meta map[string]any) bool {
-		return set.add(store.Relationship{
+		added := set.add(store.Relationship{
 			Source: src, Target: dst, RelType: typ, Confidence: conf, Metadata: meta,
 		})
+		if added && slices.Contains(callEdgeTypes, typ) {
+			fileCalls++
+		}
+		return added
 	}
 
 	for i := range els {
@@ -316,7 +324,7 @@ func addRelationships(set *edgeSet, els []indexedElem, names nameTable) {
 				}
 			}
 		}
-		if set.count() >= maxEdgesPerFile {
+		if fileCalls >= maxEdgesPerFile {
 			break // per-file ceiling: stop scanning further elements
 		}
 	}
