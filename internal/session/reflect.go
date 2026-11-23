@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/memory"
+	"github.com/FreePeak/LeanKG/internal/telemetry"
 )
 
 // LessonsFile is the reflections artifact, relative to the project directory.
@@ -59,8 +60,8 @@ func ReflectOutcome(ctx context.Context, projectDir, question string, nodes []st
 	if note != "" {
 		noteLine = fmt.Sprintf("- Note: %s\n", note)
 	}
-	entry := fmt.Sprintf("\n## %d — %s\n\n- Question: %s\n- Nodes: %s\n- Outcome: %s\n%s\n",
-		time.Now().Unix(), outcome, question, nodeStr, outcome, noteLine)
+	entry := telemetry.Redact(fmt.Sprintf("\n## %d — %s\n\n- Question: %s\n- Nodes: %s\n- Outcome: %s\n%s\n",
+		time.Now().Unix(), outcome, question, nodeStr, outcome, noteLine))
 	if _, err := f.WriteString(entry); err != nil {
 		return "", fmt.Errorf("session: append reflection: %w", err)
 	}

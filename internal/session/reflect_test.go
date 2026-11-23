@@ -218,3 +218,22 @@ func TestReflectionMirrorSurvivesCancelAfterLessonWritten(t *testing.T) {
 		t.Fatalf("reflection written before a late cancel is missing from memory: %q", bodies)
 	}
 }
+
+// TestReflectOutcomeRedactsSecrets pins that a reflection is masked before it
+// is appended to LESSONS.md, the same as the memory layer's own writes: a key
+// pasted into the question or the note never reaches the artifact.
+func TestReflectOutcomeRedactsSecrets(t *testing.T) {
+	dir := t.TempDir()
+	const secret = "sk-abc123def456ghi789jkl"
+	path, err := ReflectOutcome(context.Background(), dir, "why does "+secret+" fail?", []string{"pkg.Func"}, "dead_end", "tried "+secret)
+	if err != nil {
+		t.Fatalf("ReflectOutcome: %v", err)
+	}
+	entry := readLessons(t, path)
+	if strings.Contains(entry, secret) {
+		t.Fatalf("LESSONS.md holds the raw key: %q", entry)
+	}
+	if strings.Count(entry, "[REDACTED:key]") != 2 {
+		t.Fatalf("entry = %q, want both occurrences redacted", entry)
+	}
+}
