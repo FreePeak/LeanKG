@@ -17,7 +17,6 @@ package federation
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -101,8 +100,8 @@ func (h *receiver) push(w http.ResponseWriter, req *http.Request) {
 	}
 
 	var payload pushPayload
-	if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
-		httpx.WriteMessage(w, http.StatusBadRequest, fmt.Errorf("federation: decode push body: %w", err).Error())
+	if err := httpx.DecodeJSON(w, req, &payload); err != nil {
+		httpx.WriteError(w, err)
 		return
 	}
 	now := time.Now().UTC()

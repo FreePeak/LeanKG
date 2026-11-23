@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/auth"
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -343,7 +344,7 @@ func TestReceiverRejectsMalformedGraph(t *testing.T) {
 				[]wireRelationship{{SourceQualified: "pkg.Fine", TargetQualified: "pkg.Other"}}),
 			want: "missing source, target or type",
 		},
-		"not json": {body: `{"elements":`, want: "decode push body"},
+		"not json": {body: `{"elements":`, want: "invalid JSON body"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			before := elementCount(t, st)
@@ -358,6 +359,26 @@ func TestReceiverRejectsMalformedGraph(t *testing.T) {
 				t.Errorf("element count changed from %d to %d on a rejected document", before, after)
 			}
 		})
+	}
+}
+
+// TestReceiverRefusesAPushOverOneMiBWith413 pins the body cap on the push
+// route: an oversize document is refused before it is decoded or applied.
+func TestReceiverRefusesAPushOverOneMiBWith413(t *testing.T) {
+	clearTokenEnv(t)
+	st := openStore(t)
+	seedGraph(t, st)
+	token := mint(t, st, "contributor")
+	h := Receiver(st, "/srv/p")
+
+	body := `{"elements":"` + strings.Repeat("a", httpx.MaxBodyBytes) + `"}`
+	before := elementCount(t, st)
+	rec := serve(t, h, http.MethodPost, PushPath, body, map[string]string{"Authorization": "Bearer " + token})
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", rec.Code)
+	}
+	if after := elementCount(t, st); after != before {
+		t.Errorf("element count changed from %d to %d on a refused push", before, after)
 	}
 }
 
