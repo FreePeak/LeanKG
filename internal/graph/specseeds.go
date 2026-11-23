@@ -26,7 +26,7 @@ const (
 // specs (concrete methods, functions, unknown names) are kept as they are. The
 // given seeds come first, in order; each added seed follows once, without repeats.
 func ExpandSpecSeeds(ctx context.Context, st graphStore, seeds []string) ([]string, error) {
-	x := specExpander{ctx: ctx, st: st, dispatch: map[string][]string{}}
+	x := specExpander{st: st, dispatch: map[string][]string{}}
 	out := make([]string, 0, len(seeds))
 	seen := map[string]bool{}
 	add := func(qn string) {
@@ -46,14 +46,14 @@ func ExpandSpecSeeds(ctx context.Context, st graphStore, seeds []string) ([]stri
 		if !IsInterfaceSpec(el) {
 			continue
 		}
-		impls, err := x.dispatchTargets(el)
+		impls, err := x.dispatchTargets(ctx, el)
 		if err != nil {
 			return nil, err
 		}
 		if len(impls) == 0 {
 			continue
 		}
-		siblings, err := x.sharingSpecs(el, impls)
+		siblings, err := x.sharingSpecs(ctx, el, impls)
 		if err != nil {
 			return nil, err
 		}
@@ -70,7 +70,6 @@ func ExpandSpecSeeds(ctx context.Context, st graphStore, seeds []string) ([]stri
 // specExpander memoizes the dispatch targets of each spec for one expansion, so
 // a name shared by many specs reads each caller's edges once.
 type specExpander struct {
-	ctx      context.Context
 	st       graphStore
 	dispatch map[string][]string
 }
@@ -92,11 +91,11 @@ func resolutionOf(r store.Relationship) string {
 // caller's interface-dispatch edges that carry spec's method name. A caller
 // often dispatches other interfaces' methods too (Close, Files), and those are
 // not implementers of spec. Sorted and unique.
-func (x specExpander) dispatchTargets(el store.Element) ([]string, error) {
+func (x specExpander) dispatchTargets(ctx context.Context, el store.Element) ([]string, error) {
 	if got, ok := x.dispatch[el.QualifiedName]; ok {
 		return got, nil
 	}
-	in, err := x.st.Incoming(x.ctx, el.QualifiedName)
+	in, err := x.st.Incoming(ctx, el.QualifiedName)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +104,7 @@ func (x specExpander) dispatchTargets(el store.Element) ([]string, error) {
 		if res := resolutionOf(r); res != resInterfaceSpec && res != resInterfaceDispatch {
 			continue
 		}
-		out, err := x.st.Outgoing(x.ctx, r.Source)
+		out, err := x.st.Outgoing(ctx, r.Source)
 		if err != nil {
 			return nil, err
 		}
@@ -122,8 +121,8 @@ func (x specExpander) dispatchTargets(el store.Element) ([]string, error) {
 
 // sharingSpecs are the other specs of el's method name whose callers dispatch to
 // at least one of impls, sorted.
-func (x specExpander) sharingSpecs(el store.Element, impls []string) ([]string, error) {
-	cands, err := x.st.FindExact(x.ctx, el.Name)
+func (x specExpander) sharingSpecs(ctx context.Context, el store.Element, impls []string) ([]string, error) {
+	cands, err := x.st.FindExact(ctx, el.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +135,7 @@ func (x specExpander) sharingSpecs(el store.Element, impls []string) ([]string, 
 		if c.QualifiedName == el.QualifiedName || c.Name != el.Name || !IsInterfaceSpec(c) {
 			continue
 		}
-		theirs, err := x.dispatchTargets(c)
+		theirs, err := x.dispatchTargets(ctx, c)
 		if err != nil {
 			return nil, err
 		}
