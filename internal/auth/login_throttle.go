@@ -89,6 +89,26 @@ func (t *LoginThrottle) recordFailure(username string, now time.Time) {
 	}
 }
 
+// Release gives back the failure Reserve counted for an attempt that never
+// reached a credential check, such as a store error. The count drops by one,
+// and a lockout that attempt started ends with it. Unlike Success it keeps the
+// rest of the streak.
+func (t *LoginThrottle) Release(username string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	st := t.live(username, t.now())
+	if st == nil {
+		return
+	}
+	st.failures--
+	if st.failures < loginMaxFailures {
+		st.lockedUntil = time.Time{}
+	}
+	if st.failures <= 0 {
+		delete(t.entries, username)
+	}
+}
+
 // Success clears the failure streak for username.
 func (t *LoginThrottle) Success(username string) {
 	t.mu.Lock()

@@ -113,3 +113,25 @@ func TestLoginThrottleConcurrentUse(t *testing.T) {
 		t.Fatal("50 concurrent failures must lock the username")
 	}
 }
+
+// TestLoginThrottleReleaseUndoesOneAttempt pins #601 S1: an attempt that never
+// reached a credential check gives its counted failure back, and the lockout it
+// started ends with it.
+func TestLoginThrottleReleaseUndoesOneAttempt(t *testing.T) {
+	th, _ := newTestThrottle()
+	failN(th, "admin", 4)
+	if !th.Reserve("admin") {
+		t.Fatal("the 5th attempt must be allowed")
+	}
+	if th.Reserve("admin") {
+		t.Fatal("the 5th failure must lock the username")
+	}
+
+	th.Release("admin")
+	if st := th.entries["admin"]; st == nil || st.failures != 4 || !st.lockedUntil.IsZero() {
+		t.Fatalf("after release the streak must be 4 and unlocked, got %+v", st)
+	}
+	if !th.Reserve("admin") {
+		t.Fatal("releasing the 5th attempt must end its lockout")
+	}
+}

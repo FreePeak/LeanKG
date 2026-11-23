@@ -238,3 +238,28 @@ func TestVerifyLoginConcurrentAttemptsReachVerifierAtMostLimit(t *testing.T) {
 		}
 	}
 }
+
+// storeDownStore fails every account lookup, the way a database outage does.
+type storeDownStore struct{ Store }
+
+func (storeDownStore) AccountByEmail(context.Context, string) (store.Account, bool, error) {
+	return store.Account{}, false, errors.New("database is locked")
+}
+
+// A store failure is not a wrong password, so it must not count toward the
+// lockout (#601 S1). After more store failures than the limit, the correct
+// password still logs in.
+func TestVerifyLoginStoreErrorsDoNotLockOut(t *testing.T) {
+	st := openAuthStore(t)
+	seedAccount(t, st, "outage@example.com", adminTestPassword, false)
+	throttle, _ := newTestThrottle()
+
+	for i := 0; i < 2*loginMaxFailures; i++ {
+		if _, err := verifyLogin(context.Background(), throttle, storeDownStore{st}, "outage@example.com", adminTestPassword, false); err == nil {
+			t.Fatalf("attempt %d: a store outage must fail the login", i)
+		}
+	}
+	if _, err := verifyLogin(context.Background(), throttle, st, "outage@example.com", adminTestPassword, false); err != nil {
+		t.Fatalf("correct password after store outage: %v", err)
+	}
+}

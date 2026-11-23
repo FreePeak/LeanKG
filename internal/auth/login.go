@@ -51,6 +51,9 @@ func verifyLogin(ctx context.Context, throttle *LoginThrottle, st Store, email, 
 	}
 	account, found, err := st.AccountByEmail(ctx, key)
 	if err != nil {
+		// A store failure says nothing about the password, so it must not count
+		// toward the lockout (#601 S1).
+		throttle.Release(key)
 		return store.Account{}, fmt.Errorf("auth: login: %w", err)
 	}
 	if !found {
