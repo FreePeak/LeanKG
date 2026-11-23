@@ -2,6 +2,7 @@ package index
 
 import (
 	"context"
+	"go/parser"
 	"regexp"
 	"strconv"
 	"strings"
@@ -315,10 +316,18 @@ func matchGo(lines []string) []match {
 	return ms
 }
 
-// goRecvType pulls the type out of a receiver like "*Srv", "_ Srv", "s *Srv".
+// goRecvType pulls the bare type out of a receiver like "*Srv", "_ Srv",
+// "s *Set[T]": the type is read as Go syntax, so it names the same owner
+// bareTypeName gives the AST tier ("Set", not "Set[T]").
 func goRecvType(recv string) string {
 	f := strings.Fields(strings.TrimSpace(recv))
-	return strings.TrimPrefix(f[len(f)-1], "*")
+	typ := f[len(f)-1]
+	if e, err := parser.ParseExpr(typ); err == nil {
+		if name := bareTypeName(e); name != "" {
+			return name
+		}
+	}
+	return strings.TrimPrefix(typ, "*")
 }
 
 func matchRust(lines []string) []match {

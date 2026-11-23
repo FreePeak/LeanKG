@@ -294,3 +294,14 @@ func TestGoParseFallbackIsCountedAndLogged(t *testing.T) {
 		t.Fatalf("fallback log does not name the file and the parse error: %q", logs.String())
 	}
 }
+
+// TestGoRegexTierNamesGenericReceiverLikeAST: a file the parser rejects takes the
+// regex tier, which must name a method on a generic type by its bare type, as
+// the AST tier does ("Set", not "Set[T]").
+func TestGoRegexTierNamesGenericReceiverLikeAST(t *testing.T) {
+	src := "package a\n\ntype Set[T any] struct{}\n\nfunc (s *Set[T]) Add(v T) {}\n\nfunc Broken( {\n"
+	got := elementSet(extractAs(t, "a.go", []byte(src), "go"))
+	if !slices.Contains(got, "a.go::Set.Add method 5-5") {
+		t.Fatalf("regex tier owner of Set[T].Add: %q, want a.go::Set.Add", got)
+	}
+}
