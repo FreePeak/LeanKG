@@ -77,13 +77,8 @@ type packageResolver struct {
 }
 
 func newPackageResolver(pkgs map[string]bool) packageResolver {
-	cx := &crossIndex{base: map[string][]string{}}
-	for d := range pkgs {
-		if d != "." {
-			cx.base[baseOf(d)] = append(cx.base[baseOf(d)], d)
-		}
-	}
-	return packageResolver{cx: cx, pkgs: pkgs}
+	dirs := slices.Sorted(maps.Keys(pkgs))
+	return packageResolver{cx: &crossIndex{base: indexByLastElement(dirs)}, pkgs: pkgs}
 }
 
 // edges is the imports edges of package dir: one per package directory the

@@ -65,6 +65,19 @@ import (
 //   - A symbol newly added to a changed package gets no edge from importers
 //     that are not re-extracted in the same run. Their outgoing edges are left
 //     as they are, so the edge appears only once the importer changes.
+//   - A change to an interface's method set does not re-link its unchanged
+//     callers. A dispatch edge to an implementer that no longer satisfies the
+//     interface stays until the caller changes, while an implementer that now
+//     does satisfy it gets no edge until then (pinned by
+//     TestGoIfaceMethodSetChangeLeavesStaleDispatchUntilImporterChanges). A
+//     re-link would repeat the per-directory call pass of indexDir for every
+//     importer of the interface, which is not a small change.
+//   - The module root is directory ".", which no import path resolves to (it is
+//     not in the last-element index), so an import of the root package gets no
+//     cross-package edge.
+//   - Testdata directories take no cross-package links: they are not packages of
+//     the module (goPackageDirs), so their declarations are left out of the
+//     name, declaration and import tables.
 //   - An upgrade that the time budget cuts short leaves the interface records of
 //     the directories not yet re-extracted empty until the upgrade finishes.
 const (
@@ -109,10 +122,32 @@ type symRef struct {
 	rel, qn, etype string
 }
 
-// nameHits is every Go element of one name across the module.
+// nameHits is every Go element of one name across the module, indexed for the
+// lookups a seed makes: methods is the dispatch scan, owners finds a method by
+// its directory and owner type, and funcs lists the non-method elements of a
+// directory. Each lookup costs its own candidates, not every ref of the name.
 type nameHits struct {
-	refs   []symRef
-	capped bool // a store lookup hit findExactLimit, so refs may be incomplete
+	methods []symRef
+	owners  map[[2]string]string // (directory, owner type) -> qualified name of its first method
+	funcs   map[string][]string  // directory -> qualified names of its non-method elements
+	capped  bool                 // a store lookup hit findExactLimit, so the refs may be incomplete
+}
+
+// newNameHits indexes the refs of one name, keeping their order.
+func newNameHits(refs []symRef, capped bool) nameHits {
+	h := nameHits{owners: map[[2]string]string{}, funcs: map[string][]string{}, capped: capped}
+	for _, r := range refs {
+		dir := dirOf(r.rel)
+		if r.etype != "method" {
+			h.funcs[dir] = append(h.funcs[dir], r.qn)
+			continue
+		}
+		h.methods = append(h.methods, r)
+		if k := [2]string{dir, ownerOf(r.qn)}; h.owners[k] == "" {
+			h.owners[k] = r.qn
+		}
+	}
+	return h
 }
 
 // crossIndex is the module-wide view one index run resolves cross-package seeds
@@ -124,6 +159,10 @@ type crossIndex struct {
 	byName  map[string][]symRef // elements of the changed directories (pre-pass)
 	decls   map[string]goDecls  // directory -> its type declarations (changed: all files; others: interface sets from KV)
 	all     map[string]nameHits // per name, filled by prefetch
+
+	// refsScanned counts the work of the name lookups: one per methodOf or
+	// qualifiedTargets call, one per method ref implementers visits (test seam).
+	refsScanned int
 }
 
 // newCrossIndex reads the interface records of every directory, then pre-passes
@@ -150,12 +189,9 @@ func newCrossIndex(ctx context.Context, st Store, dirCands map[string][]candidat
 			dirs = append(dirs, d)
 		}
 	}
+	cx.base = indexByLastElement(dirs)
 	stored := map[string]string{}
 	for _, d := range dirs {
-		if d != "." {
-			b := baseOf(d)
-			cx.base[b] = append(cx.base[b], d)
-		}
 		v, _, err := st.KVGet(ctx, declKVNamespace, d)
 		if err != nil {
 			return nil, err
@@ -207,21 +243,23 @@ func (cx *crossIndex) prefetch(ctx context.Context, st Store, els []indexedElem)
 			if _, done := cx.all[s.Name]; done {
 				continue
 			}
-			hits := nameHits{refs: slices.Clone(cx.byName[s.Name])}
+			refs := slices.Clone(cx.byName[s.Name])
+			capped := false
 			if cx.partial {
 				rows, err := st.FindExact(ctx, s.Name)
 				if err != nil {
 					return err
 				}
 				for _, r := range rows {
-					if r.Name != s.Name || r.Language != "go" || cx.changed[dirOf(r.FilePath)] || inTestdata(dirOf(r.FilePath)) {
+					d := dirOf(r.FilePath)
+					if r.Name != s.Name || r.Language != "go" || cx.changed[d] || inTestdata(d) {
 						continue
 					}
-					hits.refs = append(hits.refs, symRef{rel: r.FilePath, qn: r.QualifiedName, etype: r.ElementType})
+					refs = append(refs, symRef{rel: r.FilePath, qn: r.QualifiedName, etype: r.ElementType})
 				}
-				hits.capped = len(rows) >= findExactLimit
+				capped = len(rows) >= findExactLimit
 			}
-			cx.all[s.Name] = hits
+			cx.all[s.Name] = newNameHits(refs, capped)
 		}
 	}
 	return nil
@@ -257,18 +295,26 @@ func (cx *crossIndex) dirForImport(imp string) string {
 	return best
 }
 
+// indexByLastElement maps the last path element of each directory to the
+// directories that end in it. The module root "." is not indexed.
+func indexByLastElement(dirs []string) map[string][]string {
+	base := map[string][]string{}
+	for _, d := range dirs {
+		if d != "." {
+			b := baseOf(d)
+			base[b] = append(base[b], d)
+		}
+	}
+	return base
+}
+
 // qualifiedTargets are the exported, non-method elements named name in dir.
 func (cx *crossIndex) qualifiedTargets(dir, name string) []string {
 	if !token.IsExported(name) {
 		return nil
 	}
-	var out []string
-	for _, r := range cx.all[name].refs {
-		if r.etype != "method" && dirOf(r.rel) == dir {
-			out = append(out, r.qn)
-		}
-	}
-	return out
+	cx.refsScanned++
+	return cx.all[name].funcs[dir]
 }
 
 // methodTargets resolves one method seed of a file: the typed receiver's method
@@ -424,12 +470,9 @@ func (cx *crossIndex) hasMethods(dir, owner string, need []string) bool {
 
 // methodOf is the method owner.name declared in dir, if the module has one.
 func (cx *crossIndex) methodOf(dir, owner, name string) (string, bool) {
-	for _, r := range cx.all[name].refs {
-		if r.etype == "method" && dirOf(r.rel) == dir && ownerOf(r.qn) == owner {
-			return r.qn, true
-		}
-	}
-	return "", false
+	cx.refsScanned++
+	qn, ok := cx.all[name].owners[[2]string{dir, owner}]
+	return qn, ok
 }
 
 // implementers are the module's methods named name whose type has the whole
@@ -440,13 +483,17 @@ func (cx *crossIndex) implementers(name, file, dir, iface string) []string {
 	need := cx.ifaceMethods(dir, iface, 0)
 	callerTest := isTestFile(file)
 	var out []string
-	for _, r := range hits.refs {
-		if r.etype != "method" || (!callerTest && isTestFile(r.rel)) || !cx.hasMethods(dirOf(r.rel), ownerOf(r.qn), need) {
+	for _, r := range hits.methods {
+		cx.refsScanned++
+		if (!callerTest && isTestFile(r.rel)) || !cx.hasMethods(dirOf(r.rel), ownerOf(r.qn), need) {
 			continue
 		}
 		out = append(out, r.qn)
+		if len(out) > maxDispatchCandidates {
+			return nil // over the cap, so the rest of the scan cannot change the answer
+		}
 	}
-	if hits.capped || len(out) == 0 || len(out) > maxDispatchCandidates {
+	if hits.capped || len(out) == 0 {
 		return nil
 	}
 	return out

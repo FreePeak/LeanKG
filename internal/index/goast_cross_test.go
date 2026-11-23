@@ -734,3 +734,95 @@ func TestGoFixtureRootUnderTestdataStillResolves(t *testing.T) {
 		t.Fatalf("fixture root under testdata lost its dispatch edge; outgoing %v", targetsFrom(t, st, "lit/lit.go::Use", "calls"))
 	}
 }
+
+// TestGoIfaceMethodSetChangeLeavesStaleDispatchUntilImporterChanges pins a
+// documented ceiling. Talker gains Name() while Impl does not have it, so Impl
+// stops implementing Talker. The incremental run re-extracts only iface, so the
+// unchanged caller keeps its dispatch edge, and a fresh index drops it.
+func TestGoIfaceMethodSetChangeLeavesStaleDispatchUntilImporterChanges(t *testing.T) {
+	const caller, target = "use/use.go::Talk", "impl/impl.go::Impl.Speak"
+	files := map[string]string{
+		"impl/impl.go": "package impl\n\ntype Impl struct{}\n\nfunc (Impl) Speak() {}\n",
+		"use/use.go":   "package use\n\nimport \"" + modPath + "/iface\"\n\nfunc Talk(t iface.Talker) {\n\tt.Speak()\n}\n",
+	}
+	st, dir := newCrossTree(t)
+	putFiles(t, dir, files)
+	putFiles(t, dir, map[string]string{"iface/iface.go": "package iface\n\ntype Talker interface {\n\tSpeak()\n}\n"})
+	indexTree(t, st, dir)
+	if _, ok := edgeTo(t, st, caller, target, "calls"); !ok {
+		t.Fatalf("before the change: no dispatch edge to Impl.Speak; outgoing %v", targetsFrom(t, st, caller, "calls"))
+	}
+
+	putFiles(t, dir, map[string]string{"iface/iface.go": "package iface\n\ntype Talker interface {\n\tSpeak()\n\tName() string\n}\n"})
+	indexTree(t, st, dir)
+	if _, ok := edgeTo(t, st, caller, target, "calls"); !ok {
+		t.Fatalf("incremental run dropped the edge; the ceiling documents it as kept until the caller changes")
+	}
+
+	fresh, freshDir := newCrossTree(t)
+	putFiles(t, freshDir, files)
+	putFiles(t, freshDir, map[string]string{"iface/iface.go": "package iface\n\ntype Talker interface {\n\tSpeak()\n\tName() string\n}\n"})
+	indexTree(t, fresh, freshDir)
+	noEdgeTo(t, fresh, caller, target)
+}
+
+// TestGoSuffixTieLinksTheLongerDirectory: "a/internal/store" and
+// "internal/store" both end the import path, and the longer directory wins.
+func TestGoSuffixTieLinksTheLongerDirectory(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"a/internal/store/store.go": "package store\n\nfunc Open() {}\n",
+		"internal/store/store.go":   "package store\n\nfunc Open() {}\n",
+		"cmd/app/main.go":           "package main\n\nimport \"" + modPath + "/a/internal/store\"\n\nfunc run() {\n\tstore.Open()\n}\n",
+	})
+	if _, ok := edgeTo(t, st, "cmd/app/main.go::run", "a/internal/store/store.go::Open", "calls"); !ok {
+		t.Fatalf("no edge to the longer directory a/internal/store; outgoing %v", targetsFrom(t, st, "cmd/app/main.go::run", "calls"))
+	}
+	noEdgeTo(t, st, "cmd/app/main.go::run", "internal/store/store.go::Open")
+}
+
+// TestImplementersStopsAtTheDispatchCap: fifty types all have Refresh and
+// Refresh2, which the interface needs, so the seed has more implementers than
+// maxDispatchCandidates and links to none. The scan stops once it knows that,
+// instead of visiting every ref of the name.
+func TestImplementersStopsAtTheDispatchCap(t *testing.T) {
+	const n = 50
+	cx := &crossIndex{
+		decls: map[string]goDecls{"iface": newGoDecls()},
+		all:   map[string]nameHits{},
+	}
+	cx.decls["iface"].ifaces["R"] = goIface{methods: []string{"Refresh", "Refresh2"}}
+	var refs []symRef
+	for i := range n {
+		dir := fmt.Sprintf("impl%d", i)
+		refs = append(refs, symRef{rel: dir + "/a.go", qn: dir + "/a.go::T.Refresh", etype: "method"})
+		cx.decls[dir] = newGoDecls()
+		cx.decls[dir].methods["T"] = []string{"Refresh", "Refresh2"}
+	}
+	cx.all["Refresh"] = newNameHits(refs, false)
+	if got := cx.implementers("Refresh", "use/use.go", "iface", "R"); got != nil {
+		t.Fatalf("implementers = %v, want none (more than the cap)", got)
+	}
+	if cx.refsScanned > maxDispatchCandidates+1 {
+		t.Fatalf("scanned %d refs of %d, want at most %d", cx.refsScanned, n, maxDispatchCandidates+1)
+	}
+}
+
+// TestMethodOfLooksUpItsOwnerDirectly: methodOf finds T.Refresh in one directory
+// without visiting the refs of the same name that live elsewhere.
+func TestMethodOfLooksUpItsOwnerDirectly(t *testing.T) {
+	const n = 50
+	cx := &crossIndex{all: map[string]nameHits{}}
+	var refs []symRef
+	for i := range n {
+		dir := fmt.Sprintf("pkg%d", i)
+		refs = append(refs, symRef{rel: dir + "/a.go", qn: dir + "/a.go::T.Refresh", etype: "method"})
+	}
+	cx.all["Refresh"] = newNameHits(refs, false)
+	qn, ok := cx.methodOf("pkg49", "T", "Refresh")
+	if !ok || qn != "pkg49/a.go::T.Refresh" {
+		t.Fatalf("methodOf = %q, %v; want pkg49/a.go::T.Refresh", qn, ok)
+	}
+	if cx.refsScanned > 1 {
+		t.Fatalf("methodOf scanned %d refs, want 1", cx.refsScanned)
+	}
+}
