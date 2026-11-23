@@ -527,7 +527,8 @@ func (e *Engine) graphCallSites(ctx context.Context, req QueryRequest, a graphAr
 	}
 	walk := seeds
 	if incoming {
-		walk, err = graph.ExpandSpecSeeds(ctx, e.st, seeds)
+		// TODO(H4): surface truncation (the flag ExpandSpecSeeds returns).
+		walk, _, err = graph.ExpandSpecSeeds(ctx, e.st, seeds)
 		if err != nil {
 			return nil, err
 		}

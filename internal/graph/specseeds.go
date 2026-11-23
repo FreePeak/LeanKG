@@ -25,38 +25,52 @@ const (
 // a local interface in another package joins the answer. Seeds that are not
 // specs (concrete methods, functions, unknown names) are kept as they are. The
 // given seeds come first, in order; each added seed follows once, without repeats.
-func ExpandSpecSeeds(ctx context.Context, st graphStore, seeds []string) ([]string, error) {
+// The seeds added by expansion are capped at specSeedLimit; truncated reports
+// that the cap or a row-capped lookup may have dropped some.
+func ExpandSpecSeeds(ctx context.Context, st graphStore, seeds []string) ([]string, bool, error) {
 	x := specExpander{st: st, dispatch: map[string][]string{}}
 	out := make([]string, 0, len(seeds))
 	seen := map[string]bool{}
-	add := func(qn string) {
-		if !seen[qn] {
-			seen[qn] = true
-			out = append(out, qn)
+	for _, seed := range seeds {
+		if !seen[seed] {
+			seen[seed] = true
+			out = append(out, seed)
 		}
 	}
-	for _, seed := range seeds {
-		add(seed)
+	added := 0
+	truncated := false
+	add := func(qn string) {
+		if seen[qn] {
+			return
+		}
+		if added == specSeedLimit {
+			truncated = true
+			return
+		}
+		seen[qn] = true
+		added++
+		out = append(out, qn)
 	}
 	for _, seed := range seeds {
 		el, err := locate(ctx, st, seed)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if !IsInterfaceSpec(el) {
 			continue
 		}
 		impls, err := x.dispatchTargets(ctx, el)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if len(impls) == 0 {
 			continue
 		}
-		siblings, err := x.sharingSpecs(ctx, el, impls)
+		siblings, sharedTruncated, err := x.sharingSpecs(ctx, el, impls)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
+		truncated = truncated || sharedTruncated
 		for _, qn := range impls {
 			add(qn)
 		}
@@ -64,8 +78,16 @@ func ExpandSpecSeeds(ctx context.Context, st graphStore, seeds []string) ([]stri
 			add(qn)
 		}
 	}
-	return out, nil
+	return out, truncated, nil
 }
+
+// specSeedLimit caps the seeds one expansion adds to the given ones.
+const specSeedLimit = 64
+
+// storeFindExactLimit is the row cap of FindExact: LIMIT 200 in
+// internal/store/elements.go:559 and internal/store/store_pg.go:329. A lookup
+// that returns this many rows may have dropped some.
+const storeFindExactLimit = 200
 
 // specExpander memoizes the dispatch targets of each spec for one expansion, so
 // a name shared by many specs reads each caller's edges once.
@@ -121,11 +143,12 @@ func (x specExpander) dispatchTargets(ctx context.Context, el store.Element) ([]
 
 // sharingSpecs are the other specs of el's method name whose callers dispatch to
 // at least one of impls, sorted.
-func (x specExpander) sharingSpecs(ctx context.Context, el store.Element, impls []string) ([]string, error) {
+func (x specExpander) sharingSpecs(ctx context.Context, el store.Element, impls []string) ([]string, bool, error) {
 	cands, err := x.st.FindExact(ctx, el.Name)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	truncated := len(cands) >= storeFindExactLimit
 	want := map[string]bool{}
 	for _, qn := range impls {
 		want[qn] = true
@@ -137,12 +160,12 @@ func (x specExpander) sharingSpecs(ctx context.Context, el store.Element, impls 
 		}
 		theirs, err := x.dispatchTargets(ctx, c)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if slices.ContainsFunc(theirs, func(qn string) bool { return want[qn] }) {
 			out = append(out, c.QualifiedName)
 		}
 	}
 	sort.Strings(out)
-	return out, nil
+	return out, truncated, nil
 }

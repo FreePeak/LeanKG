@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -81,13 +82,114 @@ func newSpecFixture(t *testing.T) store.Backend {
 // unrelated otherStore spec shares none, so it stays out.
 func TestExpandSpecSeedsWidensASpecToImplementersAndSharingSpecs(t *testing.T) {
 	st := newSpecFixture(t)
-	got, err := ExpandSpecSeeds(context.Background(), st, []string{specIndexWriter})
+	got, truncated, err := ExpandSpecSeeds(context.Background(), st, []string{specIndexWriter})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{specIndexWriter, implStore, implPG, specLsp, specPrd}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ExpandSpecSeeds(spec) = %v, want %v", got, want)
+	}
+	if truncated {
+		t.Fatalf("truncated = true for a small fixture, want false")
+	}
+}
+
+const (
+	hubSpec = "hub.go::Hub.Do"
+	hubUse  = "use.go::Use"
+)
+
+// newHubFixture: the interface method Hub.Do is reached by one caller, Use,
+// through its spec, and Use dispatches to impls concrete implementers (named
+// Impl%03d, so FindExact("Do") sees only the spec). extraSpecs more specs
+// named Do, with no edges, share the name.
+func newHubFixture(t *testing.T, impls, extraSpecs int) store.Backend {
+	t.Helper()
+	ctx := context.Background()
+	s, err := store.OpenBackend(ctx, store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	spec := map[string]any{"interface_spec": true}
+	site := func(res string) map[string]any { return map[string]any{"resolution": res, "line": float64(7)} }
+	els := []store.Element{
+		{QualifiedName: hubSpec, ElementType: "method", Name: "Do", FilePath: "hub.go", LineStart: 1, Metadata: spec},
+		{QualifiedName: hubUse, ElementType: "function", Name: "Use", FilePath: "use.go", LineStart: 5},
+	}
+	rels := []store.Relationship{
+		{Source: hubUse, Target: hubSpec, RelType: "calls", Confidence: 0.3, Metadata: site("interface-spec")},
+	}
+	for i := range extraSpecs {
+		els = append(els, store.Element{QualifiedName: fmt.Sprintf("many/s%03d.go::S%03d.Do", i, i), ElementType: "method", Name: "Do", FilePath: fmt.Sprintf("many/s%03d.go", i), LineStart: 1, Metadata: spec})
+	}
+	for i := range impls {
+		qn := fmt.Sprintf("impl/i%03d.go::Impl%03d.Do", i, i)
+		els = append(els, store.Element{QualifiedName: qn, ElementType: "method", Name: fmt.Sprintf("Impl%03d", i), FilePath: fmt.Sprintf("impl/i%03d.go", i), LineStart: 1})
+		rels = append(rels, store.Relationship{Source: hubUse, Target: qn, RelType: "calls", Confidence: 0.3, Metadata: site("interface-dispatch")})
+	}
+	if err := s.UpsertElements(ctx, els); err != nil {
+		t.Fatalf("upsert elements: %v", err)
+	}
+	if err := s.UpsertRelationships(ctx, rels); err != nil {
+		t.Fatalf("upsert relationships: %v", err)
+	}
+	return s
+}
+
+// A hub with more implementers than specSeedLimit adds exactly specSeedLimit
+// seeds after the given one, keeps the given seed first, and reports truncation.
+func TestExpandSpecSeedsCapsAddedSeedsAtLimit(t *testing.T) {
+	st := newHubFixture(t, 300, 0)
+	got, truncated, err := ExpandSpecSeeds(context.Background(), st, []string{hubSpec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := 1 + specSeedLimit; len(got) != want {
+		t.Fatalf("len(ExpandSpecSeeds) = %d, want %d (the given seed plus specSeedLimit)", len(got), want)
+	}
+	if got[0] != hubSpec {
+		t.Fatalf("first seed = %q, want the given seed %q", got[0], hubSpec)
+	}
+	if !truncated {
+		t.Fatalf("truncated = false, want true: 300 implementers exceed specSeedLimit")
+	}
+}
+
+// A same-name lookup that fills FindExact's row cap may have dropped sharing
+// specs, so the expansion reports truncation.
+func TestExpandSpecSeedsReportsTruncatedSharingLookup(t *testing.T) {
+	st := newHubFixture(t, 1, 249) // 250 specs named Do: FindExact returns its LIMIT 200
+	_, truncated, err := ExpandSpecSeeds(context.Background(), st, []string{hubSpec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !truncated {
+		t.Fatalf("truncated = false, want true: the sharing-spec lookup returned the row cap")
+	}
+}
+
+// Store reads stay bounded for a hub-sized interface: the expansion plus the
+// site query over the expanded seeds read a count set by specSeedLimit, not by
+// the number of implementers.
+func TestExpandSpecSeedsReadBudgetOnHub(t *testing.T) {
+	st := newHubFixture(t, 300, 0)
+	ctx := context.Background()
+	counted := &readCounter{Backend: st} // after is 0, so it never cancels
+	walk, _, err := ExpandSpecSeeds(ctx, counted, []string{hubSpec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SitesBySeed(ctx, counted, walk, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	// Expansion: Incoming(spec) and Outgoing(Use). Site query: one Incoming per seed.
+	if budget := 2 + (1 + specSeedLimit); counted.reads > budget {
+		t.Fatalf("store reads = %d, want at most %d for a hub of 300 implementers", counted.reads, budget)
 	}
 }
 
@@ -107,7 +209,7 @@ func TestExpandSpecSeedsLeavesConcreteSeedsAlone(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ExpandSpecSeeds(ctx, st, tc.seeds)
+			got, _, err := ExpandSpecSeeds(ctx, st, tc.seeds)
 			if err != nil {
 				t.Fatal(err)
 			}
