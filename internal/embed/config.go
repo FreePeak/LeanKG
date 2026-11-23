@@ -243,7 +243,8 @@ func newLocalProvider(cfg Config) (Provider, int, error) {
 	inner := &localProvider{
 		openaiCompatible: newOpenAICompatible(cfg.BaseURL, cfg.APIKey, model, native,
 			Pin(model, ProviderLocal, cfg.Revision), cfg.timeout(), ProviderLocal, cfg.TextCap),
-		pinned: cfg.localPinned(),
+		pinned:   cfg.localPinned(),
+		probeSem: make(chan struct{}, 1),
 	}
 	return withWidth(inner, native, width), native, nil
 }
@@ -260,12 +261,12 @@ type localProvider struct {
 	*openaiCompatible
 	pinned bool
 
-	probeMu sync.Mutex // held across one /props read: concurrent Probe calls queue behind it
-	mu      sync.Mutex
-	probed  bool      // a /props answer was read
-	fpRev   string    // "local:<gguf>[@<commit>]" from the answer
-	fpCtx   int       // the served context window from the answer
-	nextTry time.Time // earliest next /props attempt after a failure
+	probeSem chan struct{} // one slot: the holder reads /props; a waiter gives up when its ctx ends
+	mu       sync.Mutex
+	probed   bool      // a /props answer was read
+	fpRev    string    // "local:<gguf>[@<commit>]" from the answer
+	fpCtx    int       // the served context window from the answer
+	nextTry  time.Time // earliest next /props attempt after a failure
 }
 
 // propsRetry spaces /props attempts after a failure, so a sidecar that comes up
@@ -290,8 +291,12 @@ var snapshotRe = regexp.MustCompile(`/snapshots/([0-9a-f]{40})/`)
 // by ctx says nothing and is retried on the next call. It is the only place the
 // local provider does I/O for its identity.
 func (l *localProvider) Probe(ctx context.Context) error {
-	l.probeMu.Lock()
-	defer l.probeMu.Unlock()
+	select {
+	case l.probeSem <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-l.probeSem }()
 	l.mu.Lock()
 	skip := l.probed || time.Now().Before(l.nextTry)
 	l.mu.Unlock()
