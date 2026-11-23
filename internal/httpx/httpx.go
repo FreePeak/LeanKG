@@ -142,6 +142,21 @@ func Message(err error) string {
 // clients branch on the stable token (FR-ZCP-12). A cancelled call has no
 // body: the client that would read it is gone.
 func WriteError(w http.ResponseWriter, err error) {
+	writeError(w, err, StatusFor(err))
+}
+
+// WriteErrorAs is WriteError for a transport whose client errors share one
+// status, such as the auth envelope's 400. A server fault (5xx) keeps StatusFor
+// and the generic Message; any other failure answers clientStatus.
+func WriteErrorAs(w http.ResponseWriter, clientStatus int, err error) {
+	status := StatusFor(err)
+	if status < http.StatusInternalServerError {
+		status = clientStatus
+	}
+	writeError(w, err, status)
+}
+
+func writeError(w http.ResponseWriter, err error, status int) {
 	if errors.Is(err, context.Canceled) {
 		w.WriteHeader(StatusClientClosedRequest)
 		return
@@ -150,7 +165,7 @@ func WriteError(w http.ResponseWriter, err error) {
 	if code := CodeOf(err); code != "" {
 		body["code"] = code
 	}
-	WriteJSON(w, StatusFor(err), body)
+	WriteJSON(w, status, body)
 }
 
 // WriteMessage answers with an explicit status and the body {"error": msg}.

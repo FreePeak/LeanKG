@@ -47,10 +47,17 @@ func doJSON(t *testing.T, h http.Handler, method, path, bearer string, body any)
 	if err := json.Unmarshal(rec.Body.Bytes(), &decoded); err != nil {
 		t.Fatalf("%s %s: response is not JSON (%d): %s", method, path, rec.Code, rec.Body.String())
 	}
-	for _, key := range []string{"success", "data", "error"} {
-		if _, ok := decoded[key]; !ok {
-			t.Fatalf("%s %s: envelope missing %q key: %v", method, path, key, decoded)
+	if rec.Code < http.StatusBadRequest {
+		for _, key := range []string{"success", "data", "error"} {
+			if _, ok := decoded[key]; !ok {
+				t.Fatalf("%s %s: envelope missing %q key: %v", method, path, key, decoded)
+			}
 		}
+		return rec.Code, decoded
+	}
+	// An error answers the shared httpx body, {error} plus code, with no envelope keys.
+	if _, ok := decoded["success"]; ok {
+		t.Fatalf("%s %s: error answer %d carries a success key: %v", method, path, rec.Code, decoded)
 	}
 	return rec.Code, decoded
 }
@@ -225,7 +232,7 @@ func TestAuthRoutesDenied(t *testing.T) {
 
 	t.Run("missing bearer", func(t *testing.T) {
 		code, resp := doJSON(t, h, "GET", "/api/v1/auth/token", "", nil)
-		if code != http.StatusBadRequest || resp["success"] != false {
+		if code != http.StatusBadRequest {
 			t.Fatalf("= %d %v", code, resp)
 		}
 		if msg := errString(t, resp); !strings.Contains(msg, "missing bearer token") {
@@ -469,7 +476,7 @@ func TestTokenRevokeNeedsOwnerOrAdmin(t *testing.T) {
 	t.Run("viewer cannot revoke another account's token", func(t *testing.T) {
 		victimSecret, victim := mint("victim-a", "viewer", owner)
 		code, resp := revoke(outsiderBearer, victim.ID)
-		if code != http.StatusForbidden || resp["success"] != false {
+		if code != http.StatusForbidden {
 			t.Fatalf("= %d %v; want 403", code, resp)
 		}
 		if code, _ := doJSON(t, h, "GET", "/api/v1/auth/token", victimSecret, nil); code != http.StatusOK {
@@ -553,7 +560,7 @@ func TestRegisterDuplicateEmailIsGeneric(t *testing.T) {
 		t.Fatalf("first register = %d %v", code, resp)
 	}
 	code, dup := doJSON(t, h, "POST", "/api/v1/auth/register", "", body("password123"))
-	if code != http.StatusBadRequest || dup["success"] != false {
+	if code != http.StatusBadRequest {
 		t.Fatalf("duplicate register = %d %v; want 400 failure", code, dup)
 	}
 	if got, _ := dup["error"].(string); got != "registration failed" {
@@ -565,7 +572,7 @@ func TestRegisterDuplicateEmailIsGeneric(t *testing.T) {
 	}
 
 	code, other := doJSON(t, h, "POST", "/api/v1/auth/register", "", body("short"))
-	if code != http.StatusBadRequest || other["success"] != false {
+	if code != http.StatusBadRequest {
 		t.Fatalf("short-password register = %d %v; want 400 failure", code, other)
 	}
 }
@@ -593,7 +600,7 @@ func TestAuthBodyOverLimitIs413(t *testing.T) {
 			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 				t.Fatalf("response is not JSON (%d): %s", rec.Code, rec.Body.String())
 			}
-			if rec.Code != http.StatusRequestEntityTooLarge || resp["success"] != false {
+			if rec.Code != http.StatusRequestEntityTooLarge {
 				t.Fatalf("= %d %v; want 413 failure envelope", rec.Code, resp)
 			}
 			if resp["code"] != errs.RequestTooLarge.Code {
@@ -619,11 +626,11 @@ func TestRegisterStoreFailureIsGeneric(t *testing.T) {
 	code, resp := doJSON(t, h, "POST", "/api/v1/auth/register", "", map[string]string{
 		"email": "down@example.com", "password": "password123", "name": "Down",
 	})
-	if code != http.StatusInternalServerError || resp["success"] != false {
+	if code != http.StatusInternalServerError {
 		t.Fatalf("= %d %v; want 500 failure envelope", code, resp)
 	}
-	if msg := errString(t, resp); msg != "internal error" {
-		t.Fatalf("error = %q; want generic %q", msg, "internal error")
+	if msg := errString(t, resp); msg != "internal server error" {
+		t.Fatalf("error = %q; want generic %q", msg, "internal server error")
 	}
 	raw, _ := json.Marshal(resp)
 	for _, leak := range []string{"password authentication", "hunter2", "dsn="} {
@@ -658,11 +665,11 @@ func TestAuthRoutesStoreFailureIsGeneric(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			code, resp := doJSON(t, h, tc.method, tc.path, "env-admin-secret", tc.body)
-			if code != http.StatusInternalServerError || resp["success"] != false {
+			if code != http.StatusInternalServerError {
 				t.Fatalf("= %d %v; want 500 failure envelope", code, resp)
 			}
-			if msg := errString(t, resp); msg != "internal error" {
-				t.Fatalf("error = %q; want generic %q", msg, "internal error")
+			if msg := errString(t, resp); msg != "internal server error" {
+				t.Fatalf("error = %q; want generic %q", msg, "internal server error")
 			}
 			raw, _ := json.Marshal(resp)
 			for _, leak := range []string{"disk image", "/var/lib", "malformed"} {
@@ -744,7 +751,7 @@ func TestTokenIssueNeedsWriteForProcessCaller(t *testing.T) {
 				t.Fatalf("status = %d %v, want %d", code, resp, tc.want)
 			}
 			if tc.want == http.StatusForbidden {
-				if resp["success"] != false || !strings.Contains(errString(t, resp), "write access required") {
+				if !strings.Contains(errString(t, resp), "write access required") {
 					t.Fatalf("refusal = %v, want a failure envelope naming write access", resp)
 				}
 				if len(after) != len(before) {

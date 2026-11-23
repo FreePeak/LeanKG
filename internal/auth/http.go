@@ -6,13 +6,13 @@
 //
 //	mux.Handle("/api/v1/auth/", auth.Routes(st))
 //
-// Responses keep the Rust ApiResponse envelope — {"success", "data", "error"}
-// with the error path at HTTP 400 — so existing clients port unchanged.
+// Success responses keep the Rust ApiResponse envelope — {"success", "data",
+// "error"}. A failed call answers the shared httpx body, {"error"} plus "code",
+// at HTTP 400 for a client error and at the server status for a fault.
 package auth
 
 import (
 	"errors"
-	"log"
 	"math"
 	"net/http"
 	"time"
@@ -49,11 +49,11 @@ func Routes(st Store) http.Handler {
 		if errors.Is(err, ErrAccountExists) {
 			// Generic on purpose (#586): a duplicate answers like any other
 			// registration failure, so the response never reveals an existing email.
-			writeFail(w, registrationFailedMsg)
+			httpx.WriteMessage(w, http.StatusBadRequest, registrationFailedMsg)
 			return
 		}
 		if err != nil {
-			writeErr(w, "register", err)
+			httpx.WriteErrorAs(w, http.StatusBadRequest, err)
 			return
 		}
 		writeOK(w, account)
@@ -68,7 +68,7 @@ func Routes(st Store) http.Handler {
 		}
 		account, err := VerifyLogin(r.Context(), st, req.Email, req.Password)
 		if err != nil {
-			writeErr(w, "login", err)
+			httpx.WriteErrorAs(w, http.StatusBadRequest, err)
 			return
 		}
 		writeOK(w, account)
@@ -92,14 +92,14 @@ func Routes(st Store) http.Handler {
 		// needs only a valid bearer. (`role` falls back to viewer for an unknown
 		// or missing value — Rust Role::from_str(..).unwrap_or(Viewer).)
 		if req.AccountID != ctx.AccountID && !ctx.CanAdmin() {
-			writeFail(w, "insufficient permission to issue a token for another account (admin required)")
+			httpx.WriteMessage(w, http.StatusBadRequest, "insufficient permission to issue a token for another account (admin required)")
 			return
 		}
 		// A process-level caller (env token) has no account to own the minted
 		// token, so only one that can write may issue (#601 B2).
 		if ctx.AccountID == "" && !ctx.CanWrite() {
 			msg := "insufficient permission to issue a token: write access required"
-			httpx.WriteJSON(w, http.StatusForbidden, apiResponse{Success: false, Error: &msg})
+			httpx.WriteMessage(w, http.StatusForbidden, msg)
 			return
 		}
 		role := "viewer"
@@ -120,7 +120,7 @@ func Routes(st Store) http.Handler {
 		if req.TTLSecs != nil {
 			secs := *req.TTLSecs
 			if secs > maxTTLSecs || secs < -maxTTLSecs {
-				writeFail(w, "ttl_secs out of range")
+				httpx.WriteMessage(w, http.StatusBadRequest, "ttl_secs out of range")
 				return
 			}
 			ttl = time.Duration(secs) * time.Second
@@ -133,7 +133,7 @@ func Routes(st Store) http.Handler {
 			TTL:       ttl,
 		})
 		if err != nil {
-			writeErr(w, "token issue", err)
+			httpx.WriteErrorAs(w, http.StatusBadRequest, err)
 			return
 		}
 		issued := struct {
@@ -155,7 +155,7 @@ func Routes(st Store) http.Handler {
 		}
 		rows, err := st.TokenList(r.Context())
 		if err != nil {
-			writeErr(w, "token list", store.Fail("token list", err))
+			httpx.WriteErrorAs(w, http.StatusBadRequest, store.Fail("token list", err))
 			return
 		}
 		visible := make([]tokenSummary, 0, len(rows))
@@ -182,7 +182,7 @@ func Routes(st Store) http.Handler {
 		}
 		rows, err := st.TokenList(r.Context())
 		if err != nil {
-			writeErr(w, "token revoke", store.Fail("token list", err))
+			httpx.WriteErrorAs(w, http.StatusBadRequest, store.Fail("token list", err))
 			return
 		}
 		revoked := false
@@ -192,12 +192,12 @@ func Routes(st Store) http.Handler {
 			}
 			if !ctx.CanAdmin() && (ctx.AccountID == "" || t.AccountID != ctx.AccountID) {
 				msg := "insufficient permission to revoke another account's token (owner or admin required)"
-				httpx.WriteJSON(w, http.StatusForbidden, apiResponse{Success: false, Error: &msg})
+				httpx.WriteMessage(w, http.StatusForbidden, msg)
 				return
 			}
 			if t.RevokedAt == 0 {
 				if err := st.TokenRevoke(r.Context(), t.ID, time.Now().Unix()); err != nil {
-					writeErr(w, "token revoke", store.Fail("token revoke", err))
+					httpx.WriteErrorAs(w, http.StatusBadRequest, store.Fail("token revoke", err))
 					return
 				}
 				revoked = true
@@ -210,7 +210,7 @@ func Routes(st Store) http.Handler {
 		// Rust took a bare JSON string body here (Json(name): Json<String>).
 		var name string
 		if err := httpx.DecodeJSON(w, r, &name); err != nil {
-			writeDecodeFail(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
 		ctx, ok := requireAccount(st, w, r)
@@ -219,7 +219,7 @@ func Routes(st Store) http.Handler {
 		}
 		org, err := CreateOrg(r.Context(), st, name, ctx.AccountID)
 		if err != nil {
-			writeErr(w, "org create", err)
+			httpx.WriteErrorAs(w, http.StatusBadRequest, err)
 			return
 		}
 		writeOK(w, org)
@@ -239,16 +239,16 @@ func Routes(st Store) http.Handler {
 		orgID := r.PathValue("org_id")
 		allowed, err := OrgRoleSufficient(r.Context(), st, orgID, ctx.AccountID, OrgRoleAdmin)
 		if err != nil {
-			writeErr(w, "org member add", err)
+			httpx.WriteErrorAs(w, http.StatusBadRequest, err)
 			return
 		}
 		if !allowed {
-			writeFail(w, "insufficient permission: org admin+ required")
+			httpx.WriteMessage(w, http.StatusBadRequest, "insufficient permission: org admin+ required")
 			return
 		}
 		member, err := AddOrgMember(r.Context(), st, orgID, req.AccountID, req.Role)
 		if err != nil {
-			writeErr(w, "org member add", err)
+			httpx.WriteErrorAs(w, http.StatusBadRequest, err)
 			return
 		}
 		writeOK(w, member)
@@ -261,16 +261,16 @@ func Routes(st Store) http.Handler {
 		orgID := r.PathValue("org_id")
 		allowed, err := OrgRoleSufficient(r.Context(), st, orgID, ctx.AccountID, OrgRoleViewer)
 		if err != nil {
-			writeErr(w, "org members", err)
+			httpx.WriteErrorAs(w, http.StatusBadRequest, err)
 			return
 		}
 		if !allowed {
-			writeFail(w, "not an org member")
+			httpx.WriteMessage(w, http.StatusBadRequest, "not an org member")
 			return
 		}
 		members, err := st.OrgMembers(r.Context(), orgID)
 		if err != nil {
-			writeErr(w, "org members", store.Fail("org members", err))
+			httpx.WriteErrorAs(w, http.StatusBadRequest, store.Fail("org members", err))
 			return
 		}
 		writeOK(w, members)
@@ -289,7 +289,7 @@ func Routes(st Store) http.Handler {
 			return
 		}
 		if err := ClaimResource(r.Context(), st, req.ResourceType, req.ResourceID, ctx.AccountID, req.OrgID); err != nil {
-			writeErr(w, "resource claim", err)
+			httpx.WriteErrorAs(w, http.StatusBadRequest, err)
 			return
 		}
 		writeOK(w, true)
@@ -302,7 +302,7 @@ func Routes(st Store) http.Handler {
 func caller(st Store, w http.ResponseWriter, r *http.Request) (AuthContext, bool) {
 	ctx, err := Resolve(st, r)
 	if err != nil {
-		writeErr(w, "resolve", err)
+		httpx.WriteErrorAs(w, http.StatusBadRequest, err)
 		return AuthContext{}, false
 	}
 	return ctx, true
@@ -318,7 +318,7 @@ func requireAccount(st Store, w http.ResponseWriter, r *http.Request) (AuthConte
 		return AuthContext{}, false
 	}
 	if ctx.AccountID == "" {
-		writeFail(w, "account-scoped endpoint requires an account access token")
+		httpx.WriteMessage(w, http.StatusBadRequest, "account-scoped endpoint requires an account access token")
 		return AuthContext{}, false
 	}
 	return ctx, true
@@ -359,49 +359,22 @@ func summarizeToken(t store.Token) tokenSummary {
 	}
 }
 
-// apiResponse is the Rust ApiResponse<T> wire shape: all three keys are always
-// present, with null for the unset one.
+// apiResponse is the Rust ApiResponse<T> wire shape of a success: all three keys
+// are present, with error null.
 type apiResponse struct {
 	Success bool    `json:"success"`
 	Data    any     `json:"data"`
 	Error   *string `json:"error"`
-	Code    string  `json:"code,omitempty"`
 }
 
 func writeOK(w http.ResponseWriter, data any) {
 	httpx.WriteJSON(w, http.StatusOK, apiResponse{Success: true, Data: data})
 }
 
-func writeFail(w http.ResponseWriter, msg string) {
-	httpx.WriteJSON(w, http.StatusBadRequest, apiResponse{Success: false, Error: &msg})
-}
-
 func decodeBody(w http.ResponseWriter, r *http.Request, into any) bool {
 	if err := httpx.DecodeJSON(w, r, into); err != nil {
-		writeDecodeFail(w, err)
+		httpx.WriteError(w, err)
 		return false
 	}
 	return true
-}
-
-// writeErr answers a failed auth call. A server fault (a store or internal
-// failure, any 5xx status) gets a generic "internal error" with the cause logged
-// under op, so no driver text reaches the client (#601 item 6). Any other error
-// is a client error and keeps its message at 400: bad input, an unknown token,
-// insufficient permission.
-func writeErr(w http.ResponseWriter, op string, err error) {
-	if status := httpx.StatusFor(err); status >= http.StatusInternalServerError {
-		log.Printf("auth: %s: %v", op, err)
-		msg := "internal error"
-		httpx.WriteJSON(w, status, apiResponse{Success: false, Error: &msg})
-		return
-	}
-	writeFail(w, err.Error())
-}
-
-// writeDecodeFail answers a body that did not decode: 413 when it is over the
-// size cap, 400 otherwise, in the envelope with the catalog code (#601 item 5).
-func writeDecodeFail(w http.ResponseWriter, err error) {
-	msg := err.Error()
-	httpx.WriteJSON(w, httpx.StatusFor(err), apiResponse{Success: false, Error: &msg, Code: httpx.CodeOf(err)})
 }

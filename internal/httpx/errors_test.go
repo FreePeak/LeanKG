@@ -75,6 +75,32 @@ func TestWriteErrorUncodedHasNoCodeField(t *testing.T) {
 	}
 }
 
+// TestWriteErrorAsFixesOnlyTheClientStatus: a transport whose client errors are
+// one class (the auth envelope's 400) answers that status for any client
+// error, keeping the catalog code, while a server fault keeps its own status
+// and the generic message.
+func TestWriteErrorAsFixesOnlyTheClientStatus(t *testing.T) {
+	rec := httptest.NewRecorder()
+	WriteErrorAs(rec, http.StatusBadRequest, errs.NewError(errs.PermissionDenied, "the reader role", ""))
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest || body["code"] != errs.PermissionDenied.Code {
+		t.Fatalf("client error: status %d body %v; want 400 with code %s", rec.Code, body, errs.PermissionDenied.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	WriteErrorAs(rec, http.StatusBadRequest, store.Fail("token list", errors.New("no such table: tokens")))
+	body = map[string]any{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusInternalServerError || body["error"] != "internal server error" {
+		t.Fatalf("server fault: status %d body %v; want 500 generic", rec.Code, body)
+	}
+}
+
 func TestWriteErrorCancelledWritesStatusOnly(t *testing.T) {
 	rec := httptest.NewRecorder()
 	WriteError(rec, context.Canceled)
