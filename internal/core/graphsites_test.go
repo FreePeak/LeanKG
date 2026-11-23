@@ -162,7 +162,8 @@ func TestCallersOfTypeReportReferenceSites(t *testing.T) {
 	if got, want := out["callers"], []string{"internal/graph/graph.go::Impact"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("callers = %v, want %v", got, want)
 	}
-	if got, want := out["sites"], []string{"internal/graph/graph.go:94 internal/graph/graph.go::Impact 0.5"}; !reflect.DeepEqual(got, want) {
+	// A references edge is a value use, so its site names the seed and relation.
+	if got, want := out["sites"], []string{"internal/graph/graph.go:94 internal/graph/graph.go::Impact 0.5 seed=internal/graph/graph.go::Bounds via=references"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("sites = %v, want %v", got, want)
 	}
 	if got, want := out["rel_types"], []string{"references"}; !reflect.DeepEqual(got, want) {
@@ -567,5 +568,91 @@ func TestBareNameMatchesExactCaseBeforeFoldedCase(t *testing.T) {
 	out = callersOf(t, e, "PARSE", nil)
 	if got, want := out["seeds"], []string{"pkg/a.go::Parse", "pkg/b.go::parse"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("PARSE seeds = %v, want both folded callables %v", got, want)
+	}
+}
+
+// TestNonFanVerbNamesTheSeedsItIgnored pins S7: a bare name that resolves to
+// several callables is answered for the first one only, so the answer must
+// name the others it did not walk.
+func TestNonFanVerbNamesTheSeedsItIgnored(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, nil)
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "impact", Query: "ReplaceFileRelationships"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, _ := out["guidance"].(string)
+	if !strings.Contains(g, pgReplace) || !strings.Contains(g, "Ignored: ") {
+		t.Errorf("guidance = %q, want it to name the ignored seed %s", g, pgReplace)
+	}
+}
+
+// TestGraphVerbsEchoScopeAndSayWhetherItApplied pins S9: a verb that does not
+// apply args.scope still echoes it, with scope_applied false, and the verbs
+// that filter by it report scope_applied true.
+func TestGraphVerbsEchoScopeAndSayWhetherItApplied(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, nil)
+	ctx := context.Background()
+	scoped := map[string]any{"scope": "prod"}
+
+	for _, tc := range []struct {
+		req     QueryRequest
+		applied bool
+	}{
+		{QueryRequest{Action: "impact", Query: storeReplace, Args: scoped}, true},
+		{QueryRequest{Action: "callers", Query: storeReplace, Args: scoped}, true},
+		{QueryRequest{Action: "callees", Query: indexFileCall, Args: scoped}, true},
+		{QueryRequest{Action: "context", Query: storeReplace, Args: scoped}, false},
+		{QueryRequest{Action: "explain", Query: storeReplace, Args: scoped}, false},
+		{QueryRequest{Action: "path", Query: storeReplace, Args: map[string]any{"scope": "prod", "to": indexFileCall}}, false},
+	} {
+		out, err := e.Query(ctx, tc.req)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.req.Action, err)
+		}
+		if got := out["scope"]; got != "prod" {
+			t.Errorf("%s: scope = %v, want prod", tc.req.Action, got)
+		}
+		if got := out["scope_applied"]; got != tc.applied {
+			t.Errorf("%s: scope_applied = %v, want %v", tc.req.Action, got, tc.applied)
+		}
+	}
+}
+
+// TestSiteLinesNameSeedAndRelationAcrossSeeds pins S1: a site line names the
+// seed it reached and the relationship it was read through when the answer
+// spans more than one seed, or when the relationship is not calls. A single
+// seed's call sites keep the short line.
+func TestSiteLinesNameSeedAndRelationAcrossSeeds(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, map[string]any{"line": float64(47)})
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "callers", Query: "ReplaceFileRelationships"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The PGStore caller's edge carries no use line, so it has no site line to
+	// name; the one site is the IndexFile call, and it names the seed it reached.
+	want := []string{"internal/index/index.go:47 " + indexFileCall + " 1 seed=" + storeReplace + " via=calls"}
+	if got := out["sites"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("sites = %v, want %v", got, want)
+	}
+}
+
+// TestImpactUnknownSeedOffersDidYouMean pins NIT 14: impact's unknown-seed
+// answer carries the same did_you_mean as callers and callees.
+func TestImpactUnknownSeedOffersDidYouMean(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, nil)
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "impact", Query: "internal/store/store.go::ReplaceFileRelationship"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := out["did_you_mean"].([]string)
+	if len(got) == 0 || got[0] != storeReplace {
+		t.Errorf("did_you_mean = %v, want %s first (its name is one edit away)", got, storeReplace)
 	}
 }

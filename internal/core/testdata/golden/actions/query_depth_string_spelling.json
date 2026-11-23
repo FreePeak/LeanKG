@@ -25,5 +25,6 @@
   ],
   "limit": 10,
   "query": "src/beta.go::Beta",
-  "scope": "all"
+  "scope": "all",
+  "scope_applied": true
 }

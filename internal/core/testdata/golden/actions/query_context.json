@@ -18,5 +18,7 @@
       "src/beta.go::Beta"
     ]
   },
-  "query": "src/alpha.go::Alpha"
+  "query": "src/alpha.go::Alpha",
+  "scope": "all",
+  "scope_applied": false
 }

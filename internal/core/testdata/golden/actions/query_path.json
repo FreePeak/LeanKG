@@ -8,5 +8,7 @@
     "src/beta.go::Beta"
   ],
   "query": "src/alpha.go::Alpha",
-  "reachable": true
+  "reachable": true,
+  "scope": "all",
+  "scope_applied": false
 }

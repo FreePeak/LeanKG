@@ -12,6 +12,7 @@
   ],
   "resolved": true,
   "scope": "all",
+  "scope_applied": true,
   "seed_counts": {
     "src/beta.go::Beta": 1
   },

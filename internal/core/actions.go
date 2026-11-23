@@ -339,11 +339,43 @@ type graphArgs struct {
 }
 
 // graphQuery adapts a connection verb to the registry: the shared envelope,
-// then the seed resolution every verb needs, then the verb itself.
+// then the seed resolution every verb needs, then the verb itself. The verb
+// answers for the first seed only, so a bare name with several callables says
+// which ones it did not walk. Every verb echoes args.scope; a verb that does
+// not filter by it says so with scope_applied false (graphCallSites and
+// graphImpact set it true).
 func graphQuery(verb graphVerb) actionHandler[QueryRequest] {
 	return graphFanQuery(func(e *Engine, ctx context.Context, req QueryRequest, a graphArgs, seeds []string, resp map[string]any) (map[string]any, error) {
-		return verb(e, ctx, req, a, seeds[0], resp)
+		out, err := verb(e, ctx, req, a, seeds[0], resp)
+		if err != nil {
+			return out, err
+		}
+		var notes []string
+		if len(seeds) > 1 {
+			notes = append(notes, fmt.Sprintf("The name %q resolves to %d callables; this answer is for %s only. Ignored: %s. Pass a qualified name to answer for another.", req.Query, len(seeds), seeds[0], strings.Join(seeds[1:], ", ")))
+		}
+		withGuidance(out, notes)
+		if _, ok := out["scope_applied"]; !ok {
+			_, name, err := scopePredicate(a.Scope)
+			if err != nil {
+				return nil, err
+			}
+			out["scope"] = name
+			out["scope_applied"] = false
+		}
+		return out, nil
 	})
+}
+
+// withGuidance puts notes ahead of the guidance an answer already has.
+func withGuidance(resp map[string]any, notes []string) {
+	if len(notes) == 0 {
+		return
+	}
+	if prev, _ := resp["guidance"].(string); prev != "" {
+		notes = append(notes, prev)
+	}
+	resp["guidance"] = strings.Join(notes, " ")
 }
 
 // graphFanQuery is graphQuery for a verb that walks every resolved seed.
@@ -375,13 +407,7 @@ func graphFanQuery(verb graphFanVerb) actionHandler[QueryRequest] {
 			out["seeds_truncated"] = true
 			notes = append(notes, fmt.Sprintf("The name %q matched %d or more elements, the most the store returns for one name, so the seeds are a partial set; pass a qualified name for the full answer.", req.Query, graph.StoreFindExactLimit))
 		}
-		if len(notes) == 0 {
-			return out, nil
-		}
-		if prev, _ := out["guidance"].(string); prev != "" {
-			notes = append(notes, prev)
-		}
-		out["guidance"] = strings.Join(notes, " ")
+		withGuidance(out, notes)
 		return out, nil
 	})
 }
@@ -419,6 +445,11 @@ func (e *Engine) graphImpact(ctx context.Context, req QueryRequest, a graphArgs,
 	}
 	hits, bounds, err := graph.Impact(ctx, e.st, seed, depth)
 	if errors.Is(err, graph.ErrUnknownNode) {
+		candidates, derr := e.didYouMean(ctx, seed)
+		if derr != nil {
+			return nil, derr
+		}
+		resp["did_you_mean"] = candidates
 		return graphUnresolved(resp, req, "seed", req.Query)
 	}
 	if err != nil {
@@ -435,6 +466,7 @@ func (e *Engine) graphImpact(ctx context.Context, req QueryRequest, a graphArgs,
 		}
 	}
 	resp["scope"] = scope
+	resp["scope_applied"] = true
 	resp["filtered_out"] = len(hits) - len(kept)
 	hits = kept
 	// The result carries the VERB's name, like every other graph verb:
@@ -588,9 +620,10 @@ func (e *Engine) graphCallSites(ctx context.Context, req QueryRequest, a graphAr
 	resp["resolved"] = true
 	resp["seed_counts"] = counts
 	resp["scope"] = scope
+	resp["scope_applied"] = true
 	resp["filtered_out"] = len(all) - len(sites)
 	resp[key] = callers
-	resp["sites"] = siteLines(shown)
+	resp["sites"] = siteLines(shown, siteSeeds(walk, bySeed), len(walk) > 1)
 	resp["total_sites"] = len(lined)
 	resp["site_limit"] = limit
 	resp["rel_types"] = graph.SiteRelTypes(sites)
@@ -703,11 +736,32 @@ func graphSitesGuidance(seeds []string, counts map[string]int, shown, total int)
 	return strings.Join(parts, " ")
 }
 
-// siteLines renders each call site as "<file>:<line> <qn> <confidence>".
-func siteLines(sites []graph.Site) []string {
+// siteLines renders each call site as "<file>:<line> <qn> <confidence>". A site
+// also names the seed it reached and the relationship it was read through
+// (" seed=<qn> via=<rel_type>") when the answer spans several seeds or the
+// relationship is not calls (a value use), so a single-seed call answer stays
+// short.
+func siteLines(sites []graph.Site, seedOf map[graph.Site]string, multiSeed bool) []string {
 	out := make([]string, 0, len(sites))
 	for _, s := range sites {
-		out = append(out, fmt.Sprintf("%s:%d %s %s", s.File, s.Line, s.QN, strconv.FormatFloat(s.Confidence, 'f', -1, 64)))
+		line := fmt.Sprintf("%s:%d %s %s", s.File, s.Line, s.QN, strconv.FormatFloat(s.Confidence, 'f', -1, 64))
+		if multiSeed || s.RelType != "calls" {
+			line += fmt.Sprintf(" seed=%s via=%s", seedOf[s], s.RelType)
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// siteSeeds maps each site to the first seed (in walk order) whose sites hold it.
+func siteSeeds(walk []string, bySeed map[string][]graph.Site) map[graph.Site]string {
+	out := map[graph.Site]string{}
+	for _, seed := range walk {
+		for _, s := range bySeed[seed] {
+			if _, ok := out[s]; !ok {
+				out[s] = seed
+			}
+		}
 	}
 	return out
 }
