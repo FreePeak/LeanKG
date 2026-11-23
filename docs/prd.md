@@ -24,7 +24,7 @@
 - **Hit shape.** The content snippet is capped at 200 bytes. Every search hit carries `language` and `line_end` at any window: the output shape is contractual (`docs/mcp-tool-contract.md`, stable tools), so no window drops them. A shape that omitted them above limit 5 was tried and withdrawn; the window (including the ladder's 2x demotion window) does not change the shape.
 - **Go extractor** (`internal/index/goast.go`, `crosspkg.go`, `packages.go`). Package-level `const`, `var` and every `type` kind come from `go/parser`, with exact line ranges. Call-site lines are kept in each edge's `lines` metadata. Cross-package calls resolve through the import alias (confidence 0.8), a typed receiver's method by name (0.4), or interface dispatch and interface specs (0.3); an unknown receiver makes no edge. Each directory is a `package` element, and `imports` edges link package directories with `test_only` metadata.
 - **Store hygiene.** Same-named elements of one file get distinct qualified names (the first repeat is `name (2)`; each later repeat takes the lowest free number). The index sweeps orphan edges next to the orphan vectors, and its summary prints the stored totals, which equal `leankg status`.
-- **extractorVersion 4 to 16.** Stores recorded under another version re-extract every file once. The version history is the comment at `internal/index/index.go:259`.
+- **extractorVersion 4 to 19.** Stores recorded under another version re-extract every file once. The version history is the comment at `internal/index/index.go:263`.
 
 ### route-roles: every route declares its role; isWritePath is gone (CX-38, CX-49) (2026-11-15)
 

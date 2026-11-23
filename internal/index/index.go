@@ -302,9 +302,13 @@ func checkRoot(ctx context.Context, st store.KV, dir string, hasFiles bool) erro
 // (Go imports resolve inside module boundaries, from the go.mod files that cover
 // the run) changes the imports and cross-package edges that v16 resolved by
 // suffix. v18 (blank and dot imports make imports edges of the package graph)
-// adds the edges of those imports. A store recorded under another version
+// adds the edges of those imports. v19 (the ast-tier Go fixes: method values
+// and explicit instantiations seed call edges, generic receivers are named alike
+// in both Go tiers, external test packages stay out of the package's name table,
+// and the per-file edge ceiling counts call edges only) changes Go edges and
+// element names that no v18 store has. A store recorded under another version
 // re-extracts every file once.
-const extractorVersion = "18"
+const extractorVersion = "19"
 
 const extractorKVKey = "extractor_version"
 
