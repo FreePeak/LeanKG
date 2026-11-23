@@ -1,28 +1,45 @@
 #!/usr/bin/env bash
-# Local live-test harness. Builds the real leankg binary, runs every scenario in
-# scripts/live/scenarios/ against temp fixtures and a real server, and writes
-# evidence to .live-evidence/<UTC timestamp>/ (latest -> newest run).
+# Local live-test harness. Builds the real leankg binary into the run's temp dir,
+# runs every scenario in scripts/live/scenarios/ against temp fixtures and a real
+# server, and writes evidence to .live-evidence/<UTC timestamp>/ (latest -> newest run).
 # See scripts/live/README.md.
 #
 # Usage: scripts/live/run.sh [--only NN] [--no-build] [--bin PATH] [--label NAME]
-#   --bin PATH    run a prebuilt binary instead of building (implies --no-build);
-#                 LEANKG_BIN=PATH does the same when --bin is not given
-#   --label NAME  recorded in summary.md and appended to the evidence dir name
+#                            [--pg-url URL] [--baseline-bin PATH] [--seed-bin PATH]
+#   --only NN          run one scenario; NN is digits only (e.g. 03)
+#   --bin PATH         run a prebuilt binary instead of building (implies --no-build);
+#                      LEANKG_BIN=PATH does the same when --bin is not given
+#   --label NAME       recorded in summary.md and appended to the evidence dir name
+#   --pg-url URL       LIVE_PG_URL for the PostgreSQL gates in scenario 16 (private pgvector only)
+#   --baseline-bin P   LIVE_BASELINE_BIN for scenario 16 (schema-19 migration check)
+#   --seed-bin PATH    LIVE_SEED_BIN for scenario 21 (pre-fix binary)
+# The LIVE_* inputs come from these flags (or the make line, see the Makefile),
+# never from the ambient shell environment.
 
 ENV_BIN=${LEANKG_BIN:-}
 LIVE_DIR=$(cd "$(dirname "$0")" && pwd -P)
 REPO_ROOT=$(cd "$LIVE_DIR/../.." && pwd -P)
 
-usage() { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; }
+
+# resolve_exe FLAG PATH: sets ABS_EXE to the absolute path of an executable file, or exits 2.
+resolve_exe() {
+  [ -f "$2" ] && [ -x "$2" ] || { echo "run.sh: $1 is not an executable file: $2" >&2; exit 2; }
+  ABS_EXE="$(cd "$(dirname "$2")" && pwd -P)/$(basename "$2")"
+}
 
 ONLY=""
 BUILD=1
 BIN_ARG=""
 LABEL=""
+PG_URL_ARG=""
+BASELINE_ARG=""
+SEED_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --only)
       [ $# -ge 2 ] || { echo "run.sh: --only needs a scenario number" >&2; exit 2; }
+      [[ $2 =~ ^[0-9]+$ ]] || { echo "run.sh: --only takes digits only (e.g. 03), got: $2" >&2; exit 2; }
       ONLY=$(printf '%02d' "$((10#$2))")
       shift 2 ;;
     --no-build) BUILD=0; shift ;;
@@ -33,6 +50,18 @@ while [ $# -gt 0 ]; do
     --label)
       [ $# -ge 2 ] || { echo "run.sh: --label needs a name" >&2; exit 2; }
       LABEL=$2
+      shift 2 ;;
+    --pg-url)
+      [ $# -ge 2 ] || { echo "run.sh: --pg-url needs a URL" >&2; exit 2; }
+      PG_URL_ARG=$2
+      shift 2 ;;
+    --baseline-bin)
+      [ $# -ge 2 ] || { echo "run.sh: --baseline-bin needs a binary path" >&2; exit 2; }
+      BASELINE_ARG=$2
+      shift 2 ;;
+    --seed-bin)
+      [ $# -ge 2 ] || { echo "run.sh: --seed-bin needs a binary path" >&2; exit 2; }
+      SEED_ARG=$2
       shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "run.sh: unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -51,9 +80,17 @@ fi
 
 BIN_ARG=${BIN_ARG:-$ENV_BIN}
 if [ -n "$BIN_ARG" ]; then
-  [ -f "$BIN_ARG" ] && [ -x "$BIN_ARG" ] || { echo "run.sh: binary is not an executable file: $BIN_ARG" >&2; exit 2; }
-  BIN_ARG="$(cd "$(dirname "$BIN_ARG")" && pwd -P)/$(basename "$BIN_ARG")"
+  resolve_exe --bin "$BIN_ARG"
+  BIN_ARG=$ABS_EXE
   BUILD=0
+fi
+if [ -n "$BASELINE_ARG" ]; then
+  resolve_exe --baseline-bin "$BASELINE_ARG"
+  BASELINE_ARG=$ABS_EXE
+fi
+if [ -n "$SEED_ARG" ]; then
+  resolve_exe --seed-bin "$SEED_ARG"
+  SEED_ARG=$ABS_EXE
 fi
 
 for tool in make go curl jq nc perl; do
@@ -62,9 +99,10 @@ done
 
 # The shared Go build cache only (never a private GOCACHE), and a clean LEANKG_*
 # environment so a developer's own tokens, DB engine or project list cannot
-# change what the harness exercises.
+# change what the harness exercises. The LIVE_* inputs are cleared the same way.
 unset GOCACHE
 for v in $(env | sed -n 's/^\(LEANKG_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
+unset LIVE_PG_URL LIVE_BASELINE_BIN LIVE_SEED_BIN
 
 STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 RUN_STAMP=$(date -u +%Y%m%dT%H%M%SZ)
@@ -78,37 +116,58 @@ SCEN="$RUN_DIR/scenarios.tsv"
 : >"$RESULTS"
 : >"$SCEN"
 
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/leankg-live.XXXXXX")
-WORK=$(cd "$WORK" && pwd -P)
-mkdir -p "$WORK/raw" "$WORK/home"
+# The work dir is everything the run writes outside the evidence dir. WORK must be
+# set before any cleanup or redact runs, so a failed mktemp stops the run here.
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/leankg-live.XXXXXX") && [ -n "$WORK" ] \
+  || { echo "run.sh: mktemp failed; no work dir" >&2; exit 2; }
+WORK=$(cd "$WORK" && pwd -P) || exit 2
+mkdir -p "$WORK/raw" "$WORK/home" "$WORK/bin"
 FIXTURE="$WORK/fixture"
 export LEANKG_HOME="$WORK/home"
-LEANKG_BIN=${BIN_ARG:-$REPO_ROOT/bin/leankg}
+# LEANKG_HOME does not redirect the fleet registry, so pin it to the work dir.
+# Without this every `leankg index` in the run would register into the real one.
+export LEANKG_PORTFOLIO_DB="$WORK/home/portfolio.db"
+LEANKG_BIN=${BIN_ARG:-$WORK/bin/leankg}
+if [ -n "$PG_URL_ARG" ]; then export LIVE_PG_URL="$PG_URL_ARG"; fi
+if [ -n "$BASELINE_ARG" ]; then export LIVE_BASELINE_BIN="$BASELINE_ARG"; fi
+if [ -n "$SEED_ARG" ]; then export LIVE_SEED_BIN="$SEED_ARG"; fi
+
+# shellcheck source=lib.sh
+. "$LIVE_DIR/lib.sh"
 
 cleanup() {
   local pid f
-  if [ -f "$WORK/servers.pids" ]; then
-    while read -r pid; do kill "$pid" 2>/dev/null; done <"$WORK/servers.pids"
+  if [ -n "$WORK" ] && [ -f "$WORK/servers.pids" ]; then
+    while read -r pid; do
+      [ -n "$pid" ] && stop_pid "$pid"
+    done <"$WORK/servers.pids"
   fi
-  for f in "$WORK"/raw/server-*.log; do
-    [ -f "$f" ] && redact <"$f" >"$RUN_DIR/logs/$(basename "$f")"
-  done
-  if [ "${LIVE_KEEP_WORK:-0}" != 1 ]; then rm -rf "$WORK"; fi
+  if [ -n "$WORK" ] && [ -d "$WORK" ]; then
+    for f in "$WORK"/raw/server-*.log; do
+      [ -f "$f" ] && redact <"$f" >"$RUN_DIR/logs/$(basename "$f")"
+    done
+  fi
+  if [ -n "$WORK" ] && [ -d "$WORK" ] && [ "${LIVE_KEEP_WORK:-0}" != 1 ]; then
+    rm -rf "$WORK"
+  fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
+# The binary is built into the work dir, never into the checkout's bin/, which a
+# launchd job runs from the main checkout.
 if [ "$BUILD" = 1 ]; then
-  echo "build: make go-build (log: $RUN_DIR/logs/build.log)"
-  if ! make -C "$REPO_ROOT" go-build >"$RUN_DIR/logs/build.log" 2>&1; then
+  echo "build: go build into the work dir (log: $RUN_DIR/logs/build.log)"
+  build_rc=0
+  CGO_ENABLED=0 go -C "$REPO_ROOT" build -o "$WORK/bin/" ./cmd/leankg ./cmd/leankg-embed \
+    >"$WORK/raw/build.log" 2>&1 || build_rc=$?
+  redact <"$WORK/raw/build.log" >"$RUN_DIR/logs/build.log"
+  if [ "$build_rc" -ne 0 ]; then
     echo "build failed, see $RUN_DIR/logs/build.log" >&2
     exit 1
   fi
 fi
-[ -x "$LEANKG_BIN" ] || { echo "run.sh: $LEANKG_BIN missing; run without --no-build" >&2; exit 2; }
-
-# shellcheck source=lib.sh
-. "$LIVE_DIR/lib.sh"
+[ -x "$LEANKG_BIN" ] || { echo "run.sh: $LEANKG_BIN missing; drop --no-build to build it" >&2; exit 2; }
 
 GIT_HEAD=$(git -C "$REPO_ROOT" rev-parse HEAD)
 GIT_BRANCH=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)

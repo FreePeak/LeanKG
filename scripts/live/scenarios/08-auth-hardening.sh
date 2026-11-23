@@ -55,7 +55,7 @@ scenario_main() {
   # throttle counts each attempt before the password check, so the first five
   # return the generic error and the rest are rate-limited.
   for i in $(seq 1 20); do
-    curl -sS -o "$burst.$i.body" -w '%{http_code}' -X POST \
+    curl -sS --max-time "$CURL_MAX_TIME" -o "$burst.$i.body" -w '%{http_code}' -X POST \
       -H 'Content-Type: application/json' \
       --data-raw "{\"email\":\"$user\",\"password\":\"wrong-$i\"}" \
       "$rest/api/v1/auth/login" >"$burst.$i.code" 2>"$burst.$i.err" &

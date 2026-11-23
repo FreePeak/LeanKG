@@ -160,6 +160,7 @@ PY
   echo "$FAKE_PID" >>"$WORK/servers.pids"
   for i in $(seq 1 50); do
     nc -z 127.0.0.1 "$port" >/dev/null 2>&1 && return 0
+    pid_alive "$FAKE_PID" || return 1
     sleep 0.1
   done
   return 1
@@ -168,7 +169,6 @@ PY
 # stop_stub: stop the stub started by start_stub_embed.
 stop_stub() {
   [ -n "${FAKE_PID:-}" ] || return 0
-  kill "$FAKE_PID" 2>/dev/null
-  wait "$FAKE_PID" 2>/dev/null
+  stop_pid "$FAKE_PID"
   FAKE_PID=""
 }

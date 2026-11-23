@@ -14,11 +14,7 @@ scenario_main() {
   start_server memory "$dir" --memory --hindsight-compat --rest "127.0.0.1:$rest_port" || return 0
   rest="http://127.0.0.1:$rest_port"
   # start_server only waits on --http; poll the REST listener too.
-  for i in $(seq 1 100); do
-    http_request rest-health GET "$rest/health"
-    [ "$HTTP_STATUS" = 200 ] && break
-    sleep 0.2
-  done
+  wait_listener_health rest-health "$rest"
   assert_eq "REST listener answers /health" 200 "$HTTP_STATUS"
   base="$rest/v1/default/banks/probe"
 

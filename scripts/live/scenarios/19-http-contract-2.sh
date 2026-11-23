@@ -57,17 +57,6 @@ build_project() {
   printf '# Product requirements\n\n## Generated milestone\n\n' | cat - "$dir/docs/prd.md" >"$dir/docs/prd.tmp" && mv "$dir/docs/prd.tmp" "$dir/docs/prd.md"
 }
 
-# wait_listener_health LABEL URL: polls URL/health for up to 20 seconds. Sets HTTP_STATUS.
-wait_listener_health() {
-  local i
-  for i in $(seq 1 100); do
-    http_request "$1" GET "$2/health"
-    [ "$HTTP_STATUS" = 200 ] && return 0
-    sleep 0.2
-  done
-  return 1
-}
-
 # wait_http LABEL URL: polls URL until it answers 200 (for listeners with no /health).
 wait_http() {
   local i
@@ -177,9 +166,8 @@ scenario_main() {
   fi
 
   step "Postgres connect failure"
-  run_cmd unit-gate-pg-unreachable bash -c 'cd "$1" && go test -run "^TestFailMapsAnUnreachablePostgresToPGUnreachable$" -count=1 -v ./internal/store' _ "$REPO_ROOT"
-  assert_eq "[unit-gate] Postgres connect failure maps to PG_UNREACHABLE: the unit test passes (no HTTP path, serve refuses to start)" 0 "$RC"
-  assert_contains "[unit-gate] the unit test prints its PASS line" "--- PASS: TestFailMapsAnUnreachablePostgresToPGUnreachable" "$OUT"
+  unit_gate ./internal/store TestFailMapsAnUnreachablePostgresToPGUnreachable \
+    "Postgres connect failure maps to PG_UNREACHABLE (no HTTP path; serve refuses to start)"
   run_cmd pg-unreachable-startup perl -e 'alarm 30; exec @ARGV' env LEANKG_DB_ENGINE=postgres \
     "LEANKG_PG_URL=postgres://leankg@127.0.0.1:$(free_port)/leankg" \
     "$LEANKG_BIN" serve --http "127.0.0.1:$(free_port)" --project "$dir"
@@ -209,6 +197,6 @@ scenario_main() {
   else
     record "dashboard listener answers consent GET" 200 "$HTTP_STATUS" FAIL "$LAST_CAPTURE"
   fi
-  kill "$dash_pid" 2>/dev/null
-  wait "$dash_pid" 2>/dev/null
+  stop_pid "$dash_pid"
+  forget_pid "$dash_pid"
 }

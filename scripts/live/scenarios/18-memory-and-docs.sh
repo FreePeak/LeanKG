@@ -42,15 +42,6 @@ s18_guide_names() {
     "SELECT qualified_name FROM code_elements WHERE file_path = 'docs/guide.md' ORDER BY qualified_name"
 }
 
-# unit_gate LABEL PKG TEST NOTE: run one named test from the source tree and
-# assert its PASS line. The test reads source, not the binary under test.
-unit_gate() {
-  local label=$1 pkg=$2 name=$3 note=$4
-  run_cmd "$label" go -C "$REPO_ROOT" test -run "^$name\$" -count=1 -v "$pkg"
-  assert_eq "[unit-gate] $note: $name exits 0" 0 "$RC"
-  assert_contains "[unit-gate] $note: $name reports PASS" "--- PASS: $name (" "$OUT"
-}
-
 # A. Compaction and REST retain of pre-redaction rows.
 s18_compaction() {
   local cdir="$WORK/s18/compact" banks rest_port rest hex raw leak
@@ -76,12 +67,7 @@ s18_compaction() {
   rest_port=$(free_port)
   rest="http://127.0.0.1:$rest_port"
   start_server compact "$cdir" --memory --hindsight-compat --rest "127.0.0.1:$rest_port" || return 0
-  local i
-  for i in $(seq 1 100); do
-    http_request compact-rest-health GET "$rest/health"
-    [ "$HTTP_STATUS" = 200 ] && break
-    sleep 0.2
-  done
+  wait_listener_health compact-rest-health "$rest"
 
   # The REST retain of the redacted form, before any compaction runs.
   http_request compact-retain POST "$rest/v1/default/banks/retain/memories" \
@@ -213,12 +199,12 @@ scenario_main() {
   s18_ownership
   s18_core_bound
 
-  unit_gate unit-vector-drop ./internal/memory/ TestCompactDropsVectorOfRedactedRow \
+  unit_gate ./internal/memory/ TestCompactDropsVectorOfRedactedRow \
     "stale vector of a redacted row (no embedding provider in the harness)"
-  unit_gate unit-import-status ./internal/core/ TestImportIndexNamesStatusFailure \
+  unit_gate ./internal/core/ TestImportIndexNamesStatusFailure \
     "import repo names a Status failure in status_error"
-  unit_gate unit-session-bound ./internal/sessionlink/ TestParsedBoundsKeptTranscripts \
+  unit_gate ./internal/sessionlink/ TestParsedBoundsKeptTranscripts \
     "sessionlink keeps at most 8 transcripts"
-  unit_gate unit-rollback ./internal/index/ TestCancelRollsBackSpecialistFiles \
+  unit_gate ./internal/index/ TestCancelRollsBackSpecialistFiles \
     "specialist files roll back on a cancelled directory"
 }

@@ -7,7 +7,7 @@ scenario_main() {
   ensure_fixture
 
   start_server mcp "$FIXTURE" || return 0
-  mcp_request http-initialize "$SERVER_URL" initialize \
+  retry_until mcp_initialize http-initialize "$SERVER_URL" \
     '{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"live-harness","version":"0"}}'
   assert_eq "HTTP initialize answers 200" 200 "$HTTP_STATUS"
   mcp_request http-tools-list "$SERVER_URL" tools/list '{}'

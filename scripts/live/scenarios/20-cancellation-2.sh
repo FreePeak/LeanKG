@@ -29,7 +29,7 @@
 #  - leankg-embed: the %w wrapping on the verbs. Export, import and status cannot be
 #    cancelled at a known point from a CLI.
 #
-# Helpers are prefixed g20_ and defined here, not in lib.sh.
+# Helpers are prefixed g20_ and defined here; the wait, kill and unit-test helpers are shared (lib.sh).
 
 G20_TOKENS=""
 
@@ -38,13 +38,6 @@ g20_sleep_running() { [ -n "$(pgrep -f "^sleep 40\.$1\$")" ]; }
 
 # g20_file PATH: 0 while PATH exists (readiness predicate).
 g20_file() { [ -f "$1" ]; }
-
-# g20_alive PID: 0 while PID runs. A zombie not yet reaped by this shell is not alive.
-g20_alive() {
-  local st
-  st=$(ps -o stat= -p "$1" 2>/dev/null)
-  [ -n "$st" ] && [ "${st#Z}" = "$st" ]
-}
 
 # g20_wait_until FN ARG SECS: poll FN ARG every 0.1 s for up to SECS. Sets G20_READY.
 g20_wait_until() {
@@ -57,23 +50,9 @@ g20_wait_until() {
   return 1
 }
 
-# g20_finish PID SECS: poll up to SECS for PID to exit, then kill it if it is still
-# alive so the run ends. Sets G20_EXIT (tenth-second tick of the exit, or none) and G20_RC.
-g20_finish() {
-  local pid=$1 limit=$2 i
-  G20_EXIT=none
-  for i in $(seq 1 $((limit * 10))); do
-    if ! g20_alive "$pid"; then G20_EXIT=$i; break; fi
-    sleep 0.1
-  done
-  if g20_alive "$pid"; then kill -KILL "$pid" 2>/dev/null; fi
-  wait "$pid" 2>/dev/null
-  G20_RC=$?
-}
-
-# g20_within_5s: yes when the last g20_finish saw the exit within 5 s.
+# g20_within_5s: yes when the last finish_pid saw the exit within 5 s.
 g20_within_5s() {
-  if [ "$G20_EXIT" != none ] && [ "$G20_EXIT" -le 50 ]; then echo yes; else echo no; fi
+  if [ "$FINISH_TICK" != none ] && [ "$FINISH_TICK" -le 50 ]; then echo yes; else echo no; fi
 }
 
 # g20_capture LABEL: redacted stdout and stderr of a background run into the captures.
@@ -105,22 +84,22 @@ g20_grandchild_run() {
     log "\$ leankg run -- sh -c '$script' (pid $pid), $sig once the grandchild runs"
     kill "-$sig" "$pid" 2>/dev/null
   fi
-  g20_finish "$pid" 8
+  finish_pid "$pid" 8
   g20_capture "$label"
-  log "leankg run [$label] => exit $G20_RC (exited within 5 s: $(g20_within_5s))"
+  log "leankg run [$label] => exit $FINISH_RC (exited within 5 s: $(g20_within_5s))"
   [ -n "$token" ] && G20_LAST_TOKEN=$token
 }
 
 # g20_grandchild_cases: the two `leankg run` cases with a grandchild holding stdout.
 g20_grandchild_cases() {
   g20_grandchild_run run-grandchild-int INT 'sleep 40.TOKEN & wait'
-  assert_eq "[fixed] leankg run exits 130 on SIGINT while a grandchild holds stdout" 130 "$G20_RC"
+  assert_eq "[fixed] leankg run exits 130 on SIGINT while a grandchild holds stdout" 130 "$FINISH_RC"
   assert_contains "[fixed] leankg run stderr names the cancellation with a grandchild holding stdout" \
     "context canceled" "$G20_ERR"
   assert_eq "[fixed] leankg run exits within 5 s of SIGINT while a grandchild holds stdout" yes "$(g20_within_5s)"
 
   g20_grandchild_run run-grandchild-exit0 "" 'sleep 40.TOKEN & echo grand-ok'
-  assert_eq "[fixed] leankg run exits 0 when the child exits 0 and a grandchild holds stdout" 0 "$G20_RC"
+  assert_eq "[fixed] leankg run exits 0 when the child exits 0 and a grandchild holds stdout" 0 "$FINISH_RC"
   assert_eq "[fixed] leankg run returns the child stdout when a grandchild holds stdout" grand-ok "$G20_OUT"
   assert_eq "[fixed] leankg run returns within 5 s when the child exited and a grandchild holds stdout" yes "$(g20_within_5s)"
 }
@@ -144,11 +123,11 @@ g20_telemetry_case() {
   pid=$!
   echo "$pid" >>"$WORK/servers.pids"
   for i in $(seq 1 100); do
-    curl -fsS -o /dev/null "http://127.0.0.1:$port/health" 2>/dev/null && break
+    curl -fsS --max-time "$CURL_MAX_TIME" -o /dev/null "http://127.0.0.1:$port/health" 2>/dev/null && break
     kill -0 "$pid" 2>/dev/null || break
     sleep 0.2
   done
-  assert_eq "[guard] telemetry server answers /health" 0 "$(curl -fsS -o /dev/null "http://127.0.0.1:$port/health" 2>/dev/null; echo $?)"
+  assert_eq "[guard] telemetry server answers /health" 0 "$(curl -fsS --max-time "$CURL_MAX_TIME" -o /dev/null "http://127.0.0.1:$port/health" 2>/dev/null; echo $?)"
 
   marker="$WORK/s20/ledger-locked"
   holder=$(g20_start_ledger_holder "$home/telemetry.db" "$marker")
@@ -159,12 +138,12 @@ g20_telemetry_case() {
   done
 
   kill -INT "$pid" 2>/dev/null
-  g20_finish "$pid" 15
+  finish_pid "$pid" 15
   kill -KILL "$holder" 2>/dev/null
   wait "$holder" 2>/dev/null
   redact <"$log" >"$CAP_DIR/telemetry-server.stderr"
   LAST_CAPTURE="scenarios/$SCENARIO_ID/captures/telemetry-server.stderr"
-  log "serve with a locked ledger => exit $G20_RC (exited within 5 s: $(g20_within_5s))"
+  log "serve with a locked ledger => exit $FINISH_RC (exited within 5 s: $(g20_within_5s))"
   assert_eq "[fixed] leankg serve exits within 5 s of SIGINT with a locked telemetry ledger" yes "$(g20_within_5s)"
   assert_contains "[fixed] leankg serve names the abandoned ledger flush on stderr" \
     "abandoned" "$(cat "$log")"
@@ -196,12 +175,9 @@ PY
 # g20_unit_gate LABEL PKG TEST REASON: run one unit test with -v and assert its PASS
 # line. REASON is the one-line justification for having no CLI assertion.
 g20_unit_gate() {
-  local label=$1 pkg=$2 test=$3 reason=$4 prev=$PWD
+  local label=$1 pkg=$2 test=$3 reason=$4
   log "unit-gate: $reason"
-  cd "$REPO_ROOT" || return 1
-  run_cmd "unit-$test" go test -run "^$test\$" -count=1 -v "$pkg"
-  cd "$prev" || return 1
-  assert_contains "[unit-gate] $label" "--- PASS: $test " "$OUT"
+  unit_gate "$pkg" "$test" "$label"
 }
 
 g20_unit_gates() {

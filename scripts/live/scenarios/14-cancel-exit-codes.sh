@@ -14,7 +14,7 @@
 # Not covered: `leankg index` cancelled mid-walk. The point where a walk stops is a
 # timing race, so there is no deterministic stop without a product hook.
 #
-# Helpers are prefixed s14_ and defined here, not in lib.sh.
+# Helpers are prefixed s14_ and defined here; pid_alive and the stop helpers are shared (lib.sh).
 
 S14_TOKENS=""
 
@@ -25,13 +25,6 @@ s14_child_running() { [ -n "$(pgrep -f "^sleep 30\.$1\$")" ]; }
 s14_kill_token() {
   local p
   for p in $(pgrep -f "^sleep 30\.$1\$"); do kill -KILL "$p" 2>/dev/null; done
-}
-
-# s14_alive PID: 0 while PID runs. A zombie (not yet reaped by this shell) is not alive.
-s14_alive() {
-  local st
-  st=$(ps -o stat= -p "$1" 2>/dev/null)
-  [ -n "$st" ] && [ "${st#Z}" = "$st" ]
 }
 
 # s14_ready_sleep TOKEN and s14_ready_file PATH: readiness predicates for s14_wait_for.
@@ -59,7 +52,7 @@ s14_signal() {
   S14_CHILD_TICKS=none
   kill "-$sig" "$pid" 2>/dev/null
   for i in $(seq 1 100); do
-    if [ "$S14_EXIT_TICKS" = none ] && ! s14_alive "$pid"; then S14_EXIT_TICKS=$i; fi
+    if [ "$S14_EXIT_TICKS" = none ] && ! pid_alive "$pid"; then S14_EXIT_TICKS=$i; fi
     if [ -n "$token" ] && [ "$S14_CHILD_TICKS" = none ] && ! s14_child_running "$token"; then
       S14_CHILD_TICKS=$i
     fi
@@ -68,7 +61,7 @@ s14_signal() {
     fi
     sleep 0.1
   done
-  if s14_alive "$pid"; then kill -KILL "$pid" 2>/dev/null; fi
+  if pid_alive "$pid"; then kill -KILL "$pid" 2>/dev/null; fi
   wait "$pid" 2>/dev/null
   S14_RC=$?
 }

@@ -29,7 +29,9 @@ scenario_main() {
   port=$(free_port)
   mkdir -p "$dir"
   printf 'db:\n  url: postgresql://embed-test@127.0.0.1:%s/leankg\n' "$port" >"$dir/leankg.yaml"
-  run_cmd embed-pg-url-from-yaml env LEANKG_DB_ENGINE=postgres "$emb_bin" run --project "$dir"
+  # The deterministic provider needs no model and no network, so the run gets as far as the DB.
+  run_cmd embed-pg-url-from-yaml env LEANKG_DB_ENGINE=postgres LEANKG_EMBED_PROVIDER=deterministic \
+    "$emb_bin" run --project "$dir"
   assert_eq "leankg-embed on postgres with a closed db.url port exits 1" 1 "$RC"
   assert_eq "leankg-embed does not demand LEANKG_PG_URL when leankg.yaml has db.url" 0 \
     "$(printf '%s' "$ERR" | grep -c 'requires LEANKG_PG_URL')"

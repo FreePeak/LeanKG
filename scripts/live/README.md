@@ -1,20 +1,21 @@
 # Live-test harness
 
 Re-runnable, local, end-to-end checks against the real `leankg` binary. It builds
-the binary, creates a temp Go fixture and temp store, starts `leankg serve` on a
-free loopback port, runs every scenario, and writes evidence. SQLite only, no
-network, no containers.
+the binary into the run's temp dir (never into the checkout's `bin/`), creates a
+temp Go fixture and temp store, starts `leankg serve` on a free loopback port, runs
+every scenario, and writes evidence. SQLite by default, no network, no containers.
+The PostgreSQL gates run only when `LIVE_PG_URL` is given.
 
 ## Run
 
 ```bash
 make live-test                          # build, then run all scenarios
 make live-test LIVE_ARGS="--only 03"    # one scenario
-bash scripts/live/run.sh --no-build     # reuse bin/leankg
+make live-test LIVE_PG_URL=postgres://... LIVE_BASELINE_BIN=/abs/baseline/leankg
 ```
 
-Run a prebuilt binary (no build, implies `--no-build`) and label the run so
-evidence directories stay distinguishable:
+Run a prebuilt binary (no build) and label the run so evidence directories stay
+distinguishable:
 
 ```bash
 bash scripts/live/run.sh --bin /path/to/leankg --label baseline
@@ -31,14 +32,16 @@ Requires `make`, `go`, `curl`, `jq`, `nc`, `perl` and `shasum`. `shellcheck` is 
 
 Exit status is 0 when no assertion fails and 1 otherwise. A `[product]` assertion
 fails while its product bug exists, so the run stays red until the bug is fixed.
-`summary.md` lists those failures separately from harness failures.
+`summary.md` lists those failures separately from harness failures. Against the
+baseline binary, the `[fixed]` assertions fail by design, so exit 1 is expected there.
+The harness is for local runs, not for CI.
 
 ## Layout
 
 | Path | Role |
 |---|---|
 | `run.sh` | Entry point: build, temp dirs, scenario loop, teardown, summary |
-| `lib.sh` | Helpers: `run_cmd`, `http_request`, `mcp_request`, `mcp_tool`, `start_server`, `assert_eq`, `assert_contains`, `assert_json`, `skip`, fixture |
+| `lib.sh` | Helpers: `run_cmd`, `http_request`, `mcp_request`, `mcp_tool`, `mcp_initialize`, `retry_until`, `start_server`, `wait_listener_health`, `stop_pid`, `free_port`, `unit_gate`, `assert_eq`, `assert_contains`, `assert_json`, `skip`, fixture |
 | `scenarios/NN-name.sh` | One feature area; defines `scenario_main` |
 
 ## Scenarios
@@ -73,16 +76,22 @@ fails while its product bug exists, so the run stays red until the bug is fixed.
 
 | Option | Effect |
 |---|---|
-| `--only NN` | run one scenario |
-| `--no-build` | reuse `bin/leankg` |
+| `--only NN` | run one scenario; `NN` is digits only, otherwise exit 2 |
+| `--no-build` | skip the build; needs `--bin` (or `LEANKG_BIN`), since the build output is per run |
 | `--bin PATH` | run a prebuilt binary (implies `--no-build`); must be an executable file |
 | `--label NAME` | 1-40 characters of `[A-Za-z0-9._-]`; recorded in `summary.md` and appended to the evidence dir name |
+| `--pg-url URL` | sets `LIVE_PG_URL` for scenario 16's PostgreSQL gates; use a private pgvector database |
+| `--baseline-bin PATH` | sets `LIVE_BASELINE_BIN` for scenario 16 (schema-19 migration check) |
+| `--seed-bin PATH` | sets `LIVE_SEED_BIN` for scenario 21 (pre-fix binary) |
 
-Scenario variables are plain variables, not `LEANKG_*`, because `run.sh`
-unsets every `LEANKG_*` variable before the scenarios start (so a developer's own
-tokens, DB engine or project list cannot change the run). Pass absolute paths.
+`run.sh` unsets every `LEANKG_*` variable and every `LIVE_*` variable before the
+scenarios start, so a developer's own tokens, DB engine, project list or exported
+`LIVE_*` values cannot change the run. The `LIVE_*` inputs reach the scenarios only
+through the flags above. `make live-test` passes the make-line variables
+`LIVE_PG_URL`, `LIVE_BASELINE_BIN` and `LIVE_SEED_BIN` as those flags. Pass absolute
+paths; the flags resolve them to absolute paths.
 
-| Variable | Used by | Meaning |
+| Input (flag or make variable) | Used by | Meaning |
 |---|---|---|
 | `LIVE_SEED_BIN` | 21 | the pre-fix binary that writes the store the scenario re-indexes; defaults to the binary under test, so a baseline run shows the `[fixed]` assertions failing |
 | `LIVE_BASELINE_BIN` | 16 | the baseline `leankg` for the schema-19 migration check (b); SKIP without it |
@@ -91,8 +100,8 @@ tokens, DB engine or project list cannot change the run). Pass absolute paths.
 Example:
 
 ```bash
-LIVE_SEED_BIN=/abs/baseline/leankg LIVE_BASELINE_BIN=/abs/baseline/leankg \
-  bash scripts/live/run.sh --bin /abs/candidate/leankg --label candidate
+bash scripts/live/run.sh --bin /abs/candidate/leankg --label candidate \
+  --seed-bin /abs/baseline/leankg --baseline-bin /abs/baseline/leankg
 ```
 
 ## Add a scenario
@@ -107,7 +116,9 @@ LIVE_SEED_BIN=/abs/baseline/leankg LIVE_BASELINE_BIN=/abs/baseline/leankg \
 
 Keep scenarios independent. Use `ensure_fixture` for the shared index, or write
 your own fixture under `$WORK` when the scenario changes the store (for example,
-it turns on the auth gate).
+it turns on the auth gate). Every curl gets `--max-time "$CURL_MAX_TIME"` by
+default, and every process a scenario starts goes through `stop_pid`, so a hung
+server or stub cannot stall the run.
 
 ## Evidence
 
@@ -125,13 +136,13 @@ the source of a `--bin` binary, so use the SHA-256 to tell binaries apart.
 | `env.txt` | Git HEAD, branch, `VERSION`, leankg version, Go version, host |
 | `scenarios/NN/scenario.log` | Commands with exit codes, HTTP status, assertion lines |
 | `scenarios/NN/captures/` | Redacted command stdout and stderr, HTTP request and response |
-| `logs/` | `make go-build` log and the `leankg serve` log of each server |
+| `logs/` | `build.log` (the `go build` of this run) and the `leankg serve` log of each server |
 | `results.tsv` | Raw assertion rows that `summary.*` is built from |
 
-Tokens, passwords and the `Authorization` header are redacted, and the temp
-workdir and repo path appear as `<workdir>` and `<repo>`. Raw output lives only
-under the temp workdir and is removed at exit. Set `LIVE_KEEP_WORK=1` to keep it
-for debugging.
+Tokens, passwords, the `Authorization` and `X-CSRF-Token` headers are redacted, and
+the temp workdir and repo path appear as `<workdir>` and `<repo>`. Raw output lives
+only under the temp workdir and is removed at exit. Set `LIVE_KEEP_WORK=1` to keep
+it for debugging.
 
 ## Read summary.md
 

@@ -78,10 +78,7 @@ scenario_main() {
 
   # --- Part 4: telemetry consent reload on a running serve (#592 path).
   # [unit-gate] for the Off-construction regression: see the header comment.
-  run_cmd telemetry-unit go test -run '^TestRecorderRaisedFromOffCloses$' -count=1 -v ./internal/telemetry
-  assert_eq "[unit-gate] TestRecorderRaisedFromOffCloses exits 0" 0 "$RC"
-  assert_contains "[unit-gate] TestRecorderRaisedFromOffCloses PASS line" \
-    "--- PASS: TestRecorderRaisedFromOffCloses" "$OUT"
+  unit_gate ./internal/telemetry TestRecorderRaisedFromOffCloses "telemetry Off-construction (no CLI route)"
 
   write_fixture "$tel_dir"
   run_cmd tel-index "$LEANKG_BIN" index "$tel_dir" --no-embed
@@ -109,8 +106,9 @@ scenario_main() {
   assert_eq "[guard] SIGHUP after re-grant reloads consent again" 1 "$S15_FOUND"
 
   kill -TERM "$SERVER_PID"
-  wait "$SERVER_PID" 2>/dev/null
-  rc=$?
+  finish_pid "$SERVER_PID" 10
+  rc=$FINISH_RC
+  forget_pid "$SERVER_PID"
   SERVER_PID=""
   unset LEANKG_HOME
   assert_eq "[guard] serve exits 0 after raise, withdraw, re-raise and SIGTERM" 0 "$rc"

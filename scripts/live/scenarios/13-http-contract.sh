@@ -80,14 +80,3 @@ scenario_main() {
     '.code' LEANKG_ERROR_INDEX_ROOT_MISMATCH "$HTTP_BODY"
   stop_server
 }
-
-# wait_listener_health LABEL URL: polls URL/health for up to 20 seconds. Sets HTTP_STATUS.
-wait_listener_health() {
-  local i
-  for i in $(seq 1 100); do
-    http_request "$1" GET "$2/health"
-    [ "$HTTP_STATUS" = 200 ] && return 0
-    sleep 0.2
-  done
-  return 1
-}

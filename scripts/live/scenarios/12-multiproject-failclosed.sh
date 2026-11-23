@@ -22,7 +22,12 @@ scenario_main() {
   unset LEANKG_PROJECT_DIRS
 
   # Initialize with the protocol header the client sends on every later request.
-  s12_rpc initialize initialize "$init_params"
+  local _
+  for _ in $(seq 1 30); do
+    s12_rpc initialize initialize "$init_params"
+    [ "$HTTP_STATUS" = 200 ] && [ -z "$S12_ERR" ] && break
+    sleep 1
+  done
   assert_eq "HTTP initialize answers 200" 200 "$HTTP_STATUS"
 
   local tool

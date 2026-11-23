@@ -94,9 +94,13 @@ scan-root-check:
 	bash scripts/test-scan-root.sh
 
 # Local live-test harness (scripts/live/): builds the binary, starts it against
-# temp fixtures, runs every scenario. SQLite only; starts no container.
+# temp fixtures, runs every scenario. Local only, not for CI. SQLite by default and
+# no container. The PostgreSQL gates in scenario 16 run only with LIVE_PG_URL (a
+# private pgvector database). LIVE_BASELINE_BIN and LIVE_SEED_BIN name the baseline
+# and pre-fix binaries for scenarios 16 and 21. The ambient environment is ignored:
+# these make-line variables reach run.sh as flags.
 live-test:
-	bash scripts/live/run.sh $(LIVE_ARGS)
+	bash scripts/live/run.sh $(LIVE_ARGS) $(if $(LIVE_PG_URL),--pg-url '$(LIVE_PG_URL)') $(if $(LIVE_BASELINE_BIN),--baseline-bin '$(LIVE_BASELINE_BIN)') $(if $(LIVE_SEED_BIN),--seed-bin '$(LIVE_SEED_BIN)')
 
 clean:
 	rm -rf bin

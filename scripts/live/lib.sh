@@ -10,6 +10,14 @@
 # Evidence rule: everything written under RUN_DIR goes through redact(). Raw
 # output lives in WORK/raw and is deleted at teardown, so a step can read a
 # token it just minted without that token reaching evidence.
+#
+# Bounds: every curl gets --max-time CURL_MAX_TIME. Every process the harness
+# starts is listed in WORK/servers.pids and stopped by stop_pid (TERM, a 5 s
+# grace, then KILL). free_port never returns a port twice in one run (WORK/ports).
+
+# Default --max-time for every curl. http_request passes it before the caller's
+# own arguments, so a scenario that needs a longer wait passes its own value.
+CURL_MAX_TIME=30
 
 # Millisecond wall clock (macOS date has no %N).
 now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time() * 1000'; }
@@ -19,6 +27,7 @@ redact() {
   sed -E \
     -e 's/lkg_[A-Za-z0-9_-]+/lkg_REDACTED/g' \
     -e 's/(Authorization: Bearer )[^[:space:]"]+/\1REDACTED/Ig' \
+    -e 's/(X-CSRF-Token: )[^[:space:]"]+/\1REDACTED/Ig' \
     -e 's/("password" *: *")[^"]*/\1REDACTED/g' \
     -e 's/(LEANKG_ADMIN_PASSWORD=).*/\1REDACTED/g' \
     -e "s|$WORK|<workdir>|g" \
@@ -107,8 +116,8 @@ http_request() {
   shift 3
   raw="$WORK/raw/$SCENARIO_ID-$label"
   t0=$(now_ms)
-  HTTP_STATUS=$(curl -sS -o "$raw.body" -D "$raw.headers" -w '%{http_code}' \
-    -X "$method" "$@" "$url" 2>"$raw.curl")
+  HTTP_STATUS=$(curl -sS --max-time "$CURL_MAX_TIME" -o "$raw.body" -D "$raw.headers" \
+    -w '%{http_code}' -X "$method" "$@" "$url" 2>"$raw.curl")
   RC=$?
   t1=$(now_ms)
   LAST_MS=$((t1 - t0))
@@ -154,13 +163,71 @@ mcp_tool() {
   MCP_RESULT=$(printf '%s' "$MCP_JSON" | jq -r '.result.content[0].text // empty' 2>/dev/null)
 }
 
-# free_port: a loopback port nothing is listening on.
+# mcp_initialize LABEL URL PARAMS: one initialize. Succeeds on HTTP 200 with no JSON-RPC error.
+mcp_initialize() {
+  mcp_request "$1" "$2" initialize "$3"
+  [ "$HTTP_STATUS" = 200 ] && [ -z "$MCP_ERROR" ]
+}
+
+# retry_until CMD...: run CMD once a second, up to 30 times, until it succeeds. A
+# freshly bound MCP listener can refuse the first handshake (see quickstart_smoke.sh);
+# the captures keep the last attempt.
+retry_until() {
+  local i
+  for i in $(seq 1 30); do
+    "$@" && return 0
+    sleep 1
+  done
+  return 1
+}
+
+# free_port: a loopback port nothing is listening on and no earlier call in this
+# run has handed out (WORK/ports). Runs in a command substitution, so the record
+# goes to a file.
 free_port() {
   local p
   while :; do
     p=$((20000 + RANDOM % 40000))
-    nc -z 127.0.0.1 "$p" >/dev/null 2>&1 || { echo "$p"; return 0; }
+    grep -qx "$p" "$WORK/ports" 2>/dev/null && continue
+    nc -z 127.0.0.1 "$p" >/dev/null 2>&1 && continue
+    echo "$p" >>"$WORK/ports"
+    echo "$p"
+    return 0
   done
+}
+
+# pid_alive PID: 0 while PID runs. A zombie (exited, not yet reaped) does not count.
+pid_alive() {
+  local st
+  st=$(ps -o stat= -p "$1" 2>/dev/null)
+  [ -n "$st" ] && [ "${st#Z}" = "$st" ]
+}
+
+# finish_pid PID SECS: wait up to SECS for PID to exit, KILL it if it is still
+# running, then reap it. Sets FINISH_TICK (the 0.1 s tick of the exit, or none) and FINISH_RC.
+finish_pid() {
+  local pid=$1 limit=$2 i
+  FINISH_TICK=none
+  for i in $(seq 1 $((limit * 10))); do
+    if ! pid_alive "$pid"; then FINISH_TICK=$i; break; fi
+    sleep 0.1
+  done
+  if pid_alive "$pid"; then kill -KILL "$pid" 2>/dev/null; fi
+  wait "$pid" 2>/dev/null
+  FINISH_RC=$?
+}
+
+# stop_pid PID: TERM, then up to 5 s for a clean exit, then KILL. Reaps the process.
+stop_pid() {
+  kill -TERM "$1" 2>/dev/null
+  finish_pid "$1" 5
+}
+
+# forget_pid PID: drop PID from WORK/servers.pids once it has been stopped.
+forget_pid() {
+  [ -f "$WORK/servers.pids" ] || return 0
+  grep -vx "$1" "$WORK/servers.pids" >"$WORK/servers.pids.new"
+  mv "$WORK/servers.pids.new" "$WORK/servers.pids"
 }
 
 # start_server LABEL DIR [serve flags...]: starts `leankg serve --http` on a free
@@ -177,11 +244,11 @@ start_server() {
   SERVER_PID=$!
   echo "$SERVER_PID" >>"$WORK/servers.pids"
   for i in $(seq 1 100); do
-    if curl -fsS -o /dev/null "$SERVER_URL/health" 2>/dev/null; then
+    if curl -fsS --max-time "$CURL_MAX_TIME" -o /dev/null "$SERVER_URL/health" 2>/dev/null; then
       log "server $label ready (log: logs/server-$SCENARIO_ID-$label.log)"
       return 0
     fi
-    kill -0 "$SERVER_PID" 2>/dev/null || break
+    pid_alive "$SERVER_PID" || break
     sleep 0.2
   done
   LAST_CAPTURE="logs/server-$SCENARIO_ID-$label.log"
@@ -190,11 +257,40 @@ start_server() {
   return 1
 }
 
+# wait_listener_health LABEL URL: poll URL/health for up to 20 s. Sets HTTP_STATUS.
+# Gives up early when SERVER_PID, if set, has exited.
+wait_listener_health() {
+  local i
+  for i in $(seq 1 100); do
+    http_request "$1" GET "$2/health"
+    [ "$HTTP_STATUS" = 200 ] && return 0
+    if [ -n "${SERVER_PID:-}" ] && ! pid_alive "$SERVER_PID"; then break; fi
+    sleep 0.2
+  done
+  return 1
+}
+
+# stop_server: stop the server started by start_server and drop it from servers.pids.
 stop_server() {
   [ -n "${SERVER_PID:-}" ] || return 0
-  kill "$SERVER_PID" 2>/dev/null
-  wait "$SERVER_PID" 2>/dev/null
+  stop_pid "$SERVER_PID"
+  forget_pid "$SERVER_PID"
   SERVER_PID=""
+}
+
+# unit_gate PKG TEST NOTE [pg]: run one named test in the checkout with go test -v;
+# assert exit 0 and its PASS line. "pg" runs it with LEANKG_TEST_PG_URL=LIVE_PG_URL
+# (scenarios call the pg form only when LIVE_PG_URL is set).
+unit_gate() {
+  local pkg=$1 test=$2 note=$3 pg=${4:-}
+  if [ "$pg" = pg ]; then
+    run_cmd "unit-$test" env LEANKG_TEST_PG_URL="$LIVE_PG_URL" \
+      go -C "$REPO_ROOT" test -run "^${test}\$" -count=1 -v "$pkg"
+  else
+    run_cmd "unit-$test" go -C "$REPO_ROOT" test -run "^${test}\$" -count=1 -v "$pkg"
+  fi
+  assert_eq "[unit-gate] $note: $test exits 0" 0 "$RC"
+  assert_contains "[unit-gate] $note: $test reports PASS" "--- PASS: $test (" "$OUT"
 }
 
 # fixture_file NAME: the content of one file of the shared Go fixture. Two

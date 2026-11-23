@@ -21,8 +21,9 @@
 # database (use a private pgvector container, never the CI runner's). Without it
 # they SKIP with a reason. They are the only checks that need PostgreSQL.
 #
-# Environment: LIVE_BASELINE_BIN and LIVE_PG_URL are read from the caller's
-# environment; run.sh clears LEANKG_* only, so set them as plain variables.
+# Environment: LIVE_BASELINE_BIN and LIVE_PG_URL come from run.sh's --baseline-bin
+# and --pg-url flags (or the make line). run.sh clears them from the ambient
+# environment, so a shell export has no effect.
 scenario_main() {
   local fts="$WORK/s16/fts" legacy="$WORK/s16/legacy" st="$WORK/s16/status"
 
@@ -37,7 +38,8 @@ scenario_main() {
   s16_unit_gates
 }
 
-# s16_db DB SQL: one read-only sqlite3 query, printed bare.
+# s16_db DB SQL: one sqlite3 query, printed bare. Read-only, except the DROP that
+# s16_status_absent_stamp runs to model a store that was never embedded.
 s16_db() {
   sqlite3 -noheader "$1" "$2"
 }
@@ -136,45 +138,29 @@ s16_status_absent_stamp() {
     "$(s16_db "$db" "SELECT COUNT(*) FROM sqlite_master WHERE name = 'emb_stamp'")"
 }
 
-# s16_unit LABEL TEST [pg]: run one named test in internal/store and assert its
-# PASS line. The test runs from the worktree source, so the result is the same
-# for every --bin; a PG test is given LEANKG_TEST_PG_URL=LIVE_PG_URL.
-s16_unit() {
-  local label=$1 test=$2 pg=${3:-} pat="^--- PASS: $2 \("
-  if [ "$pg" = pg ]; then
-    run_cmd "unit-$test" env LEANKG_TEST_PG_URL="$LIVE_PG_URL" \
-      go -C "$REPO_ROOT" test -run "^${test}\$" -count=1 -v ./internal/store/
-  else
-    run_cmd "unit-$test" go -C "$REPO_ROOT" test -run "^${test}\$" -count=1 -v ./internal/store/
-  fi
-  assert_eq "[unit-gate] $label: $test exits 0" 0 "$RC"
-  assert_eq "[unit-gate] $label: $test reports PASS" 1 \
-    "$(printf '%s\n%s\n' "$OUT" "$ERR" | grep -cE "$pat")"
-}
-
 s16_unit_gates() {
   # Negative K has no CLI or MCP path: core clamps the semantic limit to at
   # least 10 and the hybrid window to at least 50, so SearchVectors only sees a
   # negative K from direct store callers. The #588 fix is pinned by this test.
-  s16_unit "#588 negative K in SQLite SearchVectors does not panic" TestSearchVectorsNegativeKReturnsEmpty
+  unit_gate ./internal/store/ TestSearchVectorsNegativeKReturnsEmpty "#588 negative K in SQLite SearchVectors does not panic"
 
   # Pre-migration-19 read-only store: no CLI verb reaches KnowledgeEntriesSearch
   # (orgknowledge.SearchAnnotations has no caller), so the store test drives it.
-  s16_unit "#588 item 3 pre-19 read-only store reports degraded ranking" TestKnowledgeSearchPreMigration19ReportsDegradedRanking
+  unit_gate ./internal/store/ TestKnowledgeSearchPreMigration19ReportsDegradedRanking "#588 item 3 pre-19 read-only store reports degraded ranking"
 
   # Partial-word recall on SQLite, same reason: no CLI or MCP path to knowledge
   # keyword search. The shared conformance check runs on both engines.
-  s16_unit "#588 item 1 partial-word keyword recall, SQLite" TestKnowledgeKeywordSearchSQLite
+  unit_gate ./internal/store/ TestKnowledgeKeywordSearchSQLite "#588 item 1 partial-word keyword recall, SQLite"
 
   # Version gate: pure function, no PostgreSQL needed.
-  s16_unit "#588 item 4 iterative-scan version gate (pure)" TestPGVectorHasIterativeScan
+  unit_gate ./internal/store/ TestPGVectorHasIterativeScan "#588 item 4 iterative-scan version gate (pure)"
 
   if [ -z "${LIVE_PG_URL:-}" ]; then
     skip "LIVE_PG_URL is not set; the PostgreSQL unit gates (partial-word parity, iterative-scan session setting, cancelled-migration rollback, absent emb_stamp) need a private pgvector database"
     return 0
   fi
-  s16_unit "#588 item 1 partial-word keyword recall, PostgreSQL parity" TestPGKnowledgeKeywordSearch pg
-  s16_unit "#588 item 4 iterative_scan follows the installed pgvector" TestPGIterativeScanFollowsInstalledVector pg
-  s16_unit "#588 item 5 cancelled migration leaves no open transaction" TestPGMigrateRollsBackWhenCtxCancelled pg
-  s16_unit "#592 absent emb_stamp reads empty on PostgreSQL" TestPGStoreOpensWithoutEmbStamp pg
+  unit_gate ./internal/store/ TestPGKnowledgeKeywordSearch "#588 item 1 partial-word keyword recall, PostgreSQL parity" pg
+  unit_gate ./internal/store/ TestPGIterativeScanFollowsInstalledVector "#588 item 4 iterative_scan follows the installed pgvector" pg
+  unit_gate ./internal/store/ TestPGMigrateRollsBackWhenCtxCancelled "#588 item 5 cancelled migration leaves no open transaction" pg
+  unit_gate ./internal/store/ TestPGStoreOpensWithoutEmbStamp "#592 absent emb_stamp reads empty on PostgreSQL" pg
 }

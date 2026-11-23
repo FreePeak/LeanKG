@@ -52,7 +52,7 @@ scenario_main() {
   start_server recall "$dir1" --memory --hindsight-compat --embed-provider local --rest "127.0.0.1:$rest_port" || return 0
   unset LEANKG_EMBED_PROVIDER LEANKG_EMBED_MODEL LEANKG_EMBED_DIMS LEANKG_EMBED_BASE_URL
   rest="http://127.0.0.1:$rest_port"
-  s17_wait_rest rest-health "$rest"
+  wait_listener_health rest-health "$rest"
 
   http_request s17-retain-hang POST "$rest/v1/default/banks/probe/memories" -H "$ctype" \
     --data-raw '{"items":[{"content":"We store embeddings in pgvector on Postgres. HANGME"}]}'
@@ -90,7 +90,7 @@ scenario_main() {
   start_server concurrent "$dir2" --memory --hindsight-compat --embed-provider local --rest "127.0.0.1:$rest_port" || return 0
   unset LEANKG_EMBED_PROVIDER LEANKG_EMBED_MODEL LEANKG_EMBED_DIMS LEANKG_EMBED_BASE_URL
   rest="http://127.0.0.1:$rest_port"
-  s17_wait_rest rest-health-2 "$rest"
+  wait_listener_health rest-health-2 "$rest"
   http_request s17-retain-plain POST "$rest/v1/default/banks/probe/memories" -H "$ctype" \
     --data-raw '{"items":[{"content":"We store embeddings in pgvector on Postgres for search"}]}'
   assert_eq "retain for the concurrent recall returns 200" 200 "$HTTP_STATUS"
@@ -139,19 +139,9 @@ scenario_main() {
   s17_stop_stub
 
   # 4 and 5. No CLI or HTTP path reaches these; the unit test runs on this checkout.
-  unit_gate_17 "[unit-gate] stop coinciding with a store error records cancelled" ./internal/embed \
-    TestRunStopCoincidingWithStoreErrorRecordsCancelled
-  unit_gate_17 "[unit-gate] auto-embed starts the provider once" ./internal/rest/auto \
-    TestAutoEmbedStartsProviderOnce
-}
-
-# unit_gate_17 LABEL PKG TEST: run one unit test in the checkout; assert exit 0 and its PASS line.
-unit_gate_17() {
-  local label=$1 pkg=$2 test=$3
-  cd "$REPO_ROOT" || return 1
-  run_cmd "unit-$test" go test -run "^$test\$" -count=1 -v "$pkg"
-  assert_eq "$label: go test exits 0" 0 "$RC"
-  assert_contains "$label: PASS line for $test" "--- PASS: $test (" "$OUT"
+  unit_gate ./internal/embed TestRunStopCoincidingWithStoreErrorRecordsCancelled \
+    "stop coinciding with a store error records cancelled"
+  unit_gate ./internal/rest/auto TestAutoEmbedStartsProviderOnce "auto-embed starts the provider once"
 }
 
 # s17_write_stub: the embedding stub. Args PORT LOG PROPS_DELAY_SECS. /props answers a
@@ -238,6 +228,7 @@ s17_start_stub() {
   echo "$S17_PID" >>"$WORK/servers.pids"
   for i in $(seq 1 50); do
     nc -z 127.0.0.1 "$port" >/dev/null 2>&1 && return 0
+    pid_alive "$S17_PID" || return 1
     sleep 0.1
   done
   return 1
@@ -246,17 +237,6 @@ s17_start_stub() {
 # s17_stop_stub: stop the stub started by s17_start_stub.
 s17_stop_stub() {
   [ -n "${S17_PID:-}" ] || return 0
-  kill "$S17_PID" 2>/dev/null
-  wait "$S17_PID" 2>/dev/null
+  stop_pid "$S17_PID"
   S17_PID=""
-}
-
-# s17_wait_rest LABEL URL: poll the REST listener's /health; sets HTTP_STATUS.
-s17_wait_rest() {
-  local i
-  for i in $(seq 1 100); do
-    http_request "$1" GET "$2/health"
-    [ "$HTTP_STATUS" = 200 ] && break
-    sleep 0.2
-  done
 }

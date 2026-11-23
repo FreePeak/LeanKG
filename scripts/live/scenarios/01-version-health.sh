@@ -20,7 +20,7 @@ scenario_main() {
   assert_eq "GET /health returns 200" 200 "$HTTP_STATUS"
   assert_json "GET /health body is ok" '.ok' true "$HTTP_BODY"
 
-  mcp_request initialize "$SERVER_URL" initialize \
+  retry_until mcp_initialize initialize "$SERVER_URL" \
     '{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"live-harness","version":"0"}}'
   assert_eq "MCP initialize answers HTTP 200" 200 "$HTTP_STATUS"
   assert_json "MCP serverInfo.name is leankg" '.result.serverInfo.name' leankg "$MCP_JSON"
