@@ -28,10 +28,8 @@ func TestDocsHaveNoConflictMarkers(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		for i, line := range strings.Split(string(data), "\n") {
-			if isConflictMarker(line) {
-				found = append(found, fmt.Sprintf("%s:%d", filepath.ToSlash(rel), i+1))
-			}
+		for _, n := range findConflictMarkers(strings.Split(string(data), "\n")) {
+			found = append(found, fmt.Sprintf("%s:%d", filepath.ToSlash(rel), n))
 		}
 		return nil
 	})
@@ -43,9 +41,59 @@ func TestDocsHaveNoConflictMarkers(t *testing.T) {
 	}
 }
 
-// isConflictMarker reports whether line is a git conflict marker: it begins
-// with "<<<<<<<" or ">>>>>>>", or it is the "=======" separator.
-func isConflictMarker(line string) bool {
-	line = strings.TrimSuffix(line, "\r")
-	return strings.HasPrefix(line, "<<<<<<<") || strings.HasPrefix(line, ">>>>>>>") || line == "======="
+// findConflictMarkers returns the 1-based line numbers of git conflict markers
+// in lines: lines that begin with "<<<<<<<" or ">>>>>>>", and the "======="
+// separator, but only between an open "<<<<<<<" and its ">>>>>>>".
+func findConflictMarkers(lines []string) []int {
+	var found []int
+	open := false
+	for i, line := range lines {
+		line = strings.TrimSuffix(line, "\r")
+		switch {
+		case strings.HasPrefix(line, "<<<<<<<"):
+			open = true
+			found = append(found, i+1)
+		case strings.HasPrefix(line, ">>>>>>>"):
+			open = false
+			found = append(found, i+1)
+		case line == "=======" && open:
+			found = append(found, i+1)
+		}
+	}
+	return found
+}
+
+// TestConflictMarkerDetection pins what counts as a conflict marker. A bare
+// "=======" line is also a Markdown setext H1 underline, so it is a marker only
+// inside an open "<<<<<<<" block, the way git writes a conflict.
+func TestConflictMarkerDetection(t *testing.T) {
+	cases := []struct {
+		name  string
+		lines []string
+		want  []int
+	}{
+		{
+			name:  "setext H1 underline is not a marker",
+			lines: []string{"Title", "=======", "", "body"},
+			want:  nil,
+		},
+		{
+			name:  "full git conflict block is marked",
+			lines: []string{"<<<<<<< HEAD", "ours", "=======", "theirs", ">>>>>>> branch"},
+			want:  []int{1, 3, 5},
+		},
+		{
+			name:  "separator after a closed block is not a marker",
+			lines: []string{"<<<<<<< HEAD", "ours", ">>>>>>> branch", "Title", "======="},
+			want:  []int{1, 3},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := findConflictMarkers(tc.lines)
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Fatalf("findConflictMarkers = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
