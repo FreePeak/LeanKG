@@ -161,9 +161,6 @@ func (s *edgeSet) add(r store.Relationship) bool {
 	return !seen
 }
 
-// count is the number of edges added so far.
-func (s *edgeSet) count() int { return len(s.out) }
-
 // rels returns the batch. An edge with use lines gets line = its smallest line
 // and lines = every use line, sorted and de-duplicated.
 func (s *edgeSet) rels() []store.Relationship {
