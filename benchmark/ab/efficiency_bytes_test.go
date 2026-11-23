@@ -2,13 +2,18 @@ package ab_test
 
 // Bytes-per-answer measurement for the search ladder (efficiency work).
 //
-// Gated by LEANKG_BYTES_BENCH=1 so `make go-test` never runs it. It indexes
-// this repository into a temp SQLite store, runs a fixed set of search
-// questions through the engine's budgeted answer path (the same bytes an MCP
-// client receives), and reports per question: the response size, the rank of
-// the expected code hit in the returned hits, and the raw keyword-arm rank
-// before demotion. With LEANKG_BYTES_BENCH_OUT set, the rows are written there
-// as JSON.
+// Gated by LEANKG_BYTES_BENCH=1 so `make go-test` never runs it. It indexes a
+// copy of the callers truth's source commit (pinnedCorpus) into a temp SQLite
+// store, runs a fixed set of search questions through the engine's budgeted
+// answer path (the same bytes an MCP client receives), and reports per question:
+// the response size, the rank of the expected code hit in the returned hits, and
+// the raw keyword-arm rank before demotion. With LEANKG_BYTES_BENCH_OUT set, the
+// rows are written there as JSON.
+//
+// Each question has a ceiling on its response bytes (the measured size plus
+// 25 percent, rounded up) and a worst allowed hit rank (the measured rank). A
+// question whose expected hit is absent fails. Re-measure and reset the
+// ceilings after an intended change to the answer shape.
 //
 //	LEANKG_BYTES_BENCH=1 LEANKG_BYTES_BENCH_OUT=/path/out.json \
 //	  go test ./benchmark/ab/ -run TestSearchAnswerBytes -count=1 -v
@@ -30,17 +35,19 @@ import (
 // element. file_path matching is the criterion: any element in one of these
 // files counts as the expected hit.
 type bytesBenchCase struct {
-	Query    string   `json:"query"`
-	Expected []string `json:"expected"`
+	Query      string   `json:"query"`
+	Expected   []string `json:"expected"`
+	MaxBytes   int      `json:"max_bytes"`    // measured bytes x 1.25, rounded up
+	MaxHitRank int      `json:"max_hit_rank"` // measured hit rank (worst allowed)
 }
 
 var bytesBenchCases = []bytesBenchCase{
-	{Query: "embedded version source of truth", Expected: []string{"cmd/leankg-embed/version.go", "cmd/leankg/version.go"}},
-	{Query: "authenticate", Expected: []string{"internal/mcp/authenticate.go"}},
-	{Query: "ReplaceFileRelationships", Expected: []string{"internal/store/elements.go"}},
-	{Query: "HTTPHandler", Expected: []string{"internal/mcp/server.go"}},
-	{Query: "store.Backend", Expected: []string{"internal/store/backend.go"}},
-	{Query: "bearer gate", Expected: []string{"internal/auth/resolve.go", "internal/auth/http.go", "internal/mcp/server.go"}},
+	{Query: "embedded version source of truth", Expected: []string{"cmd/leankg-embed/version.go", "cmd/leankg/version.go"}, MaxBytes: 6128, MaxHitRank: 3},
+	{Query: "authenticate", Expected: []string{"internal/mcp/authenticate.go"}, MaxBytes: 5040, MaxHitRank: 1},
+	{Query: "ReplaceFileRelationships", Expected: []string{"internal/store/elements.go"}, MaxBytes: 1857, MaxHitRank: 1},
+	{Query: "HTTPHandler", Expected: []string{"internal/mcp/server.go"}, MaxBytes: 659, MaxHitRank: 1},
+	{Query: "store.Backend", Expected: []string{"internal/store/backend.go"}, MaxBytes: 4448, MaxHitRank: 1},
+	{Query: "bearer gate", Expected: []string{"internal/auth/resolve.go", "internal/auth/http.go", "internal/mcp/server.go"}, MaxBytes: 5747, MaxHitRank: 3},
 }
 
 // bytesBenchRow is one question's measurement.
@@ -106,7 +113,14 @@ func TestSearchAnswerBytes(t *testing.T) {
 			row.Top5 = append(row.Top5, h["qualified_name"].(string))
 		}
 		rows = append(rows, row)
-		t.Logf("bytes=%d hit_rank=%d raw_rank=%d hits=%d %q", row.Bytes, row.HitRank, row.RawRank, row.Hits, c.Query)
+		t.Logf("bytes=%d (ceiling %d) hit_rank=%d (worst %d) raw_rank=%d hits=%d %q",
+			row.Bytes, c.MaxBytes, row.HitRank, c.MaxHitRank, row.RawRank, row.Hits, c.Query)
+		if row.Bytes > c.MaxBytes {
+			t.Errorf("%q: %d bytes exceeds the ceiling %d", c.Query, row.Bytes, c.MaxBytes)
+		}
+		if row.HitRank == 0 || row.HitRank > c.MaxHitRank {
+			t.Errorf("%q: expected hit at rank %d, worst allowed %d (0 = absent)", c.Query, row.HitRank, c.MaxHitRank)
+		}
 	}
 	if out := os.Getenv("LEANKG_BYTES_BENCH_OUT"); out != "" {
 		data, err := json.MarshalIndent(rows, "", "  ")
