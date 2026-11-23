@@ -2,9 +2,13 @@ package core
 
 import (
 	"context"
+	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
+	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -114,6 +118,129 @@ func TestCommitLookupIsHexOnly(t *testing.T) {
 		got, ok := commitLookup(q)
 		if got != want.prefix || ok != want.ok {
 			t.Errorf("commitLookup(%q) = (%q, %v), want (%q, %v)", q, got, ok, want.prefix, want.ok)
+		}
+	}
+}
+
+// widgetPopulation is one name held by a production symbol, a symbol in each
+// kind of non-production path, and two docs (one archived). scope=prod keeps
+// the production symbol and the current doc; scope=code keeps only the symbol.
+func widgetPopulation() []store.Element {
+	const body = "rank the merged lists with the widget"
+	return []store.Element{
+		{QualifiedName: "store/widget.go::Widget", ElementType: "function", Name: "Widget", FilePath: "store/widget.go", Language: "go", Content: body},
+		{QualifiedName: "src/widget.test.ts::Widget", ElementType: "function", Name: "Widget", FilePath: "src/widget.test.ts", Language: "typescript", Content: body},
+		{QualifiedName: "tests/test_widget.py::Widget", ElementType: "function", Name: "Widget", FilePath: "tests/test_widget.py", Language: "python", Content: body},
+		{QualifiedName: "pkg/widget_test.go::Widget", ElementType: "function", Name: "Widget", FilePath: "pkg/widget_test.go", Language: "go", Content: body},
+		{QualifiedName: "testdata/fx/widget.go::Widget", ElementType: "function", Name: "Widget", FilePath: "testdata/fx/widget.go", Language: "go", Content: body},
+		{QualifiedName: "web/fixtures.js::Widget", ElementType: "function", Name: "Widget", FilePath: "web/fixtures.js", Language: "javascript", Content: body},
+		{QualifiedName: "docs/archive/old.md#widget", ElementType: "doc", Name: "Widget", FilePath: "docs/archive/old.md", Language: "markdown", Content: body},
+		{QualifiedName: "docs/guide.md#widget", ElementType: "doc", Name: "Widget", FilePath: "docs/guide.md", Language: "markdown", Content: body},
+	}
+}
+
+// TestScopeProdIsOnePopulationOnEveryRung pins one definition of prod and code
+// across L1, L2, L3 and the ladder: test files (any convention), fixtures and
+// docs/archive/ are out of prod; markdown is also out of code. Before the
+// change prod kept the test-convention files and the archived doc.
+func TestScopeProdIsOnePopulationOnEveryRung(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	p := embed.Deterministic(16)
+	if err := st.WriteStamp(context.Background(), embed.StampOf(p)); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for _, el := range widgetPopulation() {
+		if err := st.UpsertElements(ctx, []store.Element{el}); err != nil {
+			t.Fatal(err)
+		}
+		qvec, err := p.Embed(ctx, embed.Query, []string{el.Content})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.UpsertVectors(ctx, p.Identity().Model, []store.VectorRow{{QualifiedName: el.QualifiedName, Vec: qvec[0]}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e := New(st, Options{Embedder: p, ProjectDir: dir})
+
+	want := map[string][]string{
+		"prod": {"docs/guide.md#widget", "store/widget.go::Widget"},
+		"code": {"store/widget.go::Widget"},
+	}
+	rungs := []struct {
+		name string
+		req  QueryRequest
+	}{
+		{"L1 exact", QueryRequest{Action: "exact", Query: "Widget"}},
+		{"L2 fuzzy", QueryRequest{Action: "fuzzy", Query: "widget"}},
+		{"L3 semantic", QueryRequest{Action: "semantic", Query: "rank the merged lists with the widget"}},
+		{"ladder", QueryRequest{Query: "Widget"}},
+	}
+	for scope, wantQNs := range want {
+		for _, r := range rungs {
+			t.Run(scope+" "+r.name, func(t *testing.T) {
+				req := r.req
+				req.Args = map[string]any{"scope": scope}
+				out, err := e.Query(ctx, req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := qnsOf(hitsOf(out))
+				sort.Strings(got)
+				if !reflect.DeepEqual(got, wantQNs) {
+					t.Errorf("scope=%s hits = %v, want %v", scope, got, wantQNs)
+				}
+			})
+		}
+	}
+}
+
+// TestScopeProdIsOnePopulationOnCallers pins the same population on the graph
+// verbs: callers under prod drop the test-convention caller, the archived doc
+// caller, and keep the current doc caller; code drops every doc caller.
+func TestScopeProdIsOnePopulationOnCallers(t *testing.T) {
+	e, _ := newEngine(t)
+	const target = "store/widget.go::Widget"
+	callers := map[string]string{
+		"store/use.go::Run":            "store/use.go",
+		"src/widget.test.ts::TestW":    "src/widget.test.ts",
+		"tests/test_widget.py::test_w": "tests/test_widget.py",
+		"docs/archive/old.md#old":      "docs/archive/old.md",
+		"docs/guide.md#guide":          "docs/guide.md",
+	}
+	els := []store.Element{{QualifiedName: target, ElementType: "function", Name: "Widget", FilePath: "store/widget.go", LineStart: 1, Language: "go"}}
+	var rels []store.Relationship
+	for qn, file := range callers {
+		typ := "function"
+		if strings.HasSuffix(file, ".md") {
+			typ = "section"
+		}
+		els = append(els, store.Element{QualifiedName: qn, ElementType: typ, Name: "c", FilePath: file, LineStart: 2, Language: "go"})
+		rels = append(rels, store.Relationship{Source: qn, Target: target, RelType: "calls", Confidence: 1, Metadata: map[string]any{"line": float64(4)}})
+	}
+	if err := e.st.UpsertElements(context.Background(), els); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.UpsertRelationships(context.Background(), rels); err != nil {
+		t.Fatal(err)
+	}
+	for scope, want := range map[string][]string{
+		"prod": {"docs/guide.md#guide", "store/use.go::Run"},
+		"code": {"store/use.go::Run"},
+	} {
+		out := callersOf(t, e, target, map[string]any{"scope": scope})
+		got, _ := out["callers"].([]string)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("callers scope=%s = %v, want %v", scope, got, want)
 		}
 	}
 }

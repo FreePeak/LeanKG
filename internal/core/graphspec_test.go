@@ -181,14 +181,15 @@ func TestCallersScopeProdDropsTestCallers(t *testing.T) {
 	}
 }
 
-// TestCallersScopeCodeDropsDocumentCallers pins that scope=code is the other
-// half: a document caller goes, the code callers stay.
+// TestCallersScopeCodeDropsDocumentCallers pins that scope=code is prod minus
+// markdown: a document caller goes, and so do the test callers (testIface,
+// testDirect), which prod already drops. The production callers stay.
 func TestCallersScopeCodeDropsDocumentCallers(t *testing.T) {
 	e, _ := newEngine(t)
 	seedIfaceGraph(t, e)
 
 	code := callersOf(t, e, iwSpec, map[string]any{"scope": "code"})
-	if got, want := code["callers"], []string{convoCall, lspCall, prdCall, testIface, testDirect}; !reflect.DeepEqual(got, want) {
+	if got, want := code["callers"], []string{convoCall, lspCall, prdCall}; !reflect.DeepEqual(got, want) {
 		t.Errorf("code callers = %v, want %v", got, want)
 	}
 }

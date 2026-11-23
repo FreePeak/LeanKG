@@ -1,9 +1,10 @@
 package core
 
 import (
-	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // Test-file demotion. Descriptive test names (TestDockEndsWithMCPThenTrajectory)
@@ -21,10 +22,26 @@ import (
 // scores in both repositories; 3 and 5 lose too much of the all-files score.
 const testDemotion = 2
 
-var testPathRe = regexp.MustCompile(`(_test\.go$|\.(test|spec)\.[cm]?[jt]sx?$|(^|/)(tests?|__tests__|spec)/|(^|/)test_[^/]*\.py$|_test\.py$|Tests?\.(java|kt|cs|swift)$|_spec\.rb$)`)
+// testPathFilter is the one definition of a test path or a fixture: the
+// literal patterns every search rung applies in SQL (ElementFilter.where) and
+// every graph verb applies in Go (ElementFilter.Admits). isTestPath is derived
+// from it, so the demotion, the call-site order and the scope cannot disagree.
+// The suffixes cover the test conventions of Go, JS/TS, Python, Java, Kotlin,
+// C#, Swift and Ruby. A name that begins with "test_" in any directory counts
+// as a test, a superset of Python's test_*.py.
+var testPathFilter = store.ElementFilter{
+	ExcludePathContains: []string{"testdata", "/fixtures/", "/test/", "/tests/", "/__tests__/", "/spec/", "/test_"},
+	ExcludePathPrefixes: []string{"test/", "tests/", "__tests__/", "spec/", "test_"},
+	ExcludePathSuffixes: []string{
+		"_test.go", "_test.py", "_spec.rb", "fixtures.js",
+		".test.js", ".test.jsx", ".test.ts", ".test.tsx", ".test.mjs", ".test.cjs", ".test.mts", ".test.cts",
+		".spec.js", ".spec.jsx", ".spec.ts", ".spec.tsx", ".spec.mjs", ".spec.cjs", ".spec.mts", ".spec.cts",
+		"Test.java", "Tests.java", "Test.kt", "Tests.kt", "Test.cs", "Tests.cs", "Test.swift", "Tests.swift",
+	},
+}
 
-// isTestPath reports whether a file path is test code.
-func isTestPath(p string) bool { return testPathRe.MatchString(p) }
+// isTestPath reports whether a file path is test code or a fixture.
+func isTestPath(p string) bool { return !testPathFilter.Admits(store.Element{FilePath: p}) }
 
 // mentionsTests reports whether a query asks about tests, in which case test
 // files keep their natural rank.

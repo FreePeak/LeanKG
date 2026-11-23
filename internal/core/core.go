@@ -1793,8 +1793,9 @@ const (
 // 22% of the elements are test fixtures and 37% are archived docs, so 60% of
 // the vector population is a document a working engineer is not asking about.
 //
-//	code  production source only
-//	prod  code plus current (non-archived) documentation
+//	code  production source only: prod minus markdown documents
+//	prod  production code and current docs: not a test file (testPathFilter),
+//	      not under docs/archive/
 //	all   everything, the default, spelled out so a caller can undo a narrower
 //	      scope it inherited
 //
@@ -1840,30 +1841,25 @@ func scopePredicate(scope string) (store.ElementFilter, string, error) {
 	case "", ScopeAll:
 		return store.ElementFilter{}, ScopeAll, nil
 	case ScopeCode:
-		return fixtureFilter.Merge(archivedFilter).Merge(markdownFilter), ScopeCode, nil
+		return codeFilter, ScopeCode, nil
 	case ScopeProd:
-		return fixtureFilter, ScopeProd, nil
+		return prodFilter, ScopeProd, nil
 	}
 	return store.ElementFilter{}, "", fmt.Errorf("unknown scope %q (valid: all, code, prod)", scope)
 }
 
 // graphScope is the file rule a graph verb's args.scope applies to the files its
-// answer names (a caller's file, an impact node's file). prod keeps production
-// files (drops test files, reusing isTestPath); code drops markdown documents
-// (markdownFilter); all keeps everything. It returns the scope name the answer
-// echoes. An unknown value is the error scopePredicate gives.
+// answer names (a caller's file, an impact node's file). It is the same
+// ElementFilter scopePredicate returns for the search rungs, applied in Go, so
+// a graph answer and a search answer name the same population. It returns the
+// scope name the answer echoes. An unknown value is the error scopePredicate gives.
 func graphScope(scope string) (keep func(file string) bool, name string, err error) {
-	_, name, err = scopePredicate(scope)
+	var f store.ElementFilter
+	f, name, err = scopePredicate(scope)
 	if err != nil {
 		return nil, "", err
 	}
-	switch name {
-	case ScopeProd:
-		return func(file string) bool { return !isTestPath(file) }, name, nil
-	case ScopeCode:
-		return func(file string) bool { return markdownFilter.Admits(store.Element{FilePath: file}) }, name, nil
-	}
-	return func(string) bool { return true }, name, nil
+	return func(file string) bool { return f.Admits(store.Element{FilePath: file}) }, name, nil
 }
 
 // keepSiteFiles drops the sites of every seed whose file keep rejects.
@@ -1881,16 +1877,15 @@ func keepSiteFiles(bySeed map[string][]graph.Site, keep func(file string) bool) 
 	return out
 }
 
-// fixtureFilter excludes test fixtures; archivedFilter excludes archived docs;
-// markdownFilter excludes markdown documents (root CLAUDE.md and AGENTS.md
-// included, which a prefix rule would miss). The scope names below compose them.
+// archivedFilter excludes archived docs; markdownFilter excludes markdown
+// documents (root CLAUDE.md and AGENTS.md included, which a prefix rule would
+// miss). prodFilter and codeFilter are the populations the scope names select,
+// on every search rung and in every graph verb's file rule (graphScope).
 var (
-	fixtureFilter = store.ElementFilter{
-		ExcludePathContains: []string{"testdata", "/fixtures/"},
-		ExcludePathSuffixes: []string{"_test.go", "fixtures.js"},
-	}
 	archivedFilter = store.ElementFilter{ExcludePathPrefixes: []string{"docs/archive/"}}
 	markdownFilter = store.ElementFilter{ExcludePathSuffixes: []string{".md", ".mdx"}}
+	prodFilter     = testPathFilter.Merge(archivedFilter)
+	codeFilter     = prodFilter.Merge(markdownFilter)
 )
 
 // searchKeep is the default search population for every rung. Git history rows
