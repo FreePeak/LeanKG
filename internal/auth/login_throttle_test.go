@@ -19,23 +19,23 @@ func newTestThrottle() (*LoginThrottle, *fakeClock) {
 	return NewLoginThrottle(clock.Now), clock
 }
 
+// failN counts n attempts through Reserve, the path a real login takes.
 func failN(th *LoginThrottle, user string, n int) {
 	for i := 0; i < n; i++ {
-		th.Failure(user)
+		th.Reserve(user)
 	}
 }
 
 func TestLoginThrottleLocksAfterFiveFailures(t *testing.T) {
 	th, _ := newTestThrottle()
 	failN(th, "admin", 4)
-	if th.Blocked("admin") {
-		t.Fatal("4 failures must not lock the username")
+	if !th.Reserve("admin") {
+		t.Fatal("the 5th attempt must still be allowed")
 	}
-	th.Failure("admin")
-	if !th.Blocked("admin") {
-		t.Fatal("5th consecutive failure must lock the username")
+	if th.Reserve("admin") {
+		t.Fatal("the 5th consecutive failure must lock the username")
 	}
-	if th.Blocked("someone-else") {
+	if !th.Reserve("someone-else") {
 		t.Fatal("a lockout must be per username")
 	}
 }
@@ -45,11 +45,11 @@ func TestLoginThrottleLockoutLastsSixtySeconds(t *testing.T) {
 	failN(th, "admin", 5)
 
 	clock.Advance(59 * time.Second)
-	if !th.Blocked("admin") {
+	if th.Reserve("admin") {
 		t.Fatal("lockout must still hold at 59s")
 	}
 	clock.Advance(time.Second)
-	if th.Blocked("admin") {
+	if !th.Reserve("admin") {
 		t.Fatal("lockout must end at 60s")
 	}
 }
@@ -59,8 +59,10 @@ func TestLoginThrottleOneFailureAfterLockoutDoesNotRelock(t *testing.T) {
 	failN(th, "admin", 5)
 	clock.Advance(60 * time.Second)
 
-	th.Failure("admin")
-	if th.Blocked("admin") {
+	if !th.Reserve("admin") {
+		t.Fatal("the first attempt after the lockout expires must be allowed")
+	}
+	if !th.Reserve("admin") {
 		t.Fatal("after a lockout expires the streak restarts: one failure must not relock")
 	}
 }
@@ -70,7 +72,7 @@ func TestLoginThrottleSuccessResetsStreak(t *testing.T) {
 	failN(th, "admin", 4)
 	th.Success("admin")
 	failN(th, "admin", 4)
-	if th.Blocked("admin") {
+	if !th.Reserve("admin") {
 		t.Fatal("a success must reset the consecutive-failure count")
 	}
 }
@@ -80,7 +82,7 @@ func TestLoginThrottleStreakExpiresOutsideWindow(t *testing.T) {
 	failN(th, "admin", 4)
 	clock.Advance(loginFailWindow + time.Second)
 	failN(th, "admin", 4)
-	if th.Blocked("admin") {
+	if !th.Reserve("admin") {
 		t.Fatal("failures spread beyond the window must not add up to a lockout")
 	}
 }
@@ -88,10 +90,10 @@ func TestLoginThrottleStreakExpiresOutsideWindow(t *testing.T) {
 func TestLoginThrottleSweepsStaleEntries(t *testing.T) {
 	th, clock := newTestThrottle()
 	for i := 0; i < 100; i++ {
-		th.Failure(string(rune('a'+i%26)) + string(rune('a'+i/26)))
+		th.Reserve(string(rune('a'+i%26)) + string(rune('a'+i/26)))
 	}
 	clock.Advance(loginFailWindow + time.Second)
-	th.Failure("fresh")
+	th.Reserve("fresh")
 	if n := len(th.entries); n != 1 {
 		t.Fatalf("stale entries must be swept: %d left, want 1", n)
 	}
@@ -104,13 +106,12 @@ func TestLoginThrottleConcurrentUse(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			th.Failure("admin")
-			_ = th.Blocked("admin")
+			th.Reserve("admin")
 		}()
 	}
 	wg.Wait()
-	if !th.Blocked("admin") {
-		t.Fatal("50 concurrent failures must lock the username")
+	if th.Reserve("admin") {
+		t.Fatal("50 concurrent attempts must lock the username")
 	}
 }
 
