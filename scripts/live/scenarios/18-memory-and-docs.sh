@@ -168,16 +168,17 @@ steps
     "$(printf '%s\n' "$names" | grep -c '::' || true)"
 }
 
-# D. Core-file bound measures the redacted text. `token=x` is 7 bytes raw and
-# 16 bytes redacted, so 200 of them are 1600 bytes raw and 3400 bytes redacted:
-# under the 2200-byte bound as typed, over it as written.
+# D. Core-file bound measures the redacted text. `token=abc123 ` (value of six
+# characters, so the key=value rule matches) is 13 bytes raw and 17 bytes redacted
+# (`token=[REDACTED] `). 150 of them are 1950 bytes raw, under the 2200-byte bound,
+# and 2550 bytes redacted, over it: refused only because the bound reads what lands.
 s18_core_bound() {
   local mdir="$WORK/s18/core" core expanded plain
   write_fixture "$mdir"
   run_cmd core-index "$LEANKG_BIN" index "$mdir" --no-embed
   assert_eq "index for the core-bound store exits 0" 0 "$RC"
   start_server core "$mdir" --memory || return 0
-  expanded=$(printf 'token=x %.0s' $(seq 200))
+  expanded=$(printf 'token=abc123 %.0s' $(seq 150))
   mcp_tool core-expanded "$SERVER_URL" import \
     "$(jq -cn --arg t "$expanded" '{action: "memory", command: "add", file: "MEMORY.md", path: "MEMORY.md", text: $t}')"
   assert_contains "[fixed] add whose redacted text passes the 2200-byte bound is refused" \
