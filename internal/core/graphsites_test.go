@@ -532,3 +532,40 @@ func TestCallersCappedAtTheCallerLimit(t *testing.T) {
 		})
 	}
 }
+
+// TestBareNameMatchesExactCaseBeforeFoldedCase pins S8: Go identifiers are
+// case-sensitive, so a bare name that exactly matches a callable answers for
+// that callable alone. The folded match (parse for Parse) is used only when no
+// callable has the exact name.
+func TestBareNameMatchesExactCaseBeforeFoldedCase(t *testing.T) {
+	e, _ := newEngine(t)
+	ctx := context.Background()
+	if err := e.st.UpsertElements(ctx, []store.Element{
+		{QualifiedName: "pkg/a.go::Parse", ElementType: "function", Name: "Parse", FilePath: "pkg/a.go", LineStart: 1, Language: "go"},
+		{QualifiedName: "pkg/b.go::parse", ElementType: "function", Name: "parse", FilePath: "pkg/b.go", LineStart: 1, Language: "go"},
+		{QualifiedName: "x/c.go::UseLower", ElementType: "function", Name: "UseLower", FilePath: "x/c.go", LineStart: 1, Language: "go"},
+		{QualifiedName: "x/d.go::UseUpper", ElementType: "function", Name: "UseUpper", FilePath: "x/d.go", LineStart: 1, Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.UpsertRelationships(ctx, []store.Relationship{
+		{Source: "x/c.go::UseLower", Target: "pkg/b.go::parse", RelType: "calls", Confidence: 1, Metadata: map[string]any{"line": float64(3)}},
+		{Source: "x/d.go::UseUpper", Target: "pkg/a.go::Parse", RelType: "calls", Confidence: 1, Metadata: map[string]any{"line": float64(3)}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := callersOf(t, e, "Parse", nil)
+	if got, want := out["seeds"], []string{"pkg/a.go::Parse"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("seeds = %v, want %v (exact case wins)", got, want)
+	}
+	if got, want := out["callers"], []string{"x/d.go::UseUpper"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("callers = %v, want %v: the caller of parse must not join", got, want)
+	}
+
+	// A name with no exact-case callable still reaches the folded one.
+	out = callersOf(t, e, "PARSE", nil)
+	if got, want := out["seeds"], []string{"pkg/a.go::Parse", "pkg/b.go::parse"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("PARSE seeds = %v, want both folded callables %v", got, want)
+	}
+}

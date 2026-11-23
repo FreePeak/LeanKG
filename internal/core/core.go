@@ -1170,14 +1170,26 @@ func (e *Engine) resolveGraphSeeds(ctx context.Context, seed string) (seeds []st
 		return nil, false, false, err
 	}
 	truncated = len(els) >= graph.StoreFindExactLimit
-	var callables []string
+	// Go identifiers are case-sensitive: callables whose name is exactly the seed
+	// answer alone; the case-folded ones (parse for Parse) are the fallback.
+	var exact, folded []string
 	for _, el := range els {
 		if el.QualifiedName == seed {
 			return []string{el.QualifiedName}, false, truncated, nil
 		}
-		if strings.EqualFold(el.Name, seed) && (el.ElementType == "function" || el.ElementType == "method") {
-			callables = append(callables, el.QualifiedName)
+		if el.ElementType != "function" && el.ElementType != "method" {
+			continue
 		}
+		switch {
+		case el.Name == seed:
+			exact = append(exact, el.QualifiedName)
+		case strings.EqualFold(el.Name, seed):
+			folded = append(folded, el.QualifiedName)
+		}
+	}
+	callables := exact
+	if len(callables) == 0 {
+		callables = folded
 	}
 	switch {
 	case len(callables) > 0:
