@@ -11,7 +11,6 @@
 package auth
 
 import (
-	"encoding/json"
 	"errors"
 	"math"
 	"net/http"
@@ -209,8 +208,8 @@ func Routes(st Store) http.Handler {
 	mux.Handle("POST /api/v1/auth/org", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Rust took a bare JSON string body here (Json(name): Json<String>).
 		var name string
-		if err := json.NewDecoder(r.Body).Decode(&name); err != nil {
-			writeFail(w, "invalid JSON body: "+err.Error())
+		if err := httpx.DecodeJSON(w, r, &name); err != nil {
+			writeDecodeFail(w, err)
 			return
 		}
 		ctx, ok := requireAccount(st, w, r)
@@ -365,6 +364,7 @@ type apiResponse struct {
 	Success bool    `json:"success"`
 	Data    any     `json:"data"`
 	Error   *string `json:"error"`
+	Code    string  `json:"code,omitempty"`
 }
 
 func writeOK(w http.ResponseWriter, data any) {
@@ -376,9 +376,16 @@ func writeFail(w http.ResponseWriter, msg string) {
 }
 
 func decodeBody(w http.ResponseWriter, r *http.Request, into any) bool {
-	if err := json.NewDecoder(r.Body).Decode(into); err != nil {
-		writeFail(w, "invalid JSON body: "+err.Error())
+	if err := httpx.DecodeJSON(w, r, into); err != nil {
+		writeDecodeFail(w, err)
 		return false
 	}
 	return true
+}
+
+// writeDecodeFail answers a body that did not decode: 413 when it is over the
+// size cap, 400 otherwise, in the envelope with the catalog code (#601 item 5).
+func writeDecodeFail(w http.ResponseWriter, err error) {
+	msg := err.Error()
+	httpx.WriteJSON(w, httpx.StatusFor(err), apiResponse{Success: false, Error: &msg, Code: httpx.CodeOf(err)})
 }

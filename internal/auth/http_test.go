@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -565,6 +566,39 @@ func TestRegisterDuplicateEmailIsGeneric(t *testing.T) {
 	code, other := doJSON(t, h, "POST", "/api/v1/auth/register", "", body("short"))
 	if code != http.StatusBadRequest || other["success"] != false {
 		t.Fatalf("short-password register = %d %v; want 400 failure", code, other)
+	}
+}
+
+// TestAuthBodyOverLimitIs413 pins #601 item 5: an unauthenticated auth body over
+// the 1 MiB cap answers 413 in the envelope with the catalog code, on every
+// route that decodes a body.
+func TestAuthBodyOverLimitIs413(t *testing.T) {
+	clearTokenEnv(t)
+	h := newAuthServer(t, openAuthStore(t))
+	const limit = 1 << 20
+	cases := []struct{ path, prefix, suffix string }{
+		{"/api/v1/auth/register", `{"email":"big@example.com","password":"`, `"}`},
+		{"/api/v1/auth/org", `"`, `"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			raw := tc.prefix + strings.Repeat("p", limit+1-len(tc.prefix)-len(tc.suffix)) + tc.suffix
+			req := httptest.NewRequest("POST", tc.path, strings.NewReader(raw))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			var resp map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("response is not JSON (%d): %s", rec.Code, rec.Body.String())
+			}
+			if rec.Code != http.StatusRequestEntityTooLarge || resp["success"] != false {
+				t.Fatalf("= %d %v; want 413 failure envelope", rec.Code, resp)
+			}
+			if resp["code"] != errs.RequestTooLarge.Code {
+				t.Fatalf("code = %v, want %s", resp["code"], errs.RequestTooLarge.Code)
+			}
+		})
 	}
 }
 
