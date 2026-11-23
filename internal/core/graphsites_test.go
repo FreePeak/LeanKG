@@ -59,12 +59,11 @@ func TestCallersUnionsSameNamedMethods(t *testing.T) {
 	if got := out["callers"]; !reflect.DeepEqual(got, wantCallers) {
 		t.Errorf("callers = %v, want both same-named methods' callers %v", got, wantCallers)
 	}
-	wantSites := []string{
-		"internal/index/index.go:40 " + indexFileCall + " 1",
-		"internal/index/pgindex.go:55 " + indexPGCall + " 1",
-	}
-	if got := out["sites"]; !reflect.DeepEqual(got, wantSites) {
-		t.Errorf("sites = %v, want %v", got, wantSites)
+	// The edges carry no use line, so neither caller has a line to list: the
+	// callers above still count them, and sites stays empty. The defect was
+	// listing each caller's own LineStart (index.go:40) as if it were the call.
+	if got, want := out["sites"], []string{}; !reflect.DeepEqual(got, want) {
+		t.Errorf("sites = %v, want %v (no use line on either edge)", got, want)
 	}
 }
 
@@ -103,9 +102,9 @@ func TestCallersSiteLineFromEdgeMetadata(t *testing.T) {
 	}
 }
 
-// TestCalleesSitesAtTheSeedFile pins the mirror for callees: the call happens
-// inside the seed, so a site sits in the seed's file, at the seed's line_start
-// unless edge metadata says otherwise.
+// TestCalleesSitesAtTheSeedFile pins the mirror for callees: the callee is
+// listed, and a call edge with no use line yields no site line. The seed's
+// line_start is a definition line, not the call line, so it is never used.
 func TestCalleesSitesAtTheSeedFile(t *testing.T) {
 	e, _ := newEngine(t)
 	seedSameNamedMethods(t, e, nil)
@@ -117,9 +116,10 @@ func TestCalleesSitesAtTheSeedFile(t *testing.T) {
 	if got, want := out["callees"], []string{storeReplace}; !reflect.DeepEqual(got, want) {
 		t.Errorf("callees = %v, want %v", got, want)
 	}
-	want := []string{"internal/index/index.go:40 " + storeReplace + " 1"}
-	if got := out["sites"]; !reflect.DeepEqual(got, want) {
-		t.Errorf("sites = %v, want %v", got, want)
+	// The call edge carries no use line, so there is no site to list. The
+	// seed's line_start (index.go:40 in the seeded graph) is not the call line.
+	if got, want := out["sites"], []string{}; !reflect.DeepEqual(got, want) {
+		t.Errorf("sites = %v, want %v (no use line on the edge)", got, want)
 	}
 }
 
@@ -203,8 +203,9 @@ func TestCallersExplicitRelTypeWinsOverDefault(t *testing.T) {
 	}
 }
 
-// fanIn wires n distinct callers, each in its own production file, to target.
-// It returns the caller qualified names in sorted order.
+// fanIn wires n distinct callers, each in its own production file, to target,
+// each call edge at its own use line. It returns the caller qualified names in
+// sorted order.
 func fanIn(t *testing.T, e *Engine, target, name, file string, callers int, prefix string) []string {
 	t.Helper()
 	ctx := context.Background()
@@ -215,7 +216,9 @@ func fanIn(t *testing.T, e *Engine, target, name, file string, callers int, pref
 		qn := fmt.Sprintf("%s%d.go::%s%d", prefix, i, name, i)
 		qns = append(qns, qn)
 		els = append(els, store.Element{QualifiedName: qn, ElementType: "function", Name: fmt.Sprintf("%s%d", name, i), FilePath: fmt.Sprintf("%s%d.go", prefix, i), LineStart: 10 + i, Language: "go"})
-		rels = append(rels, store.Relationship{Source: qn, Target: target, RelType: "calls", Confidence: 1})
+		// Each edge carries its use line, as the index writes it; a line-less
+		// edge lists no site.
+		rels = append(rels, store.Relationship{Source: qn, Target: target, RelType: "calls", Confidence: 1, Metadata: map[string]any{"line": float64(10 + i)}})
 	}
 	if err := e.st.UpsertElements(ctx, append(els, store.Element{QualifiedName: target, ElementType: "function", Name: name, FilePath: file, LineStart: 1, Language: "go"})); err != nil {
 		t.Fatal(err)
@@ -339,7 +342,7 @@ func TestCallersProductionSitesFirst(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		qn := fmt.Sprintf("aa/x_test.go::TestTarget%d", i)
 		els = append(els, store.Element{QualifiedName: qn, ElementType: "function", Name: fmt.Sprintf("TestTarget%d", i), FilePath: "aa/x_test.go", LineStart: 5 + i, Language: "go"})
-		rels = append(rels, store.Relationship{Source: qn, Target: "lib/t.go::Target", RelType: "calls", Confidence: 1})
+		rels = append(rels, store.Relationship{Source: qn, Target: "lib/t.go::Target", RelType: "calls", Confidence: 1, Metadata: map[string]any{"line": float64(6 + i)}})
 	}
 	if err := e.st.UpsertElements(ctx, els); err != nil {
 		t.Fatal(err)

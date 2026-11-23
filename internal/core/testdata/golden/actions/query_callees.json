@@ -19,8 +19,6 @@
     "src/alpha.go::Alpha"
   ],
   "site_limit": 50,
-  "sites": [
-    "src/alpha.go:1 src/beta.go::Beta 0.5"
-  ],
-  "total_sites": 1
+  "sites": [],
+  "total_sites": 0
 }

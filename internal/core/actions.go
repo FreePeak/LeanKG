@@ -527,10 +527,13 @@ func (e *Engine) graphCallSites(ctx context.Context, req QueryRequest, a graphAr
 	}
 	walk := seeds
 	if incoming {
-		// TODO(H4): surface truncation (the flag ExpandSpecSeeds returns).
-		walk, _, err = graph.ExpandSpecSeeds(ctx, e.st, seeds)
+		var expandTruncated bool
+		walk, expandTruncated, err = graph.ExpandSpecSeeds(ctx, e.st, seeds)
 		if err != nil {
 			return nil, err
+		}
+		if expandTruncated {
+			resp["seeds_truncated"] = true
 		}
 	}
 	bySeed, err := graph.SitesBySeed(ctx, e.st, walk, incoming, a.RelType)
@@ -542,11 +545,14 @@ func (e *Engine) graphCallSites(ctx context.Context, req QueryRequest, a graphAr
 	sites := graph.UnionSites(walk, bySeed)
 	callers := graph.SiteEnds(sites)
 	counts := seedCounts(walk, bySeed)
+	// A site without a use line is still a caller (callers above), but it has
+	// no line to list, so the site list and its total count only lined sites.
+	lined := graph.LinedSites(sites)
 	limit := graphSiteLimit
 	if req.Limit > 0 {
 		limit = req.Limit
 	}
-	shown := productionFirst(sites)
+	shown := productionFirst(lined)
 	if len(shown) > limit {
 		shown = shown[:limit]
 	}
@@ -557,15 +563,15 @@ func (e *Engine) graphCallSites(ctx context.Context, req QueryRequest, a graphAr
 	resp["filtered_out"] = len(all) - len(sites)
 	resp[key] = callers
 	resp["sites"] = siteLines(shown)
-	resp["total_sites"] = len(sites)
+	resp["total_sites"] = len(lined)
 	resp["site_limit"] = limit
 	resp["rel_types"] = graph.SiteRelTypes(sites)
-	if len(shown) < len(sites) {
+	if len(shown) < len(lined) {
 		resp["truncated"] = true
 	}
 	if len(sites) == 0 {
 		resp["guidance"] = graphEmptyGuidance(key, strings.Join(seeds, ", "))
-	} else if g := graphSitesGuidance(seeds, counts, len(shown), len(sites)); g != "" {
+	} else if g := graphSitesGuidance(seeds, counts, len(shown), len(lined)); g != "" {
 		resp["guidance"] = g
 	}
 	return graphDone(resp, req)

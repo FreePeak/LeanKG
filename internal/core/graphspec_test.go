@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -243,5 +244,39 @@ func TestImpactScopeProdDropsTestHits(t *testing.T) {
 	}
 	if dropped, _ := out["filtered_out"].(int); dropped == 0 {
 		t.Errorf("filtered_out = 0, want the test hits counted")
+	}
+}
+
+// TestCallersFlagsSpecExpansionTruncation pins the surfaced truncation: an
+// interface spec whose implementers exceed the expansion cap (64 added seeds)
+// answers its callers from the capped set and says so with seeds_truncated.
+func TestCallersFlagsSpecExpansionTruncation(t *testing.T) {
+	e, _ := newEngine(t)
+	const spec = "internal/store/roles.go::Closer.Close"
+	const caller = "internal/use/use.go::Shutdown"
+	els := []store.Element{
+		{QualifiedName: spec, ElementType: "method", Name: "Close", FilePath: "internal/store/roles.go", LineStart: 3, Language: "go", Metadata: map[string]any{"interface_spec": true}},
+		{QualifiedName: caller, ElementType: "function", Name: "Shutdown", FilePath: "internal/use/use.go", LineStart: 1, Language: "go"},
+	}
+	rels := []store.Relationship{{Source: caller, Target: spec, RelType: "calls", Confidence: 0.3, Metadata: map[string]any{"resolution": "interface-spec", "line": float64(7)}}}
+	for i := 0; i < 70; i++ {
+		impl := fmt.Sprintf("internal/impl/impl%02d.go::T%02d.Close", i, i)
+		els = append(els, store.Element{QualifiedName: impl, ElementType: "method", Name: "Close", FilePath: fmt.Sprintf("internal/impl/impl%02d.go", i), LineStart: 1, Language: "go"})
+		rels = append(rels, store.Relationship{Source: caller, Target: impl, RelType: "calls", Confidence: 0.3, Metadata: map[string]any{"resolution": "interface-dispatch", "line": float64(7)}})
+	}
+	ctx := context.Background()
+	if err := e.st.UpsertElements(ctx, els); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.UpsertRelationships(ctx, rels); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := e.Query(ctx, QueryRequest{Action: "callers", Query: spec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out["seeds_truncated"]; got != true {
+		t.Errorf("seeds_truncated = %v, want true (70 implementers, expansion cap 64)", got)
 	}
 }
