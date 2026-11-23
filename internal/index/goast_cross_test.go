@@ -707,3 +707,30 @@ func TestGoDuplicateEdgeKeepsItsHighestConfidence(t *testing.T) {
 		t.Fatalf("Use -> Plain.Do = %+v (found %v), want the 0.3 interface-dispatch edge", p, ok)
 	}
 }
+
+// TestGoCrossTablesSkipTestdata: testdata is not a package of the module
+// (goPackageDirs drops it), so a method declared in a fixture under testdata is
+// no dispatch target for a caller in the module.
+func TestGoCrossTablesSkipTestdata(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"lit/lit.go":            "package lit\n\ntype Speaker interface {\n\tSpeak()\n}\n\nfunc Use(s Speaker) {\n\ts.Speak()\n}\n",
+		"testdata/fake/fake.go": "package fake\n\ntype Mock struct{}\n\nfunc (Mock) Speak() {}\n",
+	})
+	noEdgeTo(t, st, "lit/lit.go::Use", "testdata/fake/fake.go::Mock.Speak")
+}
+
+// TestGoFixtureRootUnderTestdataStillResolves: a fixture project indexed as its
+// own root keeps its cross-package edges, because the testdata skip looks only
+// at path components below the indexed root.
+func TestGoFixtureRootUnderTestdataStillResolves(t *testing.T) {
+	st, dir := newCrossTree(t)
+	root := filepath.Join(dir, "testdata", "proj")
+	putFiles(t, root, map[string]string{
+		"lit/lit.go":   "package lit\n\ntype Speaker interface {\n\tSpeak()\n}\n\nfunc Use(s Speaker) {\n\ts.Speak()\n}\n",
+		"fake/fake.go": "package fake\n\ntype Mock struct{}\n\nfunc (Mock) Speak() {}\n",
+	})
+	indexTree(t, st, root)
+	if _, ok := edgeTo(t, st, "lit/lit.go::Use", "fake/fake.go::Mock.Speak", "calls"); !ok {
+		t.Fatalf("fixture root under testdata lost its dispatch edge; outgoing %v", targetsFrom(t, st, "lit/lit.go::Use", "calls"))
+	}
+}

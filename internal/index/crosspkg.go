@@ -142,7 +142,14 @@ func newCrossIndex(ctx context.Context, st Store, dirCands map[string][]candidat
 	if len(changed) == 0 {
 		return cx, nil
 	}
-	dirs := slices.Sorted(maps.Keys(dirCands))
+	// Testdata is no package of the module (goPackageDirs), so its directories
+	// are left out of every table here.
+	var dirs []string
+	for _, d := range slices.Sorted(maps.Keys(dirCands)) {
+		if !inTestdata(d) {
+			dirs = append(dirs, d)
+		}
+	}
 	stored := map[string]string{}
 	for _, d := range dirs {
 		if d != "." {
@@ -207,7 +214,7 @@ func (cx *crossIndex) prefetch(ctx context.Context, st Store, els []indexedElem)
 					return err
 				}
 				for _, r := range rows {
-					if r.Name != s.Name || r.Language != "go" || cx.changed[dirOf(r.FilePath)] {
+					if r.Name != s.Name || r.Language != "go" || cx.changed[dirOf(r.FilePath)] || inTestdata(dirOf(r.FilePath)) {
 						continue
 					}
 					hits.refs = append(hits.refs, symRef{rel: r.FilePath, qn: r.QualifiedName, etype: r.ElementType})

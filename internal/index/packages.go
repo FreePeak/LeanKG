@@ -49,8 +49,13 @@ func goImports(fes []fileElements) pkgImports {
 	return out
 }
 
-// goPackageDirs are the directories that hold a Go candidate, except testdata
-// (Go tooling does not build it as packages either).
+// inTestdata reports whether a module-relative directory is, or sits below, a
+// testdata directory. Go tooling does not build testdata as packages either.
+func inTestdata(dir string) bool {
+	return slices.Contains(strings.Split(dir, "/"), "testdata")
+}
+
+// goPackageDirs are the directories that hold a Go candidate, except testdata.
 func goPackageDirs(cands []candidate) map[string]bool {
 	dirs := map[string]bool{}
 	for _, c := range cands {
@@ -58,7 +63,7 @@ func goPackageDirs(cands []candidate) map[string]bool {
 			continue
 		}
 		d := dirOf(c.rel)
-		if !slices.Contains(strings.Split(d, "/"), "testdata") {
+		if !inTestdata(d) {
 			dirs[d] = true
 		}
 	}
