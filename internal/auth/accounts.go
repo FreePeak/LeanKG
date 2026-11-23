@@ -178,6 +178,9 @@ func Register(ctx context.Context, st Store, email, password, name string) (stor
 	if _, found, err := st.AccountByEmail(ctx, email); err != nil {
 		return store.Account{}, err
 	} else if found {
+		// Spend the PBKDF2 work a new account costs, so a duplicate does not
+		// answer in a fraction of the time and reveal the email (#601 B1).
+		_ = VerifyPassword(password, dummyVerifier)
 		return store.Account{}, ErrAccountExists
 	}
 	hash, err := HashPassword(password)
