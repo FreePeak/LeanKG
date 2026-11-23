@@ -442,3 +442,28 @@ func TestCallersGuidanceNamesOnlySeedsWithCallers(t *testing.T) {
 		}
 	}
 }
+
+// TestCallersUnknownSeedKeepsHitsAndReachable pins the response contract: an
+// unknown seed answers callers and callees with the keys the base answer
+// carried (hits: [], reachable: false) next to resolved: false, so a client
+// that reads them still gets an empty, typed answer.
+func TestCallersUnknownSeedKeepsHitsAndReachable(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, nil)
+
+	for _, verb := range []string{"callers", "callees"} {
+		out, err := e.Query(context.Background(), QueryRequest{Action: verb, Query: "internal/store/store.go::NoSuchFunc"})
+		if err != nil {
+			t.Fatalf("%s on an unknown seed must answer: %v", verb, err)
+		}
+		if got, ok := out["hits"].([]any); !ok || len(got) != 0 {
+			t.Errorf("%s: hits = %#v, want an empty list", verb, out["hits"])
+		}
+		if got := out["reachable"]; got != false {
+			t.Errorf("%s: reachable = %v, want false", verb, got)
+		}
+		if got := out["resolved"]; got != false {
+			t.Errorf("%s: resolved = %v, want false", verb, got)
+		}
+	}
+}

@@ -587,6 +587,8 @@ func (e *Engine) graphUnknownSeed(ctx context.Context, req QueryRequest, seeds [
 	}
 	resp["seeds"] = seeds
 	resp["resolved"] = false
+	resp["hits"] = []any{}
+	resp["reachable"] = false
 	resp[key] = []string{}
 	resp["sites"] = []string{}
 	resp["total_sites"] = 0
