@@ -102,9 +102,10 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 	// the parser's error rides on the result (fallbackErr) so the run can count it.
 	var fallbackErr error
 	if lang == "go" {
-		defs, seeds, imports, decls, pkg, err := goDefinitions(src)
+		defs, seeds, imports, bare, decls, pkg, err := goDefinitions(src)
 		if err == nil {
 			fe, err := finishDefinitions(ctx, rel, src, lines, lang, defs, imports, seeds)
+			fe.bareImports = bare
 			fe.decls = decls
 			fe.setPackage(pkg)
 			return fe, err
@@ -204,6 +205,8 @@ type fileElements struct {
 	// imports maps each Go import name (the alias, or the default package name)
 	// to its import path; nil for other languages.
 	imports map[string]string
+	// bareImports holds the Go blank and dot imports, which imports has no name for.
+	bareImports bareImports
 	// qualified holds the Go selector calls and references `alias.Name`, which
 	// qualifiedEdges resolves across packages.
 	qualified []qualifiedSeed

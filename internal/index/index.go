@@ -301,8 +301,10 @@ func checkRoot(ctx context.Context, st store.KV, dir string, hasFiles bool) erro
 // interface-typed call sites) adds elements and metadata no v15 store has. v17
 // (Go imports resolve inside module boundaries, from the go.mod files that cover
 // the run) changes the imports and cross-package edges that v16 resolved by
-// suffix. A store recorded under another version re-extracts every file once.
-const extractorVersion = "17"
+// suffix. v18 (blank and dot imports make imports edges of the package graph)
+// adds the edges of those imports. A store recorded under another version
+// re-extracts every file once.
+const extractorVersion = "18"
 
 const extractorKVKey = "extractor_version"
 

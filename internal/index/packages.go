@@ -34,12 +34,13 @@ const (
 // every importing file is a _test.go file.
 type pkgImports map[string]bool
 
-// goImports is the import union of a directory's Go files.
+// goImports is the import union of a directory's Go files: named, blank and dot
+// imports alike, since each names a package of the run.
 func goImports(fes []fileElements) pkgImports {
 	out := pkgImports{}
 	for _, fe := range fes {
 		testOnly := isTestFile(fe.rel)
-		for _, p := range fe.imports {
+		for _, p := range slices.Concat(slices.Collect(maps.Values(fe.imports)), fe.bareImports.blank, fe.bareImports.dot) {
 			if prev, seen := out[p]; seen {
 				out[p] = prev && testOnly
 			} else {

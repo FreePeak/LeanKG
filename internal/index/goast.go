@@ -96,9 +96,10 @@ func (d *goDecls) merge(o goDecls) {
 // goDefinitions parses one Go file with the standard-library parser and
 // returns its file-scope definitions, the name seeds of each definition (seeds[i]
 // belongs to defs[i]), its import names (name -> import path, an unaliased
-// import under its default name) and the type declarations receiver typing
-// reads. It is CGO-free and used by every build. A non-nil err is the parser's
-// rejection of the file; the caller then falls back to the regex tier.
+// import under its default name), its blank and dot imports (bare) and the type
+// declarations receiver typing reads. It is CGO-free and used by every build. A
+// non-nil err is the parser's rejection of the file; the caller then falls back
+// to the regex tier.
 //
 // Ranges come from AST positions: a declaration starts on its keyword or name
 // line and ends on its last token, so a comment or a string that merely looks
@@ -107,13 +108,14 @@ func (d *goDecls) merge(o goDecls) {
 // each. An interface's declared method specs are method elements owned by it
 // (Spec), and an embedded interface is not an element; struct members are not
 // separate elements.
-func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[string]string, decls goDecls, pkg string, err error) {
+func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[string]string, bare bareImports, decls goDecls, pkg string, err error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "", src, parser.SkipObjectResolution)
 	if err != nil {
-		return nil, nil, nil, goDecls{}, "", err
+		return nil, nil, nil, bareImports{}, goDecls{}, "", err
 	}
 	imports = importPaths(f)
+	bare = collectBareImports(f)
 	w := &seedWalker{fset: fset, imports: imports, lits: map[string]goIface{}}
 	decls = newGoDecls()
 	line := func(p token.Pos) int { return fset.Position(p).Line }
@@ -174,7 +176,7 @@ func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[s
 		}
 	}
 	maps.Copy(decls.ifaces, w.lits)
-	return defs, seeds, imports, decls, f.Name.Name, nil
+	return defs, seeds, imports, bare, decls, f.Name.Name, nil
 }
 
 // ifaceLiteralPrefix starts the synthetic name of an inline interface literal.
@@ -289,6 +291,31 @@ func importPaths(f *ast.File) map[string]string {
 		}
 	}
 	return paths
+}
+
+// bareImports are the blank and dot imports of a file. They have no name that
+// importPaths can key by, so they are kept apart.
+type bareImports struct {
+	blank []string // import _ "p": the package's init runs for its side effects
+	dot   []string // import . "p": its exported names are in scope unqualified
+}
+
+// collectBareImports returns the blank and dot imports of f, by import path.
+func collectBareImports(f *ast.File) bareImports {
+	var out bareImports
+	for _, s := range f.Imports {
+		path, err := strconv.Unquote(s.Path.Value)
+		if err != nil || s.Name == nil {
+			continue
+		}
+		switch s.Name.Name {
+		case "_":
+			out.blank = append(out.blank, path)
+		case ".":
+			out.dot = append(out.dot, path)
+		}
+	}
+	return out
 }
 
 // defaultPackageName guesses the package name of an import path.
