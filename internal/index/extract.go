@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -192,7 +193,7 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 			// A brace-bounded element ends at its closing brace. Lines between
 			// that brace and the next declaration belong to the next one (its doc
 			// comment), so they are not part of this element.
-			if c := closingBraceLine(lines, ms[i].line, ends[i]); c > 0 {
+			if c := closingBraceLine(lines, lang, ms[i].line, ends[i]); c > 0 {
 				ends[i] = c
 			}
 			ends[i] = trimTrailingComments(lines, ms[i].line, ends[i])
@@ -675,42 +676,117 @@ func qualify(fe fileElements) {
 	}
 }
 
-// lexRe matches one string literal or one comment, left to right. A comment
-// starts only outside a string, so a "//" inside a string is not one. Quoted
-// literals never span a newline, so an unmatched quote in prose cannot swallow
-// the next line.
-var lexRe = regexp.MustCompile("(?m)\"(?:\\\\.|[^\"\\\\\n])*\"|'(?:\\\\.|[^'\\\\\n])*'|`[^`]*`|//.*$|#(?:[ \t].*)?$")
+// lexState is what a line leaves open for the next one: inside a block comment,
+// or inside a backtick string (a Go raw string, a JS/TS template literal). Either
+// can run across lines.
+type lexState struct{ block, raw bool }
 
-// stripComments returns code without its line comments; string literals stay.
-func stripComments(code string) string {
-	return lexRe.ReplaceAllStringFunc(code, func(m string) string {
-		if m[0] == '/' || m[0] == '#' {
-			return ""
+// backtickLangs are the languages whose backtick strings may span lines.
+var backtickLangs = map[string]bool{"go": true, "js": true, "jsx": true, "ts": true, "tsx": true}
+
+// scrub returns line without its comments, using the language's own comment
+// syntax from commentStyles: "//" is a comment in Go and floor division in
+// Python, and "#" is a comment in Python with or without a space after it.
+// Quoted strings are kept, or dropped when blank is set, so a brace inside one
+// is not counted. st advances across the line, carrying a block comment or a
+// backtick string left open here into the next line.
+func (st *lexState) scrub(line, lang string, blank bool) string {
+	style := commentStyles[lang]
+	var b strings.Builder
+	emit := func(s string) {
+		if !blank {
+			b.WriteString(s)
 		}
-		return m
-	})
+	}
+	for i := 0; i < len(line); {
+		rest := line[i:]
+		switch {
+		case st.block:
+			end := strings.Index(rest, "*/")
+			if end < 0 {
+				return b.String()
+			}
+			st.block = false
+			i += end + 2
+		case st.raw:
+			end := strings.IndexByte(rest, '`')
+			if end < 0 {
+				emit(rest)
+				return b.String()
+			}
+			st.raw = false
+			emit(rest[:end+1])
+			i += end + 1
+		case style.block && strings.HasPrefix(rest, "/*"):
+			st.block = true
+			i += 2
+		case slices.ContainsFunc(style.line, func(p string) bool { return strings.HasPrefix(rest, p) }):
+			return b.String()
+		case rest[0] == '`' && backtickLangs[lang]:
+			st.raw = true
+			emit("`")
+			i++
+		case rest[0] == '"' || rest[0] == '\'':
+			n := quotedLen(rest)
+			if n == 0 {
+				n = 1 // an unmatched quote is plain text
+			}
+			emit(rest[:n])
+			i += n
+		default:
+			emit(rest[:1])
+			i++
+		}
+	}
+	return b.String()
 }
 
-// blankLiterals returns code without its comments and string literals, so a
-// brace inside either one is not counted.
-func blankLiterals(code string) string {
-	return lexRe.ReplaceAllString(code, "")
+// quotedLen returns the length of the quoted literal that opens s, or 0 when it
+// does not close on the same line.
+func quotedLen(s string) int {
+	for j := 1; j < len(s); j++ {
+		switch s[j] {
+		case '\\':
+			j++
+		case s[0]:
+			return j + 1
+		}
+	}
+	return 0
+}
+
+// stripComments returns code without its comments; string literals stay. code is
+// a whole element's content, so a block comment can span its lines.
+func stripComments(code, lang string) string {
+	var st lexState
+	lines := strings.Split(code, "\n")
+	for i, line := range lines {
+		lines[i] = st.scrub(line, lang, false)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // closingBraceLine returns the line (1-based) on which the block opened at or
 // below start closes, looking no further than limit. It returns 0 when no block
 // closes inside that window: a brace-less declaration, or a block that runs past
 // limit (a class whose methods follow it), so the caller keeps its own bound.
-// Block comments spanning lines are not stripped; that is a documented ceiling.
-func closingBraceLine(lines []string, start, limit int) int {
+// Comments and string literals hold no braces, including a block comment or a
+// template literal that spans lines.
+func closingBraceLine(lines []string, lang string, start, limit int) int {
+	var st lexState
 	depth, opened := 0, false
 	for n := start; n <= limit && n <= len(lines); n++ {
-		text := blankLiterals(lines[n-1])
-		if strings.Contains(text, "{") {
+		text := st.scrub(lines[n-1], lang, true)
+		opens := strings.Count(text, "{")
+		depth += opens - strings.Count(text, "}")
+		if depth > 0 {
 			opened = true
 		}
-		depth += strings.Count(text, "{") - strings.Count(text, "}")
-		if opened && depth <= 0 {
+		// A line that opens and closes the body (`func f() {}`, or a signature
+		// ending `) {}`) ends the element there. A net-zero line that does not
+		// end in `}` is still signature (`seen map[string]struct{},`).
+		oneLine := opens > 0 && strings.HasSuffix(strings.TrimSpace(text), "}")
+		if depth <= 0 && (opened || oneLine) {
 			return n
 		}
 	}

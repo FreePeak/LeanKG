@@ -92,8 +92,9 @@ func relationships(els []indexedElem, nameTargets map[string][]string) []store.R
 		if e.docLen > 0 && e.docLen <= len(code) {
 			code = code[e.docLen:]
 		}
-		// A line comment in the body is prose as well: a name in it is no call.
-		code = stripComments(code)
+		// A comment in the body, line or block, is prose as well: a name in it is
+		// no call.
+		code = stripComments(code, e.lang)
 		// A name used only in the declaration's signature — a parameter,
 		// return or receiver type — is a reference, not a call: `Engine.Query`
 		// does not call `Engine`. Names in the body (Python `Greeter()`, Go
