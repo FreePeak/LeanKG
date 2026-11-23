@@ -486,7 +486,7 @@ func (w *seedWalker) callRef(e ast.Expr, index int) recvRef {
 			}
 		}
 	case *ast.CallExpr:
-		switch fn := x.Fun.(type) {
+		switch fn := instantiated(x.Fun).(type) {
 		case *ast.Ident:
 			if _, declared := w.env[fn.Name]; !declared {
 				return recvRef{Ctor: fn.Name, Index: index}
@@ -498,6 +498,18 @@ func (w *seedWalker) callRef(e ast.Expr, index int) recvRef {
 		}
 	}
 	return recvRef{}
+}
+
+// instantiated unwraps an explicit instantiation (Map[int], Pair[int, string])
+// to the generic function it names; any other expression is returned as is.
+func instantiated(e ast.Expr) ast.Expr {
+	switch x := e.(type) {
+	case *ast.IndexExpr:
+		return x.X
+	case *ast.IndexListExpr:
+		return x.X
+	}
+	return e
 }
 
 // resultTypes returns the type of each result of a function, in order. A result
@@ -621,6 +633,12 @@ func (w *seedWalker) visit(n ast.Node) bool {
 			w.value(a)
 		}
 		return false
+	case *ast.ReturnStmt:
+		// A returned result is a value: `return s.Close` hands the method out.
+		for _, r := range x.Results {
+			w.value(r)
+		}
+		return false
 	case *ast.SelectorExpr:
 		w.selector(x, false, false)
 		return false
@@ -640,6 +658,14 @@ func (w *seedWalker) callee(e ast.Expr) {
 		w.ident(f, true)
 	case *ast.SelectorExpr:
 		w.selector(f, true, false)
+	case *ast.IndexExpr: // Map[int](2): an explicit instantiation calls Map
+		w.callee(f.X)
+		w.walk(f.Index)
+	case *ast.IndexListExpr:
+		w.callee(f.X)
+		for _, ix := range f.Indices {
+			w.walk(ix)
+		}
 	default:
 		w.walk(e)
 	}

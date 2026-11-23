@@ -161,3 +161,49 @@ func TestNonGoCallsUnchanged(t *testing.T) {
 		t.Fatalf("python calls edge count = %d (%v), want 1", len(got), got)
 	}
 }
+
+// TestGoReturnedMethodValueIsReference: `return s.Close` hands the method out as
+// a value, so it is a references edge at the return line, like a method value
+// passed as an argument.
+func TestGoReturnedMethodValueIsReference(t *testing.T) {
+	st := indexedGraph(t, map[string]string{"a.go": "package a\n\ntype Server struct{}\n\n" +
+		"func (s *Server) Close() {}\n\n" +
+		"func Closer(s *Server) func() {\n\treturn s.Close\n}\n"})
+	r, ok := edgeTo(t, st, "a.go::Closer", "a.go::Server.Close", "references")
+	if !ok {
+		t.Fatalf("returned method value s.Close has no references edge; edge types %v", edgeTypes(t, st, "a.go::Closer", "a.go::Server.Close"))
+	}
+	if line, _ := lineMeta(r); line != 8 {
+		t.Fatalf("reference line = %d, want 8", line)
+	}
+}
+
+// TestGoExplicitInstantiationIsCall: Map[int](2) calls the generic Map, so the
+// edge is calls, not references.
+func TestGoExplicitInstantiationIsCall(t *testing.T) {
+	st := indexedGraph(t, map[string]string{"a.go": "package a\n\nfunc Map[T any](v T) T { return v }\n\n" +
+		"func Caller() int {\n\treturn Map[int](2)\n}\n"})
+	r, ok := edgeTo(t, st, "a.go::Caller", "a.go::Map", "calls")
+	if !ok {
+		t.Fatalf("Map[int](2) has no calls edge; edge types %v", edgeTypes(t, st, "a.go::Caller", "a.go::Map"))
+	}
+	if line, _ := lineMeta(r); line != 6 {
+		t.Fatalf("call line = %d, want 6", line)
+	}
+}
+
+// TestGoInstantiatedConstructorKeepsReceiverType: NewSet[int]() is a call of the
+// generic constructor, and its result still types s, so s.Add(1) links to
+// Set.Add.
+func TestGoInstantiatedConstructorKeepsReceiverType(t *testing.T) {
+	st := indexedGraph(t, map[string]string{"a.go": "package a\n\ntype Set[T any] struct{ items []T }\n\n" +
+		"func NewSet[T any]() *Set[T] { return &Set[T]{} }\n\n" +
+		"func (s *Set[T]) Add(v T) {}\n\n" +
+		"func Use() {\n\ts := NewSet[int]()\n\ts.Add(1)\n}\n"})
+	if _, ok := edgeTo(t, st, "a.go::Use", "a.go::NewSet", "calls"); !ok {
+		t.Fatalf("NewSet[int]() has no calls edge; edge types %v", edgeTypes(t, st, "a.go::Use", "a.go::NewSet"))
+	}
+	if _, ok := edgeTo(t, st, "a.go::Use", "a.go::Set.Add", "calls"); !ok {
+		t.Fatal("s.Add(1) lost its edge: the instantiated constructor did not type s")
+	}
+}
