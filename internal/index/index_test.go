@@ -220,7 +220,7 @@ func TestRelationshipsPerFile(t *testing.T) {
 // goRels builds the this-run name map for one file's elements and computes
 // its relationship batch.
 func goRels(fe fileElements) []store.Relationship {
-	return relationships(fe.elements, nameTableOf(fe.elements))
+	return relationships(fe.elements, nameTableOf(fe.elements).all)
 }
 
 func TestSkipList(t *testing.T) {

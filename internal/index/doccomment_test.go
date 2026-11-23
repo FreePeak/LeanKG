@@ -56,7 +56,7 @@ func TestLeadingDocCaptured(t *testing.T) {
 func TestDocCommentProseIsNotACallEdge(t *testing.T) {
 	src := "package a\n\nfunc Helper() {}\n\n// Caller explains that Helper is unrelated.\nfunc Caller() {}\n"
 	fe := extractAs(t, "a.go", []byte(src), "go")
-	for _, r := range relationships(fe.elements, nameTableOf(fe.elements)) {
+	for _, r := range relationships(fe.elements, nameTableOf(fe.elements).all) {
 		if r.RelType == "calls" && strings.HasSuffix(r.Source, "Caller") && strings.HasSuffix(r.Target, "Helper") {
 			t.Fatalf("doc-comment prose produced a call edge: %+v", r)
 		}

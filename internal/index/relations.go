@@ -65,16 +65,54 @@ type nameTable struct {
 	file    string            // the file whose seeds are resolved
 }
 
-// nameTableOf indexes the qualified names of a directory's elements by name.
-func nameTableOf(els []indexedElem) nameTable {
+// pkgNames is the name table of one directory, split by Go package clause. A Go
+// file resolves its names in its own package's table, so a package p_test file
+// is a separate namespace from package p in the same directory. A file with no
+// clause (another language, or a Go file the parser rejected) resolves in the
+// table of every element, as a whole directory always did.
+type pkgNames struct {
+	all   nameTable            // every element of the directory
+	byPkg map[string]nameTable // the elements of each Go package clause
+}
+
+// nameTableOf indexes the qualified names of a directory's elements by name, one
+// table per Go package clause (see pkgNames). Build tags are not evaluated: two
+// files of one package whose //go:build constraints exclude each other, such as
+// plat_linux.go and plat_windows.go, share a namespace, so each sees the other's
+// same-named function (a documented ceiling).
+func nameTableOf(els []indexedElem) pkgNames {
+	pn := pkgNames{all: namesOf(els, ""), byPkg: map[string]nameTable{}}
+	for _, e := range els {
+		if _, seen := pn.byPkg[e.pkg]; e.pkg != "" && !seen {
+			pn.byPkg[e.pkg] = namesOf(els, e.pkg)
+		}
+	}
+	return pn
+}
+
+// namesOf is the name table of namespace pkg: every element when pkg is "", else
+// the elements of pkg and those with no package clause.
+func namesOf(els []indexedElem, pkg string) nameTable {
 	nt := nameTable{all: map[string][]string{}, funcs: map[string][]string{}}
 	for _, e := range els {
+		if pkg != "" && e.pkg != "" && e.pkg != pkg {
+			continue
+		}
 		nt.all[e.name] = append(nt.all[e.name], e.qn)
 		if e.etype != "method" {
 			nt.funcs[e.name] = append(nt.funcs[e.name], e.qn)
 		}
 	}
 	return nt
+}
+
+// forFile returns the table of fe's package with the cross-package view of fe.
+func (pn pkgNames) forFile(cx *crossIndex, fe fileElements) nameTable {
+	nt, ok := pn.byPkg[fe.pkg]
+	if !ok {
+		nt = pn.all
+	}
+	return nt.forFile(cx, fe)
 }
 
 // forFile returns the table with the cross-package view of fe, the Go file the

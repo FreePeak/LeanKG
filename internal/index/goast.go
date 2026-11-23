@@ -107,11 +107,11 @@ func (d *goDecls) merge(o goDecls) {
 // each. An interface's declared method specs are method elements owned by it
 // (Spec), and an embedded interface is not an element; struct members are not
 // separate elements.
-func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[string]string, decls goDecls, err error) {
+func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[string]string, decls goDecls, pkg string, err error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "", src, parser.SkipObjectResolution)
 	if err != nil {
-		return nil, nil, nil, goDecls{}, err
+		return nil, nil, nil, goDecls{}, "", err
 	}
 	imports = importPaths(f)
 	w := &seedWalker{fset: fset, imports: imports, lits: map[string]goIface{}}
@@ -174,7 +174,7 @@ func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[s
 		}
 	}
 	maps.Copy(decls.ifaces, w.lits)
-	return defs, seeds, imports, decls, nil
+	return defs, seeds, imports, decls, f.Name.Name, nil
 }
 
 // ifaceLiteralPrefix starts the synthetic name of an inline interface literal.
@@ -326,7 +326,9 @@ func isMajorVersion(s string) bool {
 // use after the block that holds it are both missed (pinned by
 // TestGoBlockLocalNameHidesAliasForWholeDeclaration).
 // Dot imports are not tracked, so their members surface as unresolved bare
-// identifiers.
+// identifiers. A blank declaration (`var _ = f()`, `func _()`) makes no element,
+// so the uses in it are not recorded: the package element cannot own them
+// cleanly (a documented ceiling).
 type seedWalker struct {
 	fset    *token.FileSet
 	imports map[string]string  // import name -> import path

@@ -40,7 +40,8 @@ type indexedElem struct {
 	// the element's text with the word heuristic.
 	seeds  []goSeed
 	seeded bool
-	spec   bool // a Go interface method spec (indexDef.Spec)
+	spec   bool   // a Go interface method spec (indexDef.Spec)
+	pkg    string // Go package clause of the element's file ("" outside Go)
 }
 
 // Package-level compiled regexes (documented ceiling: regex extraction,
@@ -101,10 +102,11 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 	// the parser's error rides on the result (fallbackErr) so the run can count it.
 	var fallbackErr error
 	if lang == "go" {
-		defs, seeds, imports, decls, err := goDefinitions(src)
+		defs, seeds, imports, decls, pkg, err := goDefinitions(src)
 		if err == nil {
 			fe, err := finishDefinitions(ctx, rel, src, lines, lang, defs, imports, seeds)
 			fe.decls = decls
+			fe.setPackage(pkg)
 			return fe, err
 		}
 		fallbackErr = err
@@ -210,6 +212,17 @@ type fileElements struct {
 	// fallbackErr is the Go parser's error when a Go file fell back to the regex
 	// tier; nil otherwise.
 	fallbackErr error
+	// pkg is the Go package clause ("" for other languages and for a Go file the
+	// parser rejects). Same-directory name lookups are keyed by it (nameTableOf).
+	pkg string
+}
+
+// setPackage records the Go package clause of fe and of each of its elements.
+func (fe *fileElements) setPackage(pkg string) {
+	fe.pkg = pkg
+	for i := range fe.elements {
+		fe.elements[i].pkg = pkg
+	}
 }
 
 // qualifiedSeed is one `alias.Name` use inside a Go element: the alias is an

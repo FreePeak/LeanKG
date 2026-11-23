@@ -15,7 +15,7 @@ func TestRelationshipsGrammarCallSeeds(t *testing.T) {
 		{qn: "Greeter.m::Greeter.log:level:", etype: "method", name: "log:level:", start: 7, end: 7, parent: -1},
 		{qn: "Greeter.m::Greeter", etype: "type", name: "Greeter", start: 1, end: 8, parent: -1},
 	}
-	rels := relationships(els, nameTableOf(els))
+	rels := relationships(els, nameTableOf(els).all)
 	got := map[string]float64{}
 	for _, r := range rels {
 		if r.Source != "Greeter.m::Greeter.sayHello" || r.RelType != "calls" {

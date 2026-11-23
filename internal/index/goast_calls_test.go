@@ -221,3 +221,62 @@ func TestGoBlockLocalNameHidesAliasForWholeDeclaration(t *testing.T) {
 		t.Fatalf("F seeds:\n got: %q\nwant: %q", got, want)
 	}
 }
+
+// TestGoExternalTestPackageIsSeparateNamespace: ext_test.go is package p_test, a
+// separate package of the same directory. Its Shared is not a name of package p,
+// so Caller links to p's own Shared and to its same-package sibling Util, never
+// to the external test's Shared.
+func TestGoExternalTestPackageIsSeparateNamespace(t *testing.T) {
+	st := indexedGraph(t, map[string]string{
+		"p/a.go":        "package p\n\nfunc Caller() {\n\tShared()\n\tUtil()\n}\n\nfunc Shared() {}\n",
+		"p/util.go":     "package p\n\nfunc Util() {}\n",
+		"p/ext_test.go": "package p_test\n\nfunc Shared() {}\n",
+	})
+	if _, ok := edgeTo(t, st, "p/a.go::Caller", "p/a.go::Shared", "calls"); !ok {
+		t.Fatal("same-package Shared lost its calls edge")
+	}
+	if _, ok := edgeTo(t, st, "p/a.go::Caller", "p/util.go::Util", "calls"); !ok {
+		t.Fatal("same-package sibling Util lost its calls edge")
+	}
+	if _, ok := edgeTo(t, st, "p/a.go::Caller", "p/ext_test.go::Shared", "calls"); ok {
+		t.Fatal("package p_test's Shared received the calls edge of package p's Caller")
+	}
+}
+
+// TestGoMainPackageAndItsTestPackageAreSeparate: a directory of package main and
+// its external test package main_test. Run in main_test is not a name of main.
+func TestGoMainPackageAndItsTestPackageAreSeparate(t *testing.T) {
+	st := indexedGraph(t, map[string]string{
+		"cmd/main.go":      "package main\n\nfunc main() {\n\tRun()\n}\n\nfunc Run() {}\n",
+		"cmd/main_test.go": "package main_test\n\nfunc Run() {}\n",
+	})
+	if _, ok := edgeTo(t, st, "cmd/main.go::main", "cmd/main.go::Run", "calls"); !ok {
+		t.Fatal("main's call of Run lost its calls edge")
+	}
+	if _, ok := edgeTo(t, st, "cmd/main.go::main", "cmd/main_test.go::Run", "calls"); ok {
+		t.Fatal("package main_test's Run received the calls edge of main")
+	}
+}
+
+// TestGoExternalTestPackageLeavesOnePackageElement: a directory's package element
+// is one per directory, whatever packages its files declare. The external test
+// package adds no second element and keeps the directory's element name.
+func TestGoExternalTestPackageLeavesOnePackageElement(t *testing.T) {
+	st := indexedGraph(t, map[string]string{
+		"p/a.go":        "package p\n\nfunc A() {}\n",
+		"p/ext_test.go": "package p_test\n\nfunc B() {}\n",
+	})
+	els, err := st.Elements(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pkgs []string
+	for _, e := range els {
+		if e.ElementType == packageElementType {
+			pkgs = append(pkgs, e.QualifiedName)
+		}
+	}
+	if !slices.Equal(pkgs, []string{"p"}) {
+		t.Fatalf("package elements = %q, want exactly [p]", pkgs)
+	}
+}
