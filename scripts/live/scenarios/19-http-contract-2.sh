@@ -2,9 +2,9 @@
 #  1. [fixed] A REST or UI body over 1 MiB answers 413 with LEANKG_ERROR_REQUEST_TOO_LARGE
 #     (baseline: accepted). [guard] a 100 KiB body is still answered, not refused.
 #  2. [fixed] Store failure: on a copy whose code_elements table is dropped, REST status
-#     answers 500 (baseline 400); the UI index status answers 503 with
-#     LEANKG_ERROR_INDEX_UNAVAILABLE (baseline 400, no code). [guard] the driver error
-#     names the missing table.
+#     answers 500 (baseline 400) with the generic text; the UI index status answers 503
+#     with LEANKG_ERROR_INDEX_UNAVAILABLE (baseline 400, no code). [fixed] neither body
+#     names the driver error ("no such table").
 #  3. [unit-gate] A Postgres connect failure maps to LEANKG_ERROR_PG_UNREACHABLE. No HTTP
 #     path reaches it: serve opens its store at startup and refuses an unreachable
 #     Postgres, so the mapping is asserted by the unit test. [guard] that startup refusal
@@ -156,12 +156,17 @@ scenario_main() {
     wait_listener_health broken-rest-health "$REST_URL" || { record "broken REST listener answers /health" 200 "$HTTP_STATUS" FAIL ""; return 0; }
     http_request broken-status GET "$REST_URL/api/v1/status"
     assert_eq "[fixed] REST status on the store with no code_elements answers 500" 500 "$HTTP_STATUS"
-    assert_contains "[guard] the status error names the missing table" "no such table: code_elements" "$HTTP_BODY"
+    assert_json "[fixed] the REST status error is the generic text" '.error' "internal server error" "$HTTP_BODY"
+    assert_eq "[fixed] the REST status error does not name the missing table" 0 \
+      "$(printf '%s' "$HTTP_BODY" | grep -c 'no such table')"
     http_request broken-index-status GET "$UI_URL/api/index/status"
     assert_eq "[fixed] UI index status on the same store answers 503" 503 "$HTTP_STATUS"
     assert_json "[fixed] UI index status carries code LEANKG_ERROR_INDEX_UNAVAILABLE" \
       '.code' LEANKG_ERROR_INDEX_UNAVAILABLE "$HTTP_BODY"
-    assert_contains "[guard] the UI error names the missing table" "no such table: code_elements" "$HTTP_BODY"
+    assert_contains "[fixed] the UI error is the catalog text, not the driver error" \
+      "the project's index store could not be read" "$HTTP_BODY"
+    assert_eq "[fixed] the UI error does not name the missing table" 0 \
+      "$(printf '%s' "$HTTP_BODY" | grep -c 'no such table')"
     stop_server
   fi
 
