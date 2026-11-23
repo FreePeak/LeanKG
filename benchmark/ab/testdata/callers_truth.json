@@ -1,7 +1,19 @@
 {
- "schema": "leankg.callers_truth/v1",
- "source_commit": "8ec8974adb2b94c3aac53df5fbab8dcf8d034c36",
- "derivation": "rg-derived call sites (syntactic occurrence, enclosing top-level function); comment-only mentions, declarations and the symbol's own definition dropped; keyed by (file, func), line is informational only; test files flagged test=true",
+ "schema": "leankg.callers_truth/v2",
+ "source_commit": "3f85ec23da7b2992c50698b4ce9a2773aae2fc56",
+ "generator": "benchmark/ab/callers_truth_gen_test.go (go/parser + go/types over HEAD)",
+ "rules": [
+  "Corpus: the tracked files of HEAD (git archive of the commit). Working-tree edits are never read. Each build configuration (default darwin; darwin with the tstree tag; linux) is checked on its own, and the truth is the union of their callers. A .go file joins a configuration when go/build matches it there; testdata/, vendor/, node_modules/ and dot or underscore directories are skipped.",
+  "Packages: a directory's non-test files and its in-package _test.go files form one package; its package X_test files form a second package. Module imports resolve to these packages; standard-library imports are type-checked from source; other imports stay unresolved and their selectors make no edges.",
+  "Targets: qualified_name file::F is the package-level function or type F; file::T.M is the method M declared on the concrete type T.",
+  "Reference (type-reference rule included): an identifier whose go/types use resolves to the target counts wherever it sits: a call, a method or function value, a signature, a field or var type, a composite literal, a conversion or an embedded field. A type is referenced by any use of its name. The definition itself does not count.",
+  "Own methods: a reference to a type from a method whose receiver is that type is not a caller of the type (TestCallersOfTypeExcludeOwnMethods, internal/graph/graph_test.go). A method target keeps the references from its own type's methods.",
+  "Interface dispatch: for a method target T.M, a reference to a method M declared by an interface (named or a literal) that *T implements counts as a caller of T.M (the graph's interface-dispatch edges).",
+  "Enclosing caller: the top-level declaration that holds the reference. A method is Recv.Name (receiver base type, pointer and type parameters stripped); a func, type or var spec is its name (a var spec with several names uses its first). Closures count toward their enclosing declaration.",
+  "A reference inside the target's own declaration (recursion) is not a caller.",
+  "One entry per (file, func). line is the lowest referencing line in that function and is informational. test is true for _test.go files.",
+  "possible: a selector X.M whose name matches a target and whose receiver type does not resolve (no go/types selection, and X is not a package name) is listed per symbol. The scorer reports possible hits and counts neither true positives nor false positives for them."
+ ],
  "symbols": [
   {
    "id": "ReplaceFileRelationships",
@@ -12,7 +24,7 @@
      "file": "internal/index/index.go",
      "func": "indexDir",
      "test": false,
-     "line": 545
+     "line": 595
     },
     {
      "file": "internal/index/packages.go",
@@ -80,19 +92,19 @@
      "file": "internal/mcp/server_test.go",
      "func": "TestMCPHonorsDBMintedTokens",
      "test": true,
-     "line": 431
+     "line": 439
     },
     {
      "file": "internal/mcp/server_test.go",
      "func": "TestMCPNewProtocolVersionOverHTTP",
      "test": true,
-     "line": 356
+     "line": 364
     },
     {
      "file": "internal/mcp/server_test.go",
      "func": "TestMCPRBACGatesWriteToolsOverWire",
      "test": true,
-     "line": 264
+     "line": 272
     }
    ],
    "defects": [
@@ -118,6 +130,18 @@
      "func": "freshStore",
      "test": true,
      "line": 70
+    },
+    {
+     "file": "benchmark/ab/callers_score_test.go",
+     "func": "TestCallersScoreIntegration",
+     "test": true,
+     "line": 205
+    },
+    {
+     "file": "benchmark/ab/efficiency_bytes_test.go",
+     "func": "TestSearchAnswerBytes",
+     "test": true,
+     "line": 67
     },
     {
      "file": "cmd/leankg-embed/main.go",
@@ -355,6 +379,12 @@
     },
     {
      "file": "internal/doctor/doctor_test.go",
+     "func": "TestPackageElementsAreNotFiles",
+     "test": true,
+     "line": 563
+    },
+    {
+     "file": "internal/doctor/doctor_test.go",
      "func": "TestRunDeepSqlite",
      "test": true,
      "line": 389
@@ -414,6 +444,12 @@
      "line": 18
     },
     {
+     "file": "internal/graph/graph_test.go",
+     "func": "newSiteFixture",
+     "test": true,
+     "line": 213
+    },
+    {
      "file": "internal/graph/quality_test.go",
      "func": "TestOversizedTieBreakByQualifiedName",
      "test": true,
@@ -456,10 +492,34 @@
      "line": 109
     },
     {
+     "file": "internal/index/count_parity_test.go",
+     "func": "newParityStore",
+     "test": true,
+     "line": 18
+    },
+    {
      "file": "internal/index/dart_elements_e2e_test.go",
      "func": "TestIndexDartConstructorAndEnumElements",
      "test": true,
      "line": 34
+    },
+    {
+     "file": "internal/index/doccomment_test.go",
+     "func": "indexedGraph",
+     "test": true,
+     "line": 80
+    },
+    {
+     "file": "internal/index/goast_cross_test.go",
+     "func": "newCrossTree",
+     "test": true,
+     "line": 24
+    },
+    {
+     "file": "internal/index/goast_test.go",
+     "func": "TestGoPackageLevelDeclarationsAreQueryable",
+     "test": true,
+     "line": 162
     },
     {
      "file": "internal/index/index_git_test.go",
@@ -471,19 +531,19 @@
      "file": "internal/index/index_test.go",
      "func": "TestExtractorBumpPurgesPhantomKeepsVectors",
      "test": true,
-     "line": 451
+     "line": 452
     },
     {
      "file": "internal/index/index_test.go",
      "func": "TestExtractorVersionReextractsOnce",
      "test": true,
-     "line": 413
+     "line": 414
     },
     {
      "file": "internal/index/index_test.go",
      "func": "TestIndexRootTripwire",
      "test": true,
-     "line": 375
+     "line": 376
     },
     {
      "file": "internal/index/index_test.go",
@@ -531,7 +591,7 @@
      "file": "internal/lsp/enrich_test.go",
      "func": "newTestStore",
      "test": true,
-     "line": 16
+     "line": 17
     },
     {
      "file": "internal/maintain/fleet_reconcile_test.go",
@@ -633,25 +693,25 @@
      "file": "internal/mcp/server_test.go",
      "func": "TestMCPHonorsDBMintedTokens",
      "test": true,
-     "line": 416
+     "line": 424
     },
     {
      "file": "internal/mcp/server_test.go",
      "func": "TestMCPNewProtocolVersionOverHTTP",
      "test": true,
-     "line": 347
+     "line": 355
     },
     {
      "file": "internal/mcp/server_test.go",
      "func": "TestMCPRBACGatesWriteToolsOverWire",
      "test": true,
-     "line": 255
+     "line": 263
     },
     {
      "file": "internal/mcp/server_test.go",
      "func": "newServerForTest",
      "test": true,
-     "line": 508
+     "line": 516
     },
     {
      "file": "internal/mcp/server_test.go",
@@ -789,7 +849,7 @@
      "file": "internal/refresh/refresh_test.go",
      "func": "TestEmbedStageSkipsWhenEmbedLockHeld",
      "test": true,
-     "line": 259
+     "line": 264
     },
     {
      "file": "internal/refresh/refresh_test.go",
@@ -801,7 +861,7 @@
      "file": "internal/refresh/refresh_test.go",
      "func": "TestRunSkipsEmbedOnBadProvider",
      "test": true,
-     "line": 238
+     "line": 243
     },
     {
      "file": "internal/registry/registry.go",
@@ -934,54 +994,6 @@
      "func": "newTunnelStore",
      "test": true,
      "line": 18
-    },
-    {
-     "file": "benchmark/ab/callers_score_test.go",
-     "func": "TestCallersScoreIntegration",
-     "test": true,
-     "line": 205
-    },
-    {
-     "file": "benchmark/ab/efficiency_bytes_test.go",
-     "func": "TestSearchAnswerBytes",
-     "test": true,
-     "line": 67
-    },
-    {
-     "file": "internal/graph/graph_test.go",
-     "func": "newSiteFixture",
-     "test": true,
-     "line": 213
-    },
-    {
-     "file": "internal/index/count_parity_test.go",
-     "func": "newParityStore",
-     "test": true,
-     "line": 18
-    },
-    {
-     "file": "internal/index/doccomment_test.go",
-     "func": "indexedGraph",
-     "test": true,
-     "line": 80
-    },
-    {
-     "file": "internal/index/goast_cross_test.go",
-     "func": "newCrossTree",
-     "test": true,
-     "line": 24
-    },
-    {
-     "file": "internal/index/goast_test.go",
-     "func": "TestGoPackageLevelDeclarationsAreQueryable",
-     "test": true,
-     "line": 159
-    },
-    {
-     "file": "internal/doctor/doctor_test.go",
-     "func": "TestPackageElementsAreNotFiles",
-     "test": true,
-     "line": 563
     }
    ],
    "defects": [
@@ -1001,7 +1013,7 @@
      "file": "internal/mcp/server.go",
      "func": "Server.registerTools",
      "test": false,
-     "line": 459
+     "line": 464
     }
    ],
    "defects": [
@@ -1027,7 +1039,7 @@
      "file": "internal/index/index_test.go",
      "func": "TestIndexRootTripwire",
      "test": true,
-     "line": 397
+     "line": 398
     },
     {
      "file": "internal/portfolioreg/sweep_root_test.go",
@@ -1049,6 +1061,18 @@
    "class": "qualified",
    "callers": [
     {
+     "file": "benchmark/ab/callers_score_test.go",
+     "func": "TestCallersScoreIntegration",
+     "test": true,
+     "line": 213
+    },
+    {
+     "file": "benchmark/ab/efficiency_bytes_test.go",
+     "func": "TestSearchAnswerBytes",
+     "test": true,
+     "line": 79
+    },
+    {
      "file": "cmd/leankg/helpers.go",
      "func": "runIndex",
      "test": false,
@@ -1064,13 +1088,13 @@
      "file": "internal/core/actions.go",
      "func": "Engine.importIndex",
      "test": false,
-     "line": 798
+     "line": 1003
     },
     {
      "file": "internal/core/core.go",
      "func": "Engine.IndexDir",
      "test": false,
-     "line": 179
+     "line": 180
     },
     {
      "file": "internal/index/index.go",
@@ -1101,18 +1125,6 @@
      "func": "flushIndex",
      "test": false,
      "line": 348
-    },
-    {
-     "file": "benchmark/ab/callers_score_test.go",
-     "func": "TestCallersScoreIntegration",
-     "test": true,
-     "line": 213
-    },
-    {
-     "file": "benchmark/ab/efficiency_bytes_test.go",
-     "func": "TestSearchAnswerBytes",
-     "test": true,
-     "line": 79
     }
    ]
   },
@@ -1199,7 +1211,7 @@
      "file": "internal/core/core.go",
      "func": "Engine.freshness",
      "test": false,
-     "line": 207
+     "line": 208
     },
     {
      "file": "internal/doctor/fleet.go",
@@ -1242,7 +1254,7 @@
      "file": "internal/core/actions.go",
      "func": "Engine.graphImpact",
      "test": false,
-     "line": 365
+     "line": 400
     },
     {
      "file": "internal/graph/budget_test.go",
@@ -1338,6 +1350,12 @@
     },
     {
      "file": "internal/graph/graph_test.go",
+     "func": "TestCallSitesOnePerCallLine",
+     "test": true,
+     "line": 427
+    },
+    {
+     "file": "internal/graph/graph_test.go",
      "func": "TestCallersCalleesFilterRelType",
      "test": true,
      "line": 134
@@ -1377,12 +1395,6 @@
      "func": "TestCallersOfTypeIncludeReferenceUsers",
      "test": true,
      "line": 248
-    },
-    {
-     "file": "internal/graph/graph_test.go",
-     "func": "TestCallSitesOnePerCallLine",
-     "test": true,
-     "line": 427
     }
    ]
   },
@@ -1395,7 +1407,7 @@
      "file": "cmd/leankg/helpers.go",
      "func": "runIndex",
      "test": false,
-     "line": 380
+     "line": 391
     },
     {
      "file": "cmd/leankg/main.go",
@@ -1432,19 +1444,19 @@
      "file": "internal/core/actions.go",
      "func": "Engine.memDeleteDocument",
      "test": false,
-     "line": 938
+     "line": 1143
     },
     {
      "file": "internal/core/actions.go",
      "func": "Engine.memSessionRetain",
      "test": false,
-     "line": 901
+     "line": 1106
     },
     {
      "file": "internal/core/core.go",
      "func": "Engine.SessionMemoryRead",
      "test": false,
-     "line": 1568
+     "line": 1757
     },
     {
      "file": "internal/memory/memory_test.go",
@@ -1478,6 +1490,12 @@
      "line": 174
     },
     {
+     "file": "internal/store/ctx_conformance_test.go",
+     "func": "ctxConformanceRoles",
+     "test": true,
+     "line": 167
+    },
+    {
      "file": "internal/store/engine_shared_test.go",
      "func": "TestSharedAuditReadersPinBehaviour",
      "test": true,
@@ -1488,12 +1506,6 @@
      "func": "TestAuditLedgerChain",
      "test": true,
      "line": 15
-    },
-    {
-     "file": "internal/store/ctx_conformance_test.go",
-     "func": "ctxConformanceRoles",
-     "test": true,
-     "line": 167
     }
    ]
   },
@@ -1503,16 +1515,16 @@
    "class": "method",
    "callers": [
     {
-     "file": "internal/store/store_pg_test.go",
-     "func": "TestPGAudit",
-     "test": true,
-     "line": 411
-    },
-    {
      "file": "cmd/leankg/audit.go",
      "func": "auditEntries",
      "test": false,
      "line": 174
+    },
+    {
+     "file": "internal/store/ctx_conformance_test.go",
+     "func": "ctxConformanceRoles",
+     "test": true,
+     "line": 167
     },
     {
      "file": "internal/store/engine_shared_test.go",
@@ -1521,10 +1533,10 @@
      "line": 175
     },
     {
-     "file": "internal/store/ctx_conformance_test.go",
-     "func": "ctxConformanceRoles",
+     "file": "internal/store/store_pg_test.go",
+     "func": "TestPGAudit",
      "test": true,
-     "line": 167
+     "line": 411
     }
    ]
   },
@@ -1559,12 +1571,6 @@
    "class": "method",
    "callers": [
     {
-     "file": "internal/store/store_pg_test.go",
-     "func": "TestPGAudit",
-     "test": true,
-     "line": 422
-    },
-    {
      "file": "cmd/leankg/audit.go",
      "func": "cmdAuditVerify",
      "test": false,
@@ -1575,6 +1581,12 @@
      "func": "TestSharedAuditReadersPinBehaviour",
      "test": true,
      "line": 191
+    },
+    {
+     "file": "internal/store/store_pg_test.go",
+     "func": "TestPGAudit",
+     "test": true,
+     "line": 422
     }
    ]
   },
@@ -1587,7 +1599,13 @@
      "file": "internal/core/core.go",
      "func": "Engine.rungSemantic",
      "test": false,
-     "line": 924
+     "line": 920
+    },
+    {
+     "file": "internal/store/ctx_conformance_test.go",
+     "func": "ctxConformanceRoles",
+     "test": true,
+     "line": 59
     },
     {
      "file": "internal/store/filter_before_limit_test.go",
@@ -1600,12 +1618,6 @@
      "func": "hybridSearch",
      "test": true,
      "line": 100
-    },
-    {
-     "file": "internal/store/ctx_conformance_test.go",
-     "func": "ctxConformanceRoles",
-     "test": true,
-     "line": 59
     }
    ]
   },
@@ -1646,16 +1658,16 @@
    "class": "method",
    "callers": [
     {
-     "file": "internal/store/store_pg_test.go",
-     "func": "TestPGKVAndInventory",
-     "test": true,
-     "line": 367
-    },
-    {
      "file": "internal/maintain/reconcile.go",
      "func": "healInventory",
      "test": false,
      "line": 177
+    },
+    {
+     "file": "internal/maintain/reconcile_inventory_test.go",
+     "func": "TestReconcileRefreshesTheInventoryCounts",
+     "test": true,
+     "line": 102
     },
     {
      "file": "internal/store/backend.go",
@@ -1664,10 +1676,10 @@
      "line": 144
     },
     {
-     "file": "internal/maintain/reconcile_inventory_test.go",
-     "func": "TestReconcileRefreshesTheInventoryCounts",
+     "file": "internal/store/store_pg_test.go",
+     "func": "TestPGKVAndInventory",
      "test": true,
-     "line": 102
+     "line": 367
     }
    ]
   },
@@ -1746,12 +1758,6 @@
    "class": "method",
    "callers": [
     {
-     "file": "internal/store/pg_accounts_test.go",
-     "func": "TestPGAdminExists",
-     "test": true,
-     "line": 35
-    },
-    {
      "file": "cmd/leankg/auth.go",
      "func": "bootstrapAdmin",
      "test": false,
@@ -1768,6 +1774,12 @@
      "func": "registry.tokensConfigured",
      "test": false,
      "line": 180
+    },
+    {
+     "file": "internal/store/pg_accounts_test.go",
+     "func": "TestPGAdminExists",
+     "test": true,
+     "line": 35
     }
    ]
   },
@@ -1780,7 +1792,13 @@
      "file": "internal/core/core.go",
      "func": "Engine.Status",
      "test": false,
-     "line": 450
+     "line": 451
+    },
+    {
+     "file": "internal/core/importpath_test.go",
+     "func": "TestDeletedCodeIsNeverASemanticHit",
+     "test": true,
+     "line": 172
     },
     {
      "file": "internal/refresh/refresh_test.go",
@@ -1802,28 +1820,34 @@
    "class": "method",
    "callers": [
     {
-     "file": "internal/store/store_pg_test.go",
-     "func": "TestPGElementOps",
-     "test": true,
-     "line": 140
-    },
-    {
      "file": "internal/core/core.go",
      "func": "Engine.Status",
      "test": false,
-     "line": 450
+     "line": 451
     },
     {
-     "file": "internal/store/vectors.go",
-     "func": "RefreshInventory",
-     "test": false,
-     "line": 853
+     "file": "internal/core/importpath_test.go",
+     "func": "TestDeletedCodeIsNeverASemanticHit",
+     "test": true,
+     "line": 172
     },
     {
      "file": "internal/refresh/refresh_test.go",
      "func": "TestRunIndexesCodeDocsAndEmbeds",
      "test": true,
      "line": 126
+    },
+    {
+     "file": "internal/store/store_pg_test.go",
+     "func": "TestPGElementOps",
+     "test": true,
+     "line": 140
+    },
+    {
+     "file": "internal/store/vectors.go",
+     "func": "RefreshInventory",
+     "test": false,
+     "line": 853
     }
    ]
   },
@@ -1837,6 +1861,12 @@
      "func": "Verify",
      "test": false,
      "line": 119
+    },
+    {
+     "file": "internal/store/ctx_conformance_test.go",
+     "func": "ctxConformanceRoles",
+     "test": true,
+     "line": 157
     },
     {
      "file": "internal/store/store_tokens_test.go",
@@ -1860,13 +1890,7 @@
      "file": "internal/store/store_tokens_test.go",
      "func": "TestTokenRoundTrip",
      "test": true,
-     "line": 102
-    },
-    {
-     "file": "internal/store/ctx_conformance_test.go",
-     "func": "ctxConformanceRoles",
-     "test": true,
-     "line": 157
+     "line": 68
     }
    ]
   },
@@ -1875,18 +1899,6 @@
    "qualified_name": "internal/store/pg_tokens.go::PGStore.TokenFind",
    "class": "method",
    "callers": [
-    {
-     "file": "internal/store/pg_tokens_test.go",
-     "func": "TestPGTokenLifecycle",
-     "test": true,
-     "line": 101
-    },
-    {
-     "file": "internal/store/pg_tokens_test.go",
-     "func": "TestPGTokenRoundTrip",
-     "test": true,
-     "line": 28
-    },
     {
      "file": "internal/auth/tokens.go",
      "func": "Verify",
@@ -1898,6 +1910,18 @@
      "func": "ctxConformanceRoles",
      "test": true,
      "line": 157
+    },
+    {
+     "file": "internal/store/pg_tokens_test.go",
+     "func": "TestPGTokenLifecycle",
+     "test": true,
+     "line": 73
+    },
+    {
+     "file": "internal/store/pg_tokens_test.go",
+     "func": "TestPGTokenRoundTrip",
+     "test": true,
+     "line": 28
     }
    ]
   },
@@ -1910,19 +1934,19 @@
      "file": "internal/core/core.go",
      "func": "markBounds",
      "test": false,
-     "line": 1148
+     "line": 1337
     },
     {
      "file": "internal/graph/graph.go",
      "func": "Impact",
      "test": false,
-     "line": 102
+     "line": 97
     },
     {
      "file": "internal/graph/graph.go",
      "func": "ShortestPath",
      "test": false,
-     "line": 148
+     "line": 151
     }
    ]
   },
@@ -1942,6 +1966,18 @@
      "func": "scanEmbedRun",
      "test": false,
      "line": 66
+    },
+    {
+     "file": "internal/store/engine_shared_test.go",
+     "func": "lastRunReader",
+     "test": true,
+     "line": 17
+    },
+    {
+     "file": "internal/store/roles.go",
+     "func": "EmbedRuns",
+     "test": false,
+     "line": 138
     },
     {
      "file": "internal/store/store_pg.go",
@@ -1966,18 +2002,6 @@
      "func": "Store.LastEmbedRunAny",
      "test": false,
      "line": 821
-    },
-    {
-     "file": "internal/store/engine_shared_test.go",
-     "func": "lastRunReader",
-     "test": true,
-     "line": 17
-    },
-    {
-     "file": "internal/store/roles.go",
-     "func": "EmbedRuns",
-     "test": false,
-     "line": 138
     }
    ]
   },
@@ -2018,19 +2042,18 @@
    "class": "qualified",
    "callers": [
     {
-     "file": "internal/graph/graph.go",
-     "func": "CallSites",
-     "test": false,
-     "line": 311
-    },
-    {
      "file": "internal/core/actions.go",
      "func": "Engine.graphCallSites",
      "test": false,
      "line": 535
+    },
+    {
+     "file": "internal/graph/graph.go",
+     "func": "CallSites",
+     "test": false,
+     "line": 311
     }
-   ],
-   "defects": []
+   ]
   },
   {
    "id": "UnionSites",
@@ -2038,19 +2061,20 @@
    "class": "qualified",
    "callers": [
     {
-     "file": "internal/graph/graph.go",
-     "func": "CallSites",
-     "test": false,
-     "line": 315
-    },
-    {
      "file": "internal/core/actions.go",
      "func": "Engine.graphCallSites",
      "test": false,
      "line": 539
+    },
+    {
+     "file": "internal/graph/graph.go",
+     "func": "CallSites",
+     "test": false,
+     "line": 315
     }
-   ],
-   "defects": []
+   ]
   }
- ]
+ ],
+ "known_misses": [],
+ "floors": {}
 }

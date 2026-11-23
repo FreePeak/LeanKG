@@ -30,6 +30,7 @@ type truthCaller struct {
 	File string `json:"file"`
 	Func string `json:"func"`
 	Test bool   `json:"test"`
+	Line int    `json:"line,omitempty"`
 }
 
 // callerKey is one caller as LeanKG reports it: the file and the function
@@ -148,12 +149,40 @@ type truthSymbol struct {
 	QualifiedName string        `json:"qualified_name"`
 	Class         string        `json:"class"`
 	Callers       []truthCaller `json:"callers"`
-	Defects       []defectSite  `json:"defects"`
+	Possible      []truthCaller `json:"possible,omitempty"`
+	Defects       []defectSite  `json:"defects,omitempty"`
+}
+
+// knownMiss is a truth caller the product is known to miss at the baseline.
+type knownMiss struct {
+	Symbol string `json:"symbol"`
+	File   string `json:"file"`
+	Func   string `json:"func"`
+	Reason string `json:"reason"`
+}
+
+// floorPR is one pair of failing thresholds.
+type floorPR struct {
+	Precision float64 `json:"precision"`
+	Recall    float64 `json:"recall"`
+}
+
+// truthFloors are the failing thresholds. Overall applies to the with-tests
+// scoring, OverallNoTests to the scoring without test callers.
+type truthFloors struct {
+	Overall        floorPR            `json:"overall"`
+	OverallNoTests floorPR            `json:"overall_without_tests"`
+	Classes        map[string]floorPR `json:"classes"`
 }
 
 type truthFile struct {
+	Schema       string        `json:"schema"`
 	SourceCommit string        `json:"source_commit"`
+	Generator    string        `json:"generator"`
+	Rules        []string      `json:"rules"`
 	Symbols      []truthSymbol `json:"symbols"`
+	KnownMisses  []knownMiss   `json:"known_misses"`
+	Floors       truthFloors   `json:"floors"`
 }
 
 type symbolReport struct {
