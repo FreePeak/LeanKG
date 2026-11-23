@@ -15,6 +15,7 @@ package store
 
 import (
 	"encoding/json"
+	"log"
 	"strings"
 )
 
@@ -175,6 +176,14 @@ func fillKnowledgeRecall(ranked, substring []KnowledgeEntry, limit int) []Knowle
 		}
 	}
 	return ranked
+}
+
+// warnRankingDegraded writes the one line both engines log when a keyword
+// search answers in recency order because its relevance order is unavailable.
+// The results stay complete (the substring arm carries recall), so this is a
+// warning, not an error.
+func warnRankingDegraded(err error) {
+	log.Printf("store: knowledge keyword ranking degraded, ordering by recency: %v", err)
 }
 
 func searchWhere(query, knowledgeType, environment string, b *whereBuilder) string {

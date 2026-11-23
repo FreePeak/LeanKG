@@ -360,6 +360,7 @@ func (s *PGStore) knowledgeRankedPG(ctx context.Context, query, knowledgeType, e
 		WHERE `+strings.Join(conds, " AND ")+`
 		ORDER BY score DESC, updated_at DESC, id ASC`+clause, args...)
 	if err != nil {
+		warnRankingDegraded(err)
 		return nil, nil
 	}
 	return s.scanKnowledgeRanked(rows)

@@ -8,7 +8,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -301,31 +300,28 @@ func (s *Store) KnowledgeEntriesByEnvironment(ctx context.Context, environment s
 // The keyword hits come from knowledge_fts: bm25 ranked, and every query term
 // must appear, as on PostgreSQL. Substring matches the index cannot see (a
 // partial word, for one) follow newest first, so recall never falls below
-// substring search. A query with no terms, or an index error, is substring-only.
+// substring search. A query with no terms is substring-only.
+//
+// The error is non-nil only when the substring arm fails. An unavailable
+// keyword arm (a store that predates the index, or an index error) is not an
+// error: the hits are still complete, the order is recency only, and one
+// warning is logged (warnRankingDegraded). Callers check err first and keep
+// the hits.
 func (s *Store) KnowledgeEntriesSearch(ctx context.Context, query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
 	ranked, err := s.knowledgeRanked(ctx, query, knowledgeType, environment, limit)
-	var degraded error
 	if err != nil {
-		// The keyword arm is unavailable (a store that predates the index,
-		// or an index error). Recall stays complete through the substring arm,
-		// but the order is recency only: say so instead of hiding it.
 		ranked = nil
-		degraded = fmt.Errorf("%w: %w", ErrRankingDegraded, err)
+		warnRankingDegraded(err)
 	}
 	if limit > 0 && len(ranked) >= limit {
-		return ranked, degraded
+		return ranked, nil
 	}
 	substring, err := s.knowledgeSubstringSearch(ctx, query, knowledgeType, environment, limit)
 	if err != nil {
 		return nil, err
 	}
-	return fillKnowledgeRecall(ranked, substring, limit), degraded
+	return fillKnowledgeRecall(ranked, substring, limit), nil
 }
-
-// ErrRankingDegraded marks a keyword search whose results are complete but
-// whose relevance order is unavailable: the returned entries are the substring
-// matches, newest first. Test with errors.Is; the wrapped cause is the arm's error.
-var ErrRankingDegraded = errors.New("store: knowledge keyword ranking degraded")
 
 // knowledgeRanked is the keyword arm over knowledge_fts: hits ordered by bm25,
 // then recency. A query with no terms has no keyword arm.

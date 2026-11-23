@@ -1,9 +1,11 @@
 package store
 
 import (
+	"bytes"
 	"context"
-	"errors"
+	"log"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -172,12 +174,19 @@ func TestKnowledgeSearchPreMigration19ReportsDegradedRanking(t *testing.T) {
 		t.Fatalf("open RO: %v", err)
 	}
 	defer ro.Close()
+	var logged bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(prev) })
 	hits, err := ro.KnowledgeEntriesSearch(ctx, "socket", "", "", 10)
-	if !errors.Is(err, ErrRankingDegraded) {
-		t.Fatalf("search error = %v; want ErrRankingDegraded", err)
+	if err != nil {
+		t.Fatalf("degraded search error = %v; want nil: the hits are still complete", err)
 	}
 	if len(hits) != 1 || hits[0].ID != "K-1" {
 		t.Fatalf("degraded search hits = %+v; want the substring match K-1", hits)
+	}
+	if !strings.Contains(logged.String(), "keyword ranking degraded") {
+		t.Fatalf("no degraded-ranking warning logged; log = %q", logged.String())
 	}
 }
 
