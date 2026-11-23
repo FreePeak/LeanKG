@@ -815,8 +815,8 @@ func readFirstLine(t *testing.T, path string) []byte {
 }
 
 // TestCoreFileBoundMeasuresWhatLands pins that the core-file bound measures
-// the bytes that reach disk. Redaction can lengthen a value (a two-byte
-// password becomes a 19-byte marker), so a write whose raw text fits must be
+// the bytes that reach disk. Redaction can lengthen a value (a seven-byte
+// password becomes a 10-byte marker), so a write whose raw text fits must be
 // refused when its redacted text does not. An append is bounded against the
 // whole file, not the appended fragment.
 func TestCoreFileBoundMeasuresWhatLands(t *testing.T) {
@@ -824,7 +824,7 @@ func TestCoreFileBoundMeasuresWhatLands(t *testing.T) {
 
 	t.Run("create bounds the redacted text", func(t *testing.T) {
 		m := openTest(t)
-		raw := "password=x " + strings.Repeat("a", CoreFileBytes-len("password=x "))
+		raw := "password=hunter2 " + strings.Repeat("a", CoreFileBytes-len("password=hunter2 "))
 		if len(raw) != CoreFileBytes {
 			t.Fatalf("setup: raw = %d bytes, want %d", len(raw), CoreFileBytes)
 		}

@@ -89,7 +89,7 @@ func preRedactionBank(t *testing.T, m *Memory, bank string, rows ...Entry) {
 func TestCompactRedactsPreRedactionRows(t *testing.T) {
 	m := openTest(t)
 	const (
-		raw    = "probe note keeps lkg_0123456789abcdef0123456789abcdef for later"
+		raw    = "probe note keeps lkg_0123456789abcdef0123456789abcdef_0a1b2c3d for later"
 		twin   = "probe note keeps [REDACTED:key] for later"
 		secret = "0123456789abcdef0123456789abcdef"
 	)
@@ -123,7 +123,7 @@ func TestCompactRedactsPreRedactionRows(t *testing.T) {
 // from the redacted body on the next recall.
 func TestCompactDropsVectorOfRedactedRow(t *testing.T) {
 	m := openTest(t)
-	const raw = "probe note keeps lkg_0123456789abcdef0123456789abcdef for later"
+	const raw = "probe note keeps lkg_0123456789abcdef0123456789abcdef_0a1b2c3d for later"
 	preRedactionBank(t, m, "solo", Entry{ID: "s1", Content: raw, Timestamp: 1})
 	if _, err := m.fts.Exec(`INSERT INTO memory_fts(kind, path, bank, entry_id, doc, body) VALUES ('bank', '', 'solo', 's1', '{}', ?)`, raw); err != nil {
 		t.Fatalf("seed index row: %v", err)
@@ -146,7 +146,7 @@ func TestCompactDropsVectorOfRedactedRow(t *testing.T) {
 // raw row it supersedes.
 func TestRetainReplacesPreRedactionTwin(t *testing.T) {
 	m := openTest(t)
-	const raw = "probe note keeps lkg_0123456789abcdef0123456789abcdef for later"
+	const raw = "probe note keeps lkg_0123456789abcdef0123456789abcdef_0a1b2c3d for later"
 	preRedactionBank(t, m, "solo", Entry{ID: "s1", Content: raw, Timestamp: 1})
 	if err := m.RetainRaw(context.Background(), "solo", []Entry{{Content: raw}}); err != nil {
 		t.Fatalf("retain: %v", err)
