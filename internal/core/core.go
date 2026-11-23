@@ -1125,8 +1125,9 @@ func looksLikeIdentifier(s string) bool {
 // resolveGraphSeed turns a short name or bare identifier into the qualified
 // name graph verbs need. Relationships are keyed by qualified_name only, so a
 // bare "ServeProjectDirs" used to look like a leaf (empty callers/callees) even
-// when the element and its edges were indexed. FindExact already ranks by
-// shortest qualified_name, matching L1. Unknown seeds pass through unchanged so
+// when the element and its edges were indexed. FindExact ranks an exact-case
+// match first, then the shorter qualified_name, then path and qualified_name,
+// matching L1. Unknown seeds pass through unchanged so
 // graph.ErrUnknownNode still fires for true misses.
 func (e *Engine) resolveGraphSeed(ctx context.Context, seed string) (string, error) {
 	seed = strings.TrimSpace(seed)
