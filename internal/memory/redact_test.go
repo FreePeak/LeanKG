@@ -447,3 +447,64 @@ func TestDocumentIDMatchesRedactedForm(t *testing.T) {
 		}
 	})
 }
+
+// TestPreRedactionRowsMatchByRawDocumentID pins that a row written before
+// redaction existed keeps its raw document id on disk, and is found by that
+// raw id. DeleteDocument and RetainReplacing matched only the redacted form,
+// so the raw id reported 0 rows and left the row in place.
+func TestPreRedactionRowsMatchByRawDocumentID(t *testing.T) {
+	const raw = "sync-token=abc123"
+	ctx := context.Background()
+	preRedaction := func(m *Memory) {
+		writeRawBankLines(t, m, "b", `{"id":"old-1","content":"doc body","source":"test","timestamp":1,"importance":0.5,"cwd":"","metadata":{"document_id":"`+raw+`"}}`)
+	}
+
+	t.Run("delete by raw id removes the row", func(t *testing.T) {
+		m := openTest(t)
+		preRedaction(m)
+		n, err := m.DeleteDocument(ctx, "b", raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Fatalf("DeleteDocument(%q) = %d rows, want 1", raw, n)
+		}
+	})
+
+	t.Run("replace by raw id drops the pre-redaction row", func(t *testing.T) {
+		m := openTest(t)
+		preRedaction(m)
+		replaced, err := m.RetainReplacing(ctx, "b", []Entry{{Content: "second", Metadata: map[string]any{"document_id": raw}}}, []string{raw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if replaced != 1 {
+			t.Fatalf("replaced = %d, want 1", replaced)
+		}
+		rows, _, err := m.List("b", 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || rows[0].Content != "second" {
+			t.Fatalf("rows after replace = %+v, want only the second", rows)
+		}
+	})
+}
+
+// TestSessionRetainRedactsRowID pins that the row id, which SessionRetain
+// derives from the client session id, is masked like the content. A session id
+// with a secret shape must not reach the bank file through the id.
+func TestSessionRetainRedactsRowID(t *testing.T) {
+	m := openTest(t)
+	const secret = "sk-abc123def456ghi789jkl"
+	if _, err := m.SessionRetain(context.Background(), ScopeGlobal, t.TempDir(), "idprobe", secret, []string{"turn text"}, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(m.Root(), "banks", "idprobe.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), secret) {
+		t.Fatalf("bank row id carries the raw session id: %s", data)
+	}
+}

@@ -159,3 +159,66 @@ func TestRetainReplacesPreRedactionTwin(t *testing.T) {
 		t.Fatalf("raw secret still on disk after retain: %v", lines)
 	}
 }
+
+// writeRawBankLines writes lines to a bank file verbatim, the way a bank
+// written before write-side redaction looks on disk.
+func writeRawBankLines(t *testing.T, m *Memory, bank string, lines ...string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(m.bankPath(bank)), 0o755); err != nil {
+		t.Fatalf("create banks dir: %v", err)
+	}
+	if err := os.WriteFile(m.bankPath(bank), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write fixture bank: %v", err)
+	}
+}
+
+// TestCompactKeepsUntouchedRowBytes pins that compaction rewrites only the
+// rows it changes. A row with a field Entry does not model lost that field
+// when every row was re-marshaled through Entry, so a bank with no duplicates
+// and nothing to redact was rewritten in full. Such a bank must come back
+// byte for byte, in the same file.
+func TestCompactKeepsUntouchedRowBytes(t *testing.T) {
+	m := openTest(t)
+	const row = `{"id":"u1","content":"unknown field survives compaction","source":"test","timestamp":1,"importance":0.5,"cwd":"","metadata":{},"legacy_field":"keep-me"}`
+	writeRawBankLines(t, m, "untouched", row)
+	before, err := os.Stat(m.bankPath("untouched"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Compact(context.Background()); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	data, err := os.ReadFile(m.bankPath("untouched"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != row+"\n" {
+		t.Fatalf("compaction rewrote an untouched row:\n got %s\nwant %s", data, row)
+	}
+	after, err := os.Stat(m.bankPath("untouched"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatalf("compaction replaced the bank file of an untouched bank")
+	}
+}
+
+// TestCompactRedactsRowIDs pins that a pre-redaction row whose id carries a
+// secret shape leaves the file with the masked id, the same form a write
+// stores. The row id is redacted like its content.
+func TestCompactRedactsRowIDs(t *testing.T) {
+	m := openTest(t)
+	const secret = "sk-abc123def456ghi789jkl"
+	writeRawBankLines(t, m, "ids", `{"id":"`+secret+`-1","content":"plain body","source":"test","timestamp":1,"importance":0.5,"cwd":"","metadata":{}}`)
+	if err := m.Compact(context.Background()); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	data, err := os.ReadFile(m.bankPath("ids"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), secret) {
+		t.Fatalf("compaction left the raw key in the row id: %s", data)
+	}
+}

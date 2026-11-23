@@ -9,6 +9,7 @@ import (
 	"math/bits"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -423,7 +424,10 @@ func (m *Memory) RetainReplacing(ctx context.Context, bank string, entries []Ent
 	if len(replaceDocs) > 0 {
 		drop := make(map[string]bool, len(replaceDocs))
 		for _, d := range replaceDocs {
-			drop[Redact(d)] = true // rows store the redacted id; see entryDocumentID
+			// A row keeps the id as the client sent it when it predates
+			// redaction, and the redacted form once a write has masked it.
+			drop[d] = true
+			drop[Redact(d)] = true
 		}
 		n, err := m.rewriteBankLocked(ctx, bank, func(e Entry) bool { return drop[entryDocumentID(e)] })
 		if err != nil {
@@ -450,8 +454,11 @@ func (m *Memory) DeleteDocument(ctx context.Context, bank, documentID string) (i
 	start := time.Now()
 	m.bankMu.Lock()
 	defer m.bankMu.Unlock()
-	stored := Redact(documentID) // rows store the redacted id, so match that form
-	n, err := m.rewriteBankLocked(ctx, bank, func(e Entry) bool { return entryDocumentID(e) == stored })
+	stored := Redact(documentID) // a row written since redaction stores the redacted id
+	n, err := m.rewriteBankLocked(ctx, bank, func(e Entry) bool {
+		d := entryDocumentID(e)
+		return d == documentID || d == stored // a pre-redaction row keeps the raw id
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -619,9 +626,10 @@ func (m *Memory) compactBankLocked(ctx context.Context, bank string) (int, error
 		return 0, fmt.Errorf("memory: read bank %s: %w", bank, err)
 	}
 	type bankRow struct {
-		line   string // the line the row keeps
-		e      Entry  // the redacted row, when parsed
-		parsed bool
+		line    string // the line the row keeps
+		e       Entry  // the redacted row, when parsed
+		parsed  bool
+		changed bool // redaction changed a field, so the row is written from e
 	}
 	var rows []bankRow
 	for _, line := range strings.Split(string(data), "\n") {
@@ -639,9 +647,10 @@ func (m *Memory) compactBankLocked(ctx context.Context, bank string) (int, error
 		}
 		r := redactEntry(e)
 		rows[i].e, rows[i].parsed = r, true
+		rows[i].changed = r.ID != e.ID || r.Content != e.Content || !reflect.DeepEqual(r.Metadata, e.Metadata)
 		last[rowKey(r)] = i
-		if r.Content != e.Content {
-			changedIDs = append(changedIDs, e.ID)
+		if r.ID != e.ID || r.Content != e.Content {
+			changedIDs = append(changedIDs, e.ID) // the vector was keyed by the id it was embedded under
 		}
 	}
 	var kept strings.Builder
@@ -654,6 +663,8 @@ func (m *Memory) compactBankLocked(ctx context.Context, bank string) (int, error
 		case last[rowKey(row.e)] != i:
 			removed++
 			continue
+		case !row.changed:
+			// An untouched row keeps its bytes, including fields Entry does not model.
 		default:
 			if b, err := json.Marshal(row.e); err == nil && string(b) != row.line {
 				row.line = string(b)

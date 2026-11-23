@@ -463,6 +463,7 @@ func Redact(content string) string { return telemetry.Redact(content) }
 // masked by Redact. The bank write path applies it once per row, so the JSONL
 // file and the FTS index are built from the same redacted text.
 func redactEntry(e Entry) Entry {
+	e.ID = Redact(e.ID) // the id is derived from the client session id
 	e.Content = Redact(e.Content)
 	e.Metadata = redactMetadata(e.Metadata)
 	return e
