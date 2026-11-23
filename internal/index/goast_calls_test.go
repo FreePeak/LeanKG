@@ -207,3 +207,17 @@ func TestGoInstantiatedConstructorKeepsReceiverType(t *testing.T) {
 		t.Fatal("s.Add(1) lost its edge: the instantiated constructor did not type s")
 	}
 }
+
+// TestGoBlockLocalNameHidesAliasForWholeDeclaration pins the scope ceiling of
+// seedWalker (hardening, no red test: it documents current behaviour). A name
+// bound in one block hides the import alias of the same name for the whole
+// declaration, so pkg.Target() after the block loses its qualified seed and
+// becomes a method seed on an unknown receiver.
+func TestGoBlockLocalNameHidesAliasForWholeDeclaration(t *testing.T) {
+	src := "package a\n\nimport \"x/pkg\"\n\nfunc F(ok bool) {\n\tif ok {\n\t\tpkg := 1\n\t\t_ = pkg\n\t}\n\tpkg.Target()\n}\n"
+	fe := extractAs(t, "a.go", []byte(src), "go")
+	got := seedSet(t, fe, "F")
+	if want := []string{"ident:bool 5 false", "method:Target 10 true"}; !slices.Equal(got, want) {
+		t.Fatalf("F seeds:\n got: %q\nwant: %q", got, want)
+	}
+}

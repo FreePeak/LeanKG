@@ -320,8 +320,11 @@ func isMajorVersion(s string) bool {
 // declarations, range and type-switch binds, including those of nested closures)
 // is local, so no use of that name is a package-level seed. A local also carries
 // the receiver type its bindings give it (scope), and a name bound twice to
-// different types is untyped. The known limit: a package-level name used before
-// a same-named local is declared in the same function is missed.
+// different types is untyped. The known limits: scope is per declaration, not
+// per block. A name bound in any block hides a package-level name or import alias
+// of the same name for the whole declaration, so a use before that binding and a
+// use after the block that holds it are both missed (pinned by
+// TestGoBlockLocalNameHidesAliasForWholeDeclaration).
 // Dot imports are not tracked, so their members surface as unresolved bare
 // identifiers.
 type seedWalker struct {
