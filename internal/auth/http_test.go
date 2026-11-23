@@ -633,6 +633,83 @@ func TestRegisterStoreFailureIsGeneric(t *testing.T) {
 	}
 }
 
+// tokenListDownStore fails the token listing, the way a broken database does.
+type tokenListDownStore struct{ Store }
+
+func (tokenListDownStore) TokenList(context.Context) ([]store.Token, error) {
+	return nil, errors.New("database disk image is malformed: /var/lib/leankg/db.sqlite")
+}
+
+// TestAuthRoutesStoreFailureIsGeneric pins the #601 driver-text rule on the
+// token routes: a store failure answers 500 with the generic text and never the
+// driver message. An env admin bearer resolves without a store call, so the
+// route's own TokenList is the call that fails.
+func TestAuthRoutesStoreFailureIsGeneric(t *testing.T) {
+	clearTokenEnv(t)
+	t.Setenv("LEANKG_TOKEN_ADMIN", "env-admin-secret")
+	h := Routes(tokenListDownStore{openAuthStore(t)})
+	cases := []struct {
+		name, method, path string
+		body               any
+	}{
+		{"token list", "GET", "/api/v1/auth/token", nil},
+		{"token revoke", "POST", "/api/v1/auth/token/revoke", map[string]string{"token_id": "x"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, resp := doJSON(t, h, tc.method, tc.path, "env-admin-secret", tc.body)
+			if code != http.StatusInternalServerError || resp["success"] != false {
+				t.Fatalf("= %d %v; want 500 failure envelope", code, resp)
+			}
+			if msg := errString(t, resp); msg != "internal error" {
+				t.Fatalf("error = %q; want generic %q", msg, "internal error")
+			}
+			raw, _ := json.Marshal(resp)
+			for _, leak := range []string{"disk image", "/var/lib", "malformed"} {
+				if strings.Contains(string(raw), leak) {
+					t.Fatalf("response leaks driver text %q: %s", leak, raw)
+				}
+			}
+		})
+	}
+}
+
+// TestAuthRoutesValidationMessageUnchanged pins that a client error keeps its
+// message and status: a bearer that does not authenticate is still 400
+// "auth: unknown token", even on a store that is broken.
+func TestAuthRoutesValidationMessageUnchanged(t *testing.T) {
+	clearTokenEnv(t)
+	t.Setenv("LEANKG_TOKEN_ADMIN", "env-admin-secret")
+	h := Routes(tokenListDownStore{openAuthStore(t)})
+	code, resp := doJSON(t, h, "GET", "/api/v1/auth/token", "not-a-real-token", nil)
+	if code != http.StatusBadRequest || errString(t, resp) != "auth: unknown token" {
+		t.Fatalf("= %d %v; want 400 %q", code, resp, "auth: unknown token")
+	}
+}
+
+// TestClaimWithoutRequiredFieldIsClientError pins that a missing claim field is
+// a 400 with its message. The required check runs before the store, so the
+// store's own required-field error is not classified as a store fault.
+func TestClaimWithoutRequiredFieldIsClientError(t *testing.T) {
+	clearTokenEnv(t)
+	st := openAuthStore(t)
+	acct, err := Register(context.Background(), st, "claimer@example.com", "password123", "C")
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	secret, _, err := Mint(context.Background(), st, MintRequest{Name: "c", Role: "admin", AccountID: acct.ID})
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	code, resp := doJSON(t, newAuthServer(t, st), "POST", "/api/v1/auth/resource/claim", secret, map[string]string{
+		"resource_type": "", "resource_id": "r1",
+	})
+	const want = "resource claim: resource_type, resource_id and owner_account_id are required"
+	if code != http.StatusBadRequest || errString(t, resp) != want {
+		t.Fatalf("= %d %v; want 400 %q", code, resp, want)
+	}
+}
+
 // TestTokenIssueNeedsWriteForProcessCaller pins #601 B2: an env token has no
 // account, so it cannot own a minted token. An env viewer must not persist a DB
 // token through the public issuance route; an env contributor or admin still can.

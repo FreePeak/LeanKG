@@ -234,7 +234,7 @@ func CreateOrg(ctx context.Context, st Store, name, ownerAccountID string) (stor
 		UpdatedAt:      now,
 	}
 	if err := st.OrgUpsert(ctx, org); err != nil {
-		return store.Org{}, err
+		return store.Org{}, store.Fail("org upsert", err)
 	}
 	if err := st.OrgMembershipUpsert(ctx, store.OrgMember{
 		OrgID:     org.ID,
@@ -242,7 +242,7 @@ func CreateOrg(ctx context.Context, st Store, name, ownerAccountID string) (stor
 		Role:      OrgRoleOwner,
 		JoinedAt:  now,
 	}); err != nil {
-		return store.Org{}, err
+		return store.Org{}, store.Fail("org membership", err)
 	}
 	return org, nil
 }
@@ -253,6 +253,10 @@ func AddOrgMember(ctx context.Context, st Store, orgID, accountID, role string) 
 	if !ValidOrgRole(role) {
 		return store.OrgMember{}, fmt.Errorf("invalid role %q", role)
 	}
+	// Client input is checked here, so the store's required-field error is a 400.
+	if orgID == "" || accountID == "" {
+		return store.OrgMember{}, errors.New("org membership: org_id and account_id are required")
+	}
 	member := store.OrgMember{
 		OrgID:     orgID,
 		AccountID: accountID,
@@ -260,7 +264,7 @@ func AddOrgMember(ctx context.Context, st Store, orgID, accountID, role string) 
 		JoinedAt:  time.Now().Unix(),
 	}
 	if err := st.OrgMembershipUpsert(ctx, member); err != nil {
-		return store.OrgMember{}, err
+		return store.OrgMember{}, store.Fail("org membership", err)
 	}
 	return member, nil
 }
@@ -269,8 +273,11 @@ func AddOrgMember(ctx context.Context, st Store, orgID, accountID, role string) 
 // role in orgID. A non-member is never sufficient (Rust org_role_sufficient).
 func OrgRoleSufficient(ctx context.Context, st Store, orgID, accountID, required string) (bool, error) {
 	member, found, err := st.OrgMemberOf(ctx, orgID, accountID)
-	if err != nil || !found {
-		return false, err
+	if err != nil {
+		return false, store.Fail("org member", err)
+	}
+	if !found {
+		return false, nil
 	}
 	return RoleSufficient(member.Role, required), nil
 }
@@ -278,11 +285,17 @@ func OrgRoleSufficient(ctx context.Context, st Store, orgID, accountID, required
 // ClaimResource records that ownerAccountID owns a resource (Rust
 // AccountStore::claim_resource).
 func ClaimResource(ctx context.Context, st Store, resourceType, resourceID, ownerAccountID, orgID string) error {
-	return st.ResourceClaim(ctx, resourceType, resourceID, ownerAccountID, orgID)
+	// Client input is checked here, so the store's required-field error is a
+	// 400 and is not classified as a store fault.
+	if resourceType == "" || resourceID == "" || ownerAccountID == "" {
+		return errors.New("resource claim: resource_type, resource_id and owner_account_id are required")
+	}
+	return store.Fail("resource claim", st.ResourceClaim(ctx, resourceType, resourceID, ownerAccountID, orgID))
 }
 
 // IsResourceOwner reports whether accountID owns the resource (Rust
 // AccountStore::is_resource_owner).
 func IsResourceOwner(ctx context.Context, st Store, resourceType, resourceID, accountID string) (bool, error) {
-	return st.IsResourceOwner(ctx, resourceType, resourceID, accountID)
+	owns, err := st.IsResourceOwner(ctx, resourceType, resourceID, accountID)
+	return owns, store.Fail("resource owner", err)
 }

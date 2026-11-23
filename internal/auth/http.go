@@ -53,15 +53,7 @@ func Routes(st Store) http.Handler {
 			return
 		}
 		if err != nil {
-			// A store failure is a server fault: log the cause and answer generically,
-			// as the dashboard does, so no driver text reaches the client (#601 item 6).
-			if status := httpx.StatusFor(err); status >= http.StatusInternalServerError {
-				log.Printf("auth: register: %v", err)
-				msg := "internal error"
-				httpx.WriteJSON(w, status, apiResponse{Success: false, Error: &msg})
-				return
-			}
-			writeFail(w, err.Error())
+			writeErr(w, "register", err)
 			return
 		}
 		writeOK(w, account)
@@ -76,7 +68,7 @@ func Routes(st Store) http.Handler {
 		}
 		account, err := VerifyLogin(r.Context(), st, req.Email, req.Password)
 		if err != nil {
-			writeFail(w, err.Error())
+			writeErr(w, "login", err)
 			return
 		}
 		writeOK(w, account)
@@ -141,7 +133,7 @@ func Routes(st Store) http.Handler {
 			TTL:       ttl,
 		})
 		if err != nil {
-			writeFail(w, err.Error())
+			writeErr(w, "token issue", err)
 			return
 		}
 		issued := struct {
@@ -163,7 +155,7 @@ func Routes(st Store) http.Handler {
 		}
 		rows, err := st.TokenList(r.Context())
 		if err != nil {
-			writeFail(w, err.Error())
+			writeErr(w, "token list", store.Fail("token list", err))
 			return
 		}
 		visible := make([]tokenSummary, 0, len(rows))
@@ -190,7 +182,7 @@ func Routes(st Store) http.Handler {
 		}
 		rows, err := st.TokenList(r.Context())
 		if err != nil {
-			writeFail(w, err.Error())
+			writeErr(w, "token revoke", store.Fail("token list", err))
 			return
 		}
 		revoked := false
@@ -205,7 +197,7 @@ func Routes(st Store) http.Handler {
 			}
 			if t.RevokedAt == 0 {
 				if err := st.TokenRevoke(r.Context(), t.ID, time.Now().Unix()); err != nil {
-					writeFail(w, err.Error())
+					writeErr(w, "token revoke", store.Fail("token revoke", err))
 					return
 				}
 				revoked = true
@@ -227,7 +219,7 @@ func Routes(st Store) http.Handler {
 		}
 		org, err := CreateOrg(r.Context(), st, name, ctx.AccountID)
 		if err != nil {
-			writeFail(w, err.Error())
+			writeErr(w, "org create", err)
 			return
 		}
 		writeOK(w, org)
@@ -247,7 +239,7 @@ func Routes(st Store) http.Handler {
 		orgID := r.PathValue("org_id")
 		allowed, err := OrgRoleSufficient(r.Context(), st, orgID, ctx.AccountID, OrgRoleAdmin)
 		if err != nil {
-			writeFail(w, err.Error())
+			writeErr(w, "org member add", err)
 			return
 		}
 		if !allowed {
@@ -256,7 +248,7 @@ func Routes(st Store) http.Handler {
 		}
 		member, err := AddOrgMember(r.Context(), st, orgID, req.AccountID, req.Role)
 		if err != nil {
-			writeFail(w, err.Error())
+			writeErr(w, "org member add", err)
 			return
 		}
 		writeOK(w, member)
@@ -269,7 +261,7 @@ func Routes(st Store) http.Handler {
 		orgID := r.PathValue("org_id")
 		allowed, err := OrgRoleSufficient(r.Context(), st, orgID, ctx.AccountID, OrgRoleViewer)
 		if err != nil {
-			writeFail(w, err.Error())
+			writeErr(w, "org members", err)
 			return
 		}
 		if !allowed {
@@ -278,7 +270,7 @@ func Routes(st Store) http.Handler {
 		}
 		members, err := st.OrgMembers(r.Context(), orgID)
 		if err != nil {
-			writeFail(w, err.Error())
+			writeErr(w, "org members", store.Fail("org members", err))
 			return
 		}
 		writeOK(w, members)
@@ -297,7 +289,7 @@ func Routes(st Store) http.Handler {
 			return
 		}
 		if err := ClaimResource(r.Context(), st, req.ResourceType, req.ResourceID, ctx.AccountID, req.OrgID); err != nil {
-			writeFail(w, err.Error())
+			writeErr(w, "resource claim", err)
 			return
 		}
 		writeOK(w, true)
@@ -310,7 +302,7 @@ func Routes(st Store) http.Handler {
 func caller(st Store, w http.ResponseWriter, r *http.Request) (AuthContext, bool) {
 	ctx, err := Resolve(st, r)
 	if err != nil {
-		writeFail(w, err.Error())
+		writeErr(w, "resolve", err)
 		return AuthContext{}, false
 	}
 	return ctx, true
@@ -390,6 +382,21 @@ func decodeBody(w http.ResponseWriter, r *http.Request, into any) bool {
 		return false
 	}
 	return true
+}
+
+// writeErr answers a failed auth call. A server fault (a store or internal
+// failure, any 5xx status) gets a generic "internal error" with the cause logged
+// under op, so no driver text reaches the client (#601 item 6). Any other error
+// is a client error and keeps its message at 400: bad input, an unknown token,
+// insufficient permission.
+func writeErr(w http.ResponseWriter, op string, err error) {
+	if status := httpx.StatusFor(err); status >= http.StatusInternalServerError {
+		log.Printf("auth: %s: %v", op, err)
+		msg := "internal error"
+		httpx.WriteJSON(w, status, apiResponse{Success: false, Error: &msg})
+		return
+	}
+	writeFail(w, err.Error())
 }
 
 // writeDecodeFail answers a body that did not decode: 413 when it is over the
