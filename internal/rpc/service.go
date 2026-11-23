@@ -7,11 +7,13 @@ package rpc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	connect "connectrpc.com/connect"
 	"github.com/FreePeak/LeanKG/internal/httpx"
 	leankgv1 "github.com/FreePeak/LeanKG/internal/rpc/leankg/v1"
+	"github.com/FreePeak/LeanKG/internal/store"
 
 	"github.com/FreePeak/LeanKG/internal/core"
 )
@@ -60,7 +62,7 @@ func (s *LeanKGService) Import(ctx context.Context, req *connect.Request[leankgv
 		Args:    args,
 	})
 	if err != nil {
-		return nil, connect.NewError(connectCode(err), err)
+		return nil, failure(connectCode(err), err)
 	}
 	capped, _ := core.EnforceBudget(out, req.Msg.Action, 0)
 	js, err := jsonOf(capped)
@@ -78,11 +80,11 @@ func (s *LeanKGService) Query(ctx context.Context, req *connect.Request[leankgv1
 		"args":   req.Msg.Args,
 	})
 	if err != nil {
-		return nil, connect.NewError(connectCode(err), err)
+		return nil, failure(connectCode(err), err)
 	}
 	ans, err := s.engine.QueryAnswer(ctx, query)
 	if err != nil {
-		return nil, connect.NewError(connectCode(err), err)
+		return nil, failure(connectCode(err), err)
 	}
 	js, err := jsonOf(ans.Body)
 	if err != nil {
@@ -94,7 +96,7 @@ func (s *LeanKGService) Query(ctx context.Context, req *connect.Request[leankgv1
 func (s *LeanKGService) Status(ctx context.Context, req *connect.Request[leankgv1.StatusRequest]) (*connect.Response[leankgv1.StatusResponse], error) {
 	out, err := s.engine.Status(ctx)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, failure(connect.CodeInternal, store.Fail("status", err))
 	}
 	js, err := jsonOf(out)
 	if err != nil {
@@ -118,17 +120,24 @@ func (s *LeanKGService) MemoryRead(ctx context.Context, req *connect.Request[lea
 		"args":   map[string]string{"command": req.Msg.Command, "path": req.Msg.Path, "cwd": ""},
 	})
 	if err != nil {
-		return nil, connect.NewError(connectCode(err), err)
+		return nil, failure(connectCode(err), err)
 	}
 	ans, err := s.engine.QueryAnswer(ctx, query)
 	if err != nil {
-		return nil, connect.NewError(connectCode(err), err)
+		return nil, failure(connectCode(err), err)
 	}
 	js, err := jsonOf(ans.Body)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&leankgv1.MemoryReadResponse{Json: js}), nil
+}
+
+// failure is the ConnectRPC error for a failed call: code with httpx.Message
+// as its text, so a store or server fault carries no driver text while a
+// validation error keeps its own. The cause is logged by httpx.Message.
+func failure(code connect.Code, err error) error {
+	return connect.NewError(code, errors.New(httpx.Message(err)))
 }
 
 // connectCode maps a failed call to the ConnectRPC code of the HTTP status the

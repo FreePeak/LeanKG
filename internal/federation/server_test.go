@@ -8,6 +8,7 @@ package federation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -379,6 +380,33 @@ func TestReceiverRefusesAPushOverOneMiBWith413(t *testing.T) {
 	}
 	if after := elementCount(t, st); after != before {
 		t.Errorf("element count changed from %d to %d on a refused push", before, after)
+	}
+}
+
+// elementsFails fails the read a push that carries elements makes before it
+// applies them, so applyGraph returns a store fault the handler must not echo.
+type elementsFails struct{ store.Backend }
+
+func (elementsFails) Elements(context.Context) ([]store.Element, error) {
+	return nil, errors.New("no such table: elements")
+}
+
+// TestReceiverStoreFaultOnPushHidesDriverText: a store fault while applying a
+// push answers 500 with no driver text (table and column names); the cause is
+// logged instead.
+func TestReceiverStoreFaultOnPushHidesDriverText(t *testing.T) {
+	clearTokenEnv(t)
+	st := openStore(t)
+	token := mint(t, st, "contributor")
+	h := Receiver(elementsFails{st}, "/srv/p")
+
+	body := pushDoc(t, "local", "svc", []wireElement{{QualifiedName: "pkg.Fine", Name: "Fine"}}, nil)
+	rec := serve(t, h, http.MethodPost, PushPath, body, map[string]string{"Authorization": "Bearer " + token})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("500 body leaks driver text: %s", rec.Body.String())
 	}
 }
 

@@ -47,7 +47,7 @@ func TestImportAnswerIsCappedOnTheWire(t *testing.T) {
 }
 
 // rpcClient serves a fresh store rooted at dir over ConnectRPC and returns a
-// client for it. The server and store close with the test.
+// client for it. The store closes with the test.
 func rpcClient(t *testing.T, dir string) leankgv1connect.LeanKGClient {
 	t.Helper()
 	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
@@ -58,8 +58,15 @@ func rpcClient(t *testing.T, dir string) leankgv1connect.LeanKGClient {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	return serveRPC(t, core.New(st, core.Options{ProjectDir: dir}))
+}
+
+// serveRPC serves engine over ConnectRPC and returns a client for it. The
+// server closes with the test.
+func serveRPC(t *testing.T, engine *core.Engine) leankgv1connect.LeanKGClient {
+	t.Helper()
 	mux := http.NewServeMux()
-	path, handler := rpc.Handler(core.New(st, core.Options{ProjectDir: dir}), telemetry.Nop{})
+	path, handler := rpc.Handler(engine, telemetry.Nop{})
 	mux.Handle(path, handler)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

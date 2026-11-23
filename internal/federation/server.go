@@ -111,7 +111,7 @@ func (h *receiver) push(w http.ResponseWriter, req *http.Request) {
 		if errors.As(err, &bad) {
 			httpx.WriteMessage(w, http.StatusBadRequest, err.Error())
 		} else {
-			httpx.WriteMessage(w, http.StatusInternalServerError, err.Error())
+			httpx.WriteError(w, store.Fail("push", err))
 		}
 		return
 	}
