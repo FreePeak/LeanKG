@@ -55,9 +55,9 @@ func runVerb(ctx context.Context, argv []string) int {
 	var err error
 	switch argv[0] {
 	case "run":
-		err = runEmbed(ctx, argv[1:], "incremental")
+		err = runEmbed(ctx, argv[1:], "run", "incremental")
 	case "full":
-		err = runEmbed(ctx, argv[1:], "full")
+		err = runEmbed(ctx, argv[1:], "full", "full")
 	case "export":
 		err = cmdExport(ctx, argv[1:])
 	case "import":
@@ -66,6 +66,9 @@ func runVerb(ctx context.Context, argv []string) int {
 		err = cmdStatus(ctx, argv[1:])
 	case "version":
 		fmt.Println("leankg-embed " + Version())
+	case "help", "-h", "--help":
+		usage()
+		return 0
 	default:
 		usage()
 		return 2
@@ -151,11 +154,11 @@ func bindPositional(verb string, fs *flag.FlagSet, args []string, project *strin
 		return fmt.Errorf("%s: %w", verb, err)
 	}
 	if len(positional) > 1 {
-		return fmt.Errorf("%s: too many arguments (%s)", verb, strings.Join(positional, " "))
+		return cliexit.Usage(fmt.Errorf("%s: too many arguments (%s)", verb, strings.Join(positional, " ")))
 	}
 	if len(positional) == 1 {
 		if *project != "" && *project != positional[0] {
-			return fmt.Errorf("%s: positional %q conflicts with --project %q", verb, positional[0], *project)
+			return cliexit.Usage(fmt.Errorf("%s: positional %q conflicts with --project %q", verb, positional[0], *project))
 		}
 		*project = positional[0]
 	}
@@ -198,10 +201,10 @@ func lock(dir string) (func(), error) {
 // deferred sidecar release, store close and lock release all run before the
 // process exits; a log.Fatal after the sidecar starts orphaned it. A run
 // stopped through ctx returns context.Canceled.
-func runEmbed(ctx context.Context, args []string, mode string) error {
-	fs := flag.NewFlagSet(mode, flag.ContinueOnError)
+func runEmbed(ctx context.Context, args []string, verb, mode string) error {
+	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
-	if err := bindPositional(mode, fs, args, project); err != nil {
+	if err := bindPositional(verb, fs, args, project); err != nil {
 		return err
 	}
 	dir, err := projectDir(*project)

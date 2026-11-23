@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,7 +12,39 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 )
+
+// TestHelpExitsZero pins that asking for help is not a usage error: -h,
+// --help and help exit 0, as `leankg -h` does.
+func TestHelpExitsZero(t *testing.T) {
+	for _, arg := range []string{"-h", "--help", "help"} {
+		if got := runVerb(context.Background(), []string{arg}); got != 0 {
+			t.Errorf("leankg-embed %s exit = %d, want 0", arg, got)
+		}
+	}
+}
+
+// TestRunSurplusPositionalIsUsage pins that a surplus positional is a usage
+// error (exit 2), the same as a bad flag.
+func TestRunSurplusPositionalIsUsage(t *testing.T) {
+	if got := runVerb(context.Background(), []string{"run", "/a", "/b"}); got != 2 {
+		t.Fatalf("leankg-embed run /a /b exit = %d, want 2 (usage)", got)
+	}
+}
+
+// TestRunSurplusPositionalLabelsTheVerb pins the label: the usage error names
+// the verb the user typed ("run"), not the internal embed mode ("incremental").
+func TestRunSurplusPositionalLabelsTheVerb(t *testing.T) {
+	err := runEmbed(context.Background(), []string{"/a", "/b"}, "run", "incremental")
+	if err == nil || !strings.HasPrefix(err.Error(), "run:") {
+		t.Fatalf("error = %v, want the run: label", err)
+	}
+	if got := cliexit.Finish(err, io.Discard); got != 2 {
+		t.Fatalf("exit = %d, want 2", got)
+	}
+}
 
 func TestBindPositional(t *testing.T) {
 	cases := []struct {
@@ -68,7 +101,7 @@ func TestRunEmbedCancelledReturnsError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := runEmbed(ctx, []string{"--project", dir}, "incremental")
+	err := runEmbed(ctx, []string{"--project", dir}, "run", "incremental")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("runEmbed error = %v, want context.Canceled", err)
 	}
