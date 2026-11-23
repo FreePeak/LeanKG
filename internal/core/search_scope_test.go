@@ -98,26 +98,26 @@ func fmtPath(h map[string]any) string {
 	return p
 }
 
-// TestCommitLookupIsHexOnly pins which queries are commit references: 7 to 40
-// hex characters. Anything else keeps the query text and the default history
-// population.
-func TestCommitLookupIsHexOnly(t *testing.T) {
+// TestCommitRefIsHexOnly pins which queries are commit references: 7 to 40 hex
+// characters, lower-cased, with a digit in a token of 7 to 12. Anything else is
+// not a reference and keeps the query text as it is.
+func TestCommitRefIsHexOnly(t *testing.T) {
 	for q, want := range map[string]struct {
-		prefix string
-		ok     bool
+		sha string
+		ok  bool
 	}{
 		"57c220d": {"57c220d", true},
-		"57C220D56FDA547F7F7D27CB86DCC53F51EC9DF6": {"57c220d", true},
-		"deadbeef":        {"deadbee", true},
-		"cafe":            {"cafe", false},
-		"accede":          {"accede", false},
-		"zzzzzzz":         {"zzzzzzz", false},
-		"parse the input": {"parse the input", false},
-		"57c220d56fda547f7f7d27cb86dcc53f51ec9df67": {"57c220d56fda547f7f7d27cb86dcc53f51ec9df67", false},
+		"57C220D56FDA547F7F7D27CB86DCC53F51EC9DF6": {"57c220d56fda547f7f7d27cb86dcc53f51ec9df6", true},
+		"deadbeef":        {"", false},
+		"cafe":            {"", false},
+		"accede":          {"", false},
+		"zzzzzzz":         {"", false},
+		"parse the input": {"", false},
+		"57c220d56fda547f7f7d27cb86dcc53f51ec9df67": {"", false},
 	} {
-		got, ok := commitLookup(q)
-		if got != want.prefix || ok != want.ok {
-			t.Errorf("commitLookup(%q) = (%q, %v), want (%q, %v)", q, got, ok, want.prefix, want.ok)
+		got, ok := commitRef(q)
+		if got != want.sha || ok != want.ok {
+			t.Errorf("commitRef(%q) = (%q, %v), want (%q, %v)", q, got, ok, want.sha, want.ok)
 		}
 	}
 }

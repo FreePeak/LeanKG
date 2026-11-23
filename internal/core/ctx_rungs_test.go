@@ -41,10 +41,10 @@ func TestRungsReturnCancelledCtx(t *testing.T) {
 	if _, err := e.rungExact(ctx, "Alpha", 10, resp(), true, store.ElementFilter{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("rungExact err = %v, want context.Canceled", err)
 	}
-	if _, err := e.rungFuzzy(ctx, "Alpha", 10, resp(), true, store.ElementFilter{}); !errors.Is(err, context.Canceled) {
+	if _, err := e.rungFuzzy(ctx, "Alpha", 10, resp(), true, store.ElementFilter{}, ""); !errors.Is(err, context.Canceled) {
 		t.Fatalf("rungFuzzy err = %v, want context.Canceled", err)
 	}
-	if _, err := e.rungSemantic(ctx, "alpha function", 10, resp(), true, store.ElementFilter{}, envelopeArgs{}); !errors.Is(err, context.Canceled) {
+	if _, err := e.rungSemantic(ctx, "alpha function", 10, resp(), true, store.ElementFilter{}, envelopeArgs{}, ""); !errors.Is(err, context.Canceled) {
 		t.Fatalf("rungSemantic err = %v, want context.Canceled", err)
 	}
 	if _, err := e.Query(ctx, QueryRequest{Query: "Alpha"}); !errors.Is(err, context.Canceled) {
@@ -72,7 +72,7 @@ func TestSemanticRungCancelDuringEmbedIsNotDegrade(t *testing.T) {
 	defer cancel()
 	e.embedder = cancelOnEmbed{Provider: p, cancel: cancel}
 
-	out, err := e.rungSemantic(ctx, "alpha function", 10, map[string]any{}, true, store.ElementFilter{}, envelopeArgs{})
+	out, err := e.rungSemantic(ctx, "alpha function", 10, map[string]any{}, true, store.ElementFilter{}, envelopeArgs{}, "")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v (out=%v), want context.Canceled: a cancelled embed is not a provider failure", err, out)
 	}

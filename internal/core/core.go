@@ -815,7 +815,10 @@ func (e *Engine) rungExact(ctx context.Context, q string, limit int, resp map[st
 // PostgreSQL backend ranks its migration-012 tsvector with ts_rank and degrades
 // through pg_trgm similarity to ILIKE substring recall (issue #273). FindFuzzy
 // reports the arm that served the hits, so the rung has no engine branch.
-func (e *Engine) rungFuzzy(ctx context.Context, q string, limit int, resp map[string]any, pin bool, keep store.ElementFilter) (map[string]any, error) {
+//
+// commit is the lower-case SHA when q is a commit reference, "" otherwise; the
+// reference's commit rows join the full-text matches (addCommitRows).
+func (e *Engine) rungFuzzy(ctx context.Context, q string, limit int, resp map[string]any, pin bool, keep store.ElementFilter, commit string) (map[string]any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -825,7 +828,16 @@ func (e *Engine) rungFuzzy(ctx context.Context, q string, limit int, resp map[st
 		return nil, err
 	}
 	reason := keywordReason(arm)
+	note := ""
+	if commit != "" {
+		if matches, note, err = e.addCommitRows(ctx, commit, limit, keep, matches); err != nil {
+			return nil, err
+		}
+	}
 	matches = admit(matches, matchElement, keep, limit)
+	if note != "" {
+		resp["guidance"] = note
+	}
 	if pin {
 		if len(matches) == 0 {
 			reason = "no keyword match"
@@ -849,7 +861,10 @@ func (e *Engine) rungFuzzy(ctx context.Context, q string, limit int, resp map[st
 // over the first stamped collection. Provider failure or absent wiring
 // DEGRADES to L2 — never a hard error (issue #368 AC: query-time provider
 // failure degrades the ladder with retrieval.reason).
-func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map[string]any, pin bool, keep store.ElementFilter, env envelopeArgs) (map[string]any, error) {
+//
+// commit is passed to the keyword rung when L3 degrades. The fused and vector
+// arms search the full text only: a SHA has no meaning as a vector query.
+func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map[string]any, pin bool, keep store.ElementFilter, env envelopeArgs, commit string) (map[string]any, error) {
 	degrade := func(reason string) (map[string]any, error) {
 		// A cancelled caller is not a provider failure: it ends the rung with
 		// ctx.Err() instead of an L2 answer that would be cached as a result.
@@ -861,7 +876,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 		}
 		// pin=false so rungFuzzy does not overwrite the L3-degrade reason;
 		// withEmptyHint still attaches next-step guidance on a zero-hit result.
-		return withEmptyHint(e.rungFuzzy(ctx, q, limit, resp, false, keep))
+		return withEmptyHint(e.rungFuzzy(ctx, q, limit, resp, false, keep, commit))
 	}
 	if e.embedder == nil {
 		return degrade("no embedding provider wired; degraded from L3")
@@ -1508,7 +1523,7 @@ func (e *Engine) patternQuery(ctx context.Context, req QueryRequest, a patternAr
 	runner, err := astgrep.New()
 	if err != nil {
 		resp["retrieval"] = map[string]any{"rung": "L2", "reason": "ast-grep CLI not installed; degraded to keyword search"}
-		return e.rungFuzzy(ctx, pattern, req.Limit, resp, false, searchKeep(a.IncludeGit))
+		return e.rungFuzzy(ctx, pattern, req.Limit, resp, false, searchKeep(a.IncludeGit), "")
 	}
 	root := e.projectDir
 	if root == "" {
@@ -1905,17 +1920,57 @@ func searchKeep(includeGit bool) store.ElementFilter {
 	return store.ElementFilter{ExcludeQNPrefixes: []string{"git:"}}
 }
 
-// commitRefRe is a git commit reference: 7 to 40 hex characters.
+// commitRefRe is the shape of a git commit reference: 7 to 40 hex characters.
 var commitRefRe = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
 
-// commitLookup reports whether q is a commit reference. If it is, the lookup
-// text is its 7-character prefix, the token githistory.commitElement puts in
-// the commit row's name; otherwise the lookup text is q itself.
-func commitLookup(q string) (string, bool) {
+// commitQNPrefix is the qualified-name prefix githistory gives a commit row.
+const commitQNPrefix = "git:commit:"
+
+// commitRef reports whether q is a git commit reference and returns it in lower
+// case. A token of 7 to 12 characters must hold a digit, so a word made of hex
+// letters ("defaced", "effaced") is not a SHA; a longer token is one without it.
+func commitRef(q string) (string, bool) {
 	if !commitRefRe.MatchString(q) {
-		return q, false
+		return "", false
 	}
-	return strings.ToLower(q[:7]), true
+	if len(q) <= 12 && !strings.ContainsAny(q, "0123456789") {
+		return "", false
+	}
+	return strings.ToLower(q), true
+}
+
+// addCommitRows is the commit-reference arm of the keyword rung. The keyword
+// index holds a commit row only by its 7-character prefix, so a longer
+// reference reaches its row through that prefix: the arm looks the prefix up
+// and adds, after the full-text matches, the git commit rows whose full SHA
+// starts with the reference. It returns a note when the reference names more
+// than one commit.
+func (e *Engine) addCommitRows(ctx context.Context, sha string, limit int, keep store.ElementFilter, matches []store.FuzzyMatch) ([]store.FuzzyMatch, string, error) {
+	rows, _, err := e.st.FindFuzzy(ctx, sha[:7], fetchWindow(limit, keep))
+	if err != nil {
+		return nil, "", err
+	}
+	seen := map[string]bool{}
+	for _, m := range matches {
+		seen[m.Element.QualifiedName] = true
+	}
+	named := 0
+	for _, m := range rows {
+		full, ok := strings.CutPrefix(m.Element.QualifiedName, commitQNPrefix)
+		if !ok || !strings.HasPrefix(full, sha) || !keep.Admits(m.Element) {
+			continue
+		}
+		named++
+		if !seen[m.Element.QualifiedName] {
+			seen[m.Element.QualifiedName] = true
+			matches = append(matches, m)
+		}
+	}
+	note := ""
+	if named > 1 && len(sha) < 40 {
+		note = fmt.Sprintf("%d commits start with %q; give more characters, or the full 40-character SHA, to name one.", named, sha)
+	}
+	return matches, note, nil
 }
 
 // admit keeps the items whose element f admits, at most limit of them. The zero
