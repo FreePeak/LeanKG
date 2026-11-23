@@ -197,7 +197,10 @@ func fileRelationships(fe fileElements, names nameTable) []store.Relationship {
 //     grammar-derived seeds and the AST seeds are exempt (they are exact, not guesses);
 //   - at most maxEdgesPerElement outgoing word-heuristic calls per element (AST
 //     seeds are exempt from it, see the seeded branch);
-//   - at most maxEdgesPerFile calls per file.
+//   - the call and reference edges of a file stop at maxEdgesPerFile. The cut is
+//     checked between elements, so it stops the next element, not the current
+//     one: a single element with more seeds than the ceiling keeps all of them
+//     (contains edges never count).
 const (
 	minCallNameLen     = 4
 	maxEdgesPerElement = 40
@@ -325,7 +328,7 @@ func addRelationships(set *edgeSet, els []indexedElem, names nameTable) {
 			}
 		}
 		if fileCalls >= maxEdgesPerFile {
-			break // per-file ceiling: stop scanning further elements
+			break // per-file ceiling, checked after each element: later elements are skipped
 		}
 	}
 }
