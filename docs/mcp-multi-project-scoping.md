@@ -30,9 +30,9 @@ refuses — correctly — and the client has nothing to send.
 | The Go engine has **no** project auto-resolution | `grep -rn "roots/list\|ListRoots" internal/ cmd/` → no implementation; only comments (`cmd/leankg/connect.go:104`) that assume it exists |
 
 **The 286 below are the pre-2026-10-21 fleet.** The scan root was `$HOME/work`,
-so 231 of the repos it found (287 measured on 2026-10-21) were `~/work/be`
+so 231 of the repos it found (287 measured on 2026-10-21) were `other-repo`
 company code that was never in scope: LeanKG runs only under
-`~/work/harvey/freepeak`, and `~/work/be` is served by be-kg. The scan root is
+`~/work/harvey/freepeak`, and `other-repo` is served by other-kg. The scan root is
 now `$HOME/work/harvey/freepeak` — 42 repos — and the counts in this document
 are kept as the measurement of the defect. The scope is now versioned in this
 repository: `scripts/leankg-serve-wrapper.sh` and
@@ -228,8 +228,8 @@ The evidence from three clients on this machine is worth weighing:
 
 | Client | How it scopes the shared server | Cost |
 |---|---|---|
-| opencode | `?project=/Users/linh.doan/work/harvey/freepeak/leankg` in its config | the path is baked into a global config — exactly what the v4.15-bare-mcp-url wave removed from the writers as "stale the moment the config leaves the machine" |
-| Claude Code / DSH | the `be-kg` entry is scoped to `/Users/linh.doan/work/be` | scoped to one workspace; the local graph needs another entry |
+| opencode | `?project=<repo-path>` in its config | the path is baked into a global config — exactly what the v4.15-bare-mcp-url wave removed from the writers as "stale the moment the config leaves the machine" |
+| Claude Code / DSH | the `other-kg` entry is scoped to `other-repo` | scoped to one workspace; the local graph needs another entry |
 | xdev | **nothing** | the reported failure |
 
 **The question FR-ZCP-01 should now answer is not "which mechanism resolves
