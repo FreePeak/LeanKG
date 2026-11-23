@@ -18,6 +18,11 @@ import (
 // dropping the continuation bytes it lands on the lone leading byte (0xE2),
 // which is itself an incomplete rune. Dropping until the prefix is valid is
 // bounded by the rune width (max 3 iterations).
+//
+// The cut keeps whole runes, not whole grapheme clusters. A combining mark can
+// end up separated from its base letter ("e" then U+0301 cut to "e"), and a
+// ZWJ emoji sequence can be cut between its components. Both are valid UTF-8,
+// which is the contract; rendering may show the split.
 func ClipUTF8(s string, maxBytes int) string {
 	if maxBytes <= 0 {
 		return ""
