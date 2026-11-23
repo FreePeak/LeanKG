@@ -992,9 +992,11 @@ func (s *PGStore) DeleteOrphanVectors(ctx context.Context) (int, error) {
 // SearchVectors performs the single ANN-equivalent shape: the model's vectors
 // ranked by cosine distance (HNSW index when present), hydrated against
 // code_elements. similarity = 1 - distance (the <=> operator's cosine distance).
-// The filter is part of the WHERE clause, before ORDER BY and LIMIT, and the
-// connections run with hnsw.iterative_scan (see openPG), so K admitted rows come
-// back whenever they exist.
+// The filter is part of the WHERE clause, before ORDER BY and LIMIT. The
+// connections run with hnsw.iterative_scan where pgvector is 0.8 or later (see
+// openPG), so K admitted rows come back whenever they exist. Below 0.8 the
+// setting does not exist, and a filtered vector search can return fewer than K
+// rows.
 func (s *PGStore) SearchVectors(ctx context.Context, q VectorQuery) ([]VectorSearchHit, error) {
 	if len(q.Vec) == 0 {
 		return nil, nil

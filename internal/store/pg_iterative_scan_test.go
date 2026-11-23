@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"os"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // hnsw.iterative_scan exists only from pgvector 0.8.0; the setting is applied
@@ -30,9 +33,13 @@ func TestPGVectorHasIterativeScan(t *testing.T) {
 func TestPGIterativeScanFollowsInstalledVector(t *testing.T) {
 	s := openPGTest(t)
 	ctx := context.Background()
-	var ver string
-	if err := s.pool.QueryRow(ctx, `SELECT COALESCE((SELECT extversion FROM pg_extension WHERE extname = 'vector'), '')`).Scan(&ver); err != nil {
-		t.Fatalf("read extversion: %v", err)
+	cc, err := pgx.ParseConfig(os.Getenv(pgTestURLEnv))
+	if err != nil {
+		t.Fatalf("parse %s: %v", pgTestURLEnv, err)
+	}
+	ver, err := pgVectorVersion(ctx, cc)
+	if err != nil {
+		t.Fatalf("read pgvector version: %v", err)
 	}
 	var got string
 	if err := s.pool.QueryRow(ctx, `SELECT COALESCE(current_setting('hnsw.iterative_scan', true), '')`).Scan(&got); err != nil {

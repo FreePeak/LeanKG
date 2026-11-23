@@ -349,6 +349,12 @@ func (s *Store) knowledgeRanked(ctx context.Context, query, knowledgeType, envir
 
 // knowledgeSubstringSearch substring-matches title or content (optionally
 // narrowed by knowledge type and environment), newest first.
+//
+// LIMITATION (SQLite, ASCII only): the needle is lowercased in Go by likeContains
+// with Unicode rules, but SQLite's LOWER() and LIKE fold ASCII only. So a
+// non-ASCII partial word misses an entry in another case: "école" does not match
+// "ÉCOLE". PostgreSQL's lower() is locale-aware and matches. The package has no
+// SQLite scalar-function hook for a Unicode fold, so this is documented, not fixed.
 func (s *Store) knowledgeSubstringSearch(ctx context.Context, query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
 	b := &whereBuilder{ph: func(int) string { return "?" }}
 	where := searchWhere(query, knowledgeType, environment, b)
