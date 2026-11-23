@@ -123,3 +123,35 @@ func TestNoDuplicateErrorWriters(t *testing.T) {
 		t.Fatalf("duplicate HTTP writers outside internal/httpx:\n%s", strings.Join(hits, "\n"))
 	}
 }
+
+// TestMessageKeepsServerFaultsGeneric: a server fault answers the catalog's
+// static text or a generic line, never the driver or cause text it wraps. A
+// refused body keeps its plain cause, and a client error keeps its full text.
+func TestMessageKeepsServerFaultsGeneric(t *testing.T) {
+	const driver = "no such table: elements"
+	cases := []struct {
+		name     string
+		err      error
+		want     string
+		contains string
+	}{
+		{"store failure is generic", store.Fail("status", errors.New(driver)), "internal server error", ""},
+		{"unreachable Postgres keeps its code and static text", errs.NewError(errs.PGUnreachable, "dial tcp 10.0.0.1: refused", ""), errs.PGUnreachable.Message(), errs.PGUnreachable.Code},
+		{"refused body keeps its plain cause", InvalidBody(errors.New("unexpected EOF")), "invalid JSON body: unexpected EOF", ""},
+		{"client error keeps its catalog text", errs.NewError(errs.PermissionDenied, "the reader role", ""), errs.NewError(errs.PermissionDenied, "the reader role", "").Error(), ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Message(tc.err)
+			if tc.want != "" && got != tc.want {
+				t.Fatalf("Message = %q; want %q", got, tc.want)
+			}
+			if tc.contains != "" && !strings.Contains(got, tc.contains) {
+				t.Fatalf("Message = %q; want it to carry %q", got, tc.contains)
+			}
+			if strings.Contains(got, driver) || strings.Contains(got, "dial tcp") {
+				t.Fatalf("Message = %q leaks driver text", got)
+			}
+		})
+	}
+}

@@ -129,7 +129,7 @@ func TestBadInputAnswersOneEnvelopeOnEveryTransport(t *testing.T) {
 		if rs != http.StatusBadRequest || ws != http.StatusBadRequest {
 			t.Fatalf("status rest=%d web=%d, want 400 on both", rs, ws)
 		}
-		if rmsg != wmsg || !strings.Contains(rmsg, "invalid JSON body: ") {
+		if rmsg != wmsg || !strings.HasPrefix(rmsg, "invalid JSON body: ") {
 			t.Fatalf("rest %q, web %q; want the same invalid JSON body text", rmsg, wmsg)
 		}
 		if rcode != wcode || rcode != "LEANKG_ERROR_INVALID_PARAM" {

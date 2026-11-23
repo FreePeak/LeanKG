@@ -44,7 +44,7 @@ func respondEnvelope(w http.ResponseWriter, status int, env apiEnvelope) {
 // respondErr answers a failed call with the status the shared error table
 // gives err, and the catalog code when err has one.
 func respondErr(w http.ResponseWriter, err error) {
-	msg := err.Error()
+	msg := httpx.Message(err)
 	respondEnvelope(w, httpx.StatusFor(err), apiEnvelope{Error: &msg, Code: httpx.CodeOf(err)})
 }
 

@@ -35,6 +35,17 @@ func TestStatusStoreFailureAnswers500(t *testing.T) {
 	}
 }
 
+// TestStatusStoreFailureHidesDriverText: the 500 body names the failure without
+// the driver text (table and column names); the cause goes to the log instead.
+func TestStatusStoreFailureHidesDriverText(t *testing.T) {
+	h := gatedHandler(core.New(elementCountFails{}, core.Options{}), nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
+	if strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("500 body leaks driver text: %s", rec.Body.String())
+	}
+}
+
 // TestOversizeQueryBodyAnswers413WithCode pins the body cap on the REST decode
 // path: a body over 1 MiB is refused with the catalog code before the engine
 // is touched (the fake store would fail the read if it were).

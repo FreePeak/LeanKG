@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/FreePeak/LeanKG/internal/errs"
@@ -77,11 +78,20 @@ func CodeOf(err error) string {
 	return ""
 }
 
+// bodyError is a request body the server refused. Its message is the plain
+// cause, the text clients parsed before the catalog reached the body; the
+// catalog code still travels in "code" and picks the status.
+type bodyError struct{ coded *errs.Error }
+
+func (e bodyError) Error() string { return e.coded.Cause }
+
+func (e bodyError) Unwrap() error { return e.coded }
+
 // InvalidBody is the error for a request body that does not decode as JSON.
 // It carries the InvalidParam code, so every typed-body decode failure answers
 // with the same 400 and token as a bad query field.
 func InvalidBody(err error) error {
-	return errs.NewError(errs.InvalidParam, "invalid JSON body: "+err.Error(), "")
+	return bodyError{errs.NewError(errs.InvalidParam, "invalid JSON body: "+err.Error(), "")}
 }
 
 // DecodeJSON reads the request body into into, capped at MaxBodyBytes. A body
@@ -94,7 +104,7 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, into any) error {
 	}
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
-		return errs.NewError(errs.RequestTooLarge, errs.RequestTooLarge.Cause, "")
+		return bodyError{errs.NewError(errs.RequestTooLarge, errs.RequestTooLarge.Cause, "")}
 	}
 	return InvalidBody(err)
 }
@@ -106,16 +116,37 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// Message is the "error" text a client sees for err. A client error keeps its
+// own text: a refused body its plain cause, any other error its full catalog
+// rendering. A server fault (5xx) carries no cause text, because driver errors
+// name tables, columns and hosts: it answers the catalog's static message for
+// its code, or a generic line, and the cause goes to the log.
+func Message(err error) string {
+	var body bodyError
+	if errors.As(err, &body) {
+		return body.Error()
+	}
+	if StatusFor(err) < http.StatusInternalServerError {
+		return err.Error()
+	}
+	log.Printf("httpx: server fault: %v", err)
+	var coded *errs.Error
+	if errors.As(err, &coded) {
+		return coded.Entry.Message()
+	}
+	return "internal server error"
+}
+
 // WriteError answers a failed call: the status StatusFor gives err and the
-// body {"error": message}, plus "code" when err is a catalog error so clients
-// branch on the stable token (FR-ZCP-12). A cancelled call has no body: the
-// client that would read it is gone.
+// body {"error": Message(err)}, plus "code" when err is a catalog error so
+// clients branch on the stable token (FR-ZCP-12). A cancelled call has no
+// body: the client that would read it is gone.
 func WriteError(w http.ResponseWriter, err error) {
 	if errors.Is(err, context.Canceled) {
 		w.WriteHeader(StatusClientClosedRequest)
 		return
 	}
-	body := map[string]any{"error": err.Error()}
+	body := map[string]any{"error": Message(err)}
 	if code := CodeOf(err); code != "" {
 		body["code"] = code
 	}
