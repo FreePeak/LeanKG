@@ -2075,6 +2075,46 @@
    ]
   }
  ],
- "known_misses": [],
- "floors": {}
+ "known_misses": [
+  {
+   "symbol": "ElementsByType",
+   "file": "internal/core/importpath_test.go",
+   "func": "TestDeletedCodeIsNeverASemanticHit",
+   "reason": "product miss, not a truth error: the call e.st.ElementsByType sits in a test whose receiver e is bound by e := engineAt(t, dir); the typed-receiver path (internal/index/crosspkg.go:283 receiverType) does not resolve it, while Engine.Status (internal/core/core.go:451) is found. Cause not confirmed; product code, out of scope for this change"
+  },
+  {
+   "symbol": "PGStore.ElementsByType",
+   "file": "internal/core/importpath_test.go",
+   "func": "TestDeletedCodeIsNeverASemanticHit",
+   "reason": "same call as ElementsByType: the interface-dispatch caller of PGStore.ElementsByType is missed for the same receiver reason; product code, out of scope for this change"
+  }
+ ],
+ "floors": {
+  "overall": {
+   "precision": 0.98,
+   "recall": 0.973
+  },
+  "overall_without_tests": {
+   "precision": 0.98,
+   "recall": 0.98
+  },
+  "classes": {
+   "interface": {
+    "precision": 0.98,
+    "recall": 0.951
+   },
+   "method": {
+    "precision": 0.98,
+    "recall": 0.951
+   },
+   "qualified": {
+    "precision": 0.98,
+    "recall": 0.98
+   },
+   "type": {
+    "precision": 0.98,
+    "recall": 0.98
+   }
+  }
+ }
 }

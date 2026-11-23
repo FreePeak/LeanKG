@@ -1,19 +1,33 @@
 package ab_test
 
 // Precision/recall scorer for the `callers` graph verb. The ground truth is
-// benchmark/ab/testdata/callers_truth.json (rg-derived call sites, keyed by
-// (file, enclosing func)). The integration scorer is gated by
-// LEANKG_CALLERS_SCORE=1 so CI never runs it.
+// benchmark/ab/testdata/callers_truth.json, generated from the committed tree
+// by callers_truth_gen_test.go (the rules are in the file's "rules" field).
+// The integration scorer is gated by LEANKG_CALLERS_SCORE=1 so CI never runs
+// it. It indexes a copy of the commit the truth was generated from (source_commit,
+// via pinnedCorpus), never the working tree.
 //
 // Run:
 //
 //	LEANKG_CALLERS_SCORE=1 LEANKG_CALLERS_OUT=/path/out.json \
 //	  go test ./benchmark/ab -run Callers -count=1 -v
+//
+// Failing floors (per class with enough truth, and overall) and the known
+// misses are read from the truth file. A miss that is not listed in
+// known_misses fails the run.
+//
+// Rebaseline after the product or the corpus changes, in one command. It
+// regenerates the truth, measures, and writes floors (measured minus
+// floorMargin) and known_misses back into the truth file:
+//
+//	LEANKG_CALLERS_TRUTH_UPDATE=1 LEANKG_CALLERS_SCORE=1 \
+//	  go test ./benchmark/ab -run TestCallers -count=1 -v
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -136,7 +150,14 @@ func TestCallersScoreMath(t *testing.T) {
 	}
 }
 
-const callersTruthPath = "testdata/callers_truth.json"
+const (
+	callersTruthPath = "testdata/callers_truth.json"
+	// floorMargin is how far below the measured value a floor sits.
+	floorMargin = 0.02
+	// floorMinSample is the truth size (TP+FN, with tests) a class needs
+	// before it gets its own floor; smaller classes are covered by overall.
+	floorMinSample = 10
+)
 
 type defectSite struct {
 	Site string `json:"site"`
@@ -206,24 +227,21 @@ func summarize(s Score) report {
 	return report{Precision: p, Recall: r, TP: s.TP, FP: s.FP, FN: s.FN}
 }
 
-// TestCallersScoreIntegration indexes the repository root into a fresh SQLite
-// store, asks the callers verb about each truth symbol and scores the answers.
+// TestCallersScoreIntegration indexes a copy of HEAD into a fresh SQLite
+// store, asks the callers verb about each truth symbol and scores the answers
+// against the floors and known misses in the truth file.
 func TestCallersScoreIntegration(t *testing.T) {
 	if os.Getenv("LEANKG_CALLERS_SCORE") != "1" {
 		t.Skip("set LEANKG_CALLERS_SCORE=1 to run the callers precision/recall scorer")
 	}
 	ctx := context.Background()
-
-	raw, err := os.ReadFile(callersTruthPath)
-	if err != nil {
-		t.Fatalf("read truth: %v", err)
+	rebaseline := os.Getenv("LEANKG_CALLERS_TRUTH_UPDATE") == "1"
+	if rebaseline {
+		regenerateCallersTruth(t, callersTruthPath)
 	}
-	var truth truthFile
-	if err := json.Unmarshal(raw, &truth); err != nil {
-		t.Fatalf("parse truth: %v", err)
-	}
+	truth := loadCallersTruth(t, callersTruthPath)
 	root, commit := pinnedCorpus(t, truth.SourceCommit)
-	t.Logf("corpus commit %s", commit)
+	t.Logf("corpus commit %s (the truth source_commit)", commit)
 
 	reg := langs.DefaultRegistry()
 	if _, err := reg.Activate(ctx, root); err != nil {
@@ -251,6 +269,8 @@ func TestCallersScoreIntegration(t *testing.T) {
 	classWithout := map[string]*Score{}
 	var allWith, allWithout Score
 	var defects []map[string]any
+	var misses []knownMiss
+	possibleHits := 0
 
 	for _, sym := range truth.Symbols {
 		out, err := eng.Query(ctx, core.QueryRequest{Action: "callers", Query: sym.QualifiedName})
@@ -266,10 +286,23 @@ func TestCallersScoreIntegration(t *testing.T) {
 		}
 		got := make([]callerKey, 0, len(answer.Callers))
 		gotNames := make([]string, 0, len(answer.Callers))
+		gotSet := map[callerKey]bool{}
 		for _, qn := range answer.Callers {
 			file, fn, _ := strings.Cut(qn, "::")
-			got = append(got, callerKey{file, fn})
+			k := callerKey{file, fn}
+			got = append(got, k)
+			gotSet[k] = true
 			gotNames = append(gotNames, qn)
+		}
+		for _, c := range sym.Callers {
+			if !gotSet[callerKey{c.File, c.Func}] {
+				misses = append(misses, knownMiss{Symbol: sym.ID, File: c.File, Func: c.Func})
+			}
+		}
+		for _, p := range sym.Possible {
+			if gotSet[callerKey{p.File, p.Func}] {
+				possibleHits++
+			}
 		}
 		with := scoreCallers(sym.Callers, got, true)
 		without := scoreCallers(sym.Callers, got, false)
@@ -295,6 +328,20 @@ func TestCallersScoreIntegration(t *testing.T) {
 	}
 
 	printTable(t, classWith, classWithout, allWith, allWithout, defects)
+	t.Logf("possible sites returned (reported, not counted): %d", possibleHits)
+	t.Logf("misses against truth (with tests): %d", len(misses))
+
+	if rebaseline {
+		truth.Floors = measureFloors(classWith, allWith, allWithout)
+		truth.KnownMisses = carryMissReasons(truth.KnownMisses, misses)
+		if err := writeCallersTruth(callersTruthPath, truth); err != nil {
+			t.Fatalf("write floors and known misses: %v", err)
+		}
+		t.Logf("rebaselined floors and %d known misses in %s", len(truth.KnownMisses), callersTruthPath)
+	} else {
+		checkFloors(t, truth.Floors, classWith, allWith, allWithout)
+		checkMisses(t, truth.KnownMisses, misses)
+	}
 
 	if out := os.Getenv("LEANKG_CALLERS_OUT"); out != "" {
 		classes := map[string]any{}
@@ -303,8 +350,11 @@ func TestCallersScoreIntegration(t *testing.T) {
 		}
 		body := map[string]any{
 			"truth_source_commit": truth.SourceCommit,
+			"corpus_commit":       commit,
 			"classes":             classes,
 			"overall":             map[string]any{"with_tests": summarize(allWith), "without_tests": summarize(allWithout)},
+			"misses":              misses,
+			"possible_hits":       possibleHits,
 			"defects":             defects,
 			"symbols":             perSymbol,
 		}
@@ -319,6 +369,94 @@ func TestCallersScoreIntegration(t *testing.T) {
 			t.Fatalf("write %s: %v", out, err)
 		}
 		t.Logf("wrote %s", out)
+	}
+}
+
+// measureFloors sets each floor floorMargin below its measured value, rounded
+// to three decimals. Classes below floorMinSample truth callers get none.
+func measureFloors(classWith map[string]*Score, allWith, allWithout Score) truthFloors {
+	f := truthFloors{Overall: floorFor(allWith), OverallNoTests: floorFor(allWithout), Classes: map[string]floorPR{}}
+	for c, s := range classWith {
+		if s.TP+s.FN >= floorMinSample {
+			f.Classes[c] = floorFor(*s)
+		}
+	}
+	return f
+}
+
+func floorFor(s Score) floorPR {
+	p, r := s.PR()
+	return floorPR{Precision: round3(math.Max(0, p-floorMargin)), Recall: round3(math.Max(0, r-floorMargin))}
+}
+
+func round3(x float64) float64 { return math.Round(x*1000) / 1000 }
+
+// carryMissReasons keeps the reason of every miss that is still observed and
+// marks a new one for classification.
+func carryMissReasons(previous, misses []knownMiss) []knownMiss {
+	reason := map[missKey]string{}
+	for _, m := range previous {
+		reason[missKey{m.Symbol, m.File, m.Func}] = m.Reason
+	}
+	out := make([]knownMiss, 0, len(misses))
+	for _, m := range misses {
+		r, ok := reason[missKey{m.Symbol, m.File, m.Func}]
+		if !ok {
+			r = "measured at rebaseline; classify before merge"
+		}
+		m.Reason = r
+		out = append(out, m)
+	}
+	return out
+}
+
+type missKey struct{ symbol, file, fn string }
+
+// checkFloors fails when a measured precision or recall is below its floor.
+func checkFloors(t *testing.T, f truthFloors, classWith map[string]*Score, allWith, allWithout Score) {
+	t.Helper()
+	check := func(name string, s Score, fl floorPR) {
+		p, r := s.PR()
+		t.Logf("floor %-18s P %.3f (floor %.3f)  R %.3f (floor %.3f)", name, p, fl.Precision, r, fl.Recall)
+		if p+1e-9 < fl.Precision {
+			t.Errorf("%s precision %.3f below floor %.3f", name, p, fl.Precision)
+		}
+		if r+1e-9 < fl.Recall {
+			t.Errorf("%s recall %.3f below floor %.3f", name, r, fl.Recall)
+		}
+	}
+	check("overall", allWith, f.Overall)
+	check("overall-without-tests", allWithout, f.OverallNoTests)
+	for c, fl := range f.Classes {
+		s, ok := classWith[c]
+		if !ok {
+			t.Errorf("class %s has a floor but no truth symbols", c)
+			continue
+		}
+		check(c, *s, fl)
+	}
+}
+
+// checkMisses fails on a miss that known_misses does not list, and logs a
+// listed miss that no longer occurs.
+func checkMisses(t *testing.T, known, misses []knownMiss) {
+	t.Helper()
+	listed := map[missKey]bool{}
+	for _, k := range known {
+		listed[missKey{k.Symbol, k.File, k.Func}] = true
+	}
+	observed := map[missKey]bool{}
+	for _, m := range misses {
+		k := missKey{m.Symbol, m.File, m.Func}
+		observed[k] = true
+		if !listed[k] {
+			t.Errorf("new miss: %s does not return caller %s:%s (not in known_misses)", m.Symbol, m.File, m.Func)
+		}
+	}
+	for _, k := range known {
+		if !observed[missKey{k.Symbol, k.File, k.Func}] {
+			t.Logf("known miss no longer observed: %s %s:%s", k.Symbol, k.File, k.Func)
+		}
 	}
 }
 
