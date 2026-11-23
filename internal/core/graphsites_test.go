@@ -1,0 +1,658 @@
+package core
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/FreePeak/LeanKG/internal/graph"
+	"github.com/FreePeak/LeanKG/internal/store"
+)
+
+const (
+	storeReplace  = "internal/store/store.go::Store.ReplaceFileRelationships"
+	pgReplace     = "internal/store/pgstore.go::PGStore.ReplaceFileRelationships"
+	indexFileCall = "internal/index/index.go::IndexFile"
+	indexPGCall   = "internal/index/pgindex.go::IndexPG"
+)
+
+// seedSameNamedMethods wires two same-named methods on different types, each
+// with one distinct caller. callMeta is the metadata on the IndexFile edge.
+func seedSameNamedMethods(t *testing.T, e *Engine, callMeta map[string]any) {
+	t.Helper()
+	ctx := context.Background()
+	if err := e.st.UpsertElements(ctx, []store.Element{
+		{QualifiedName: storeReplace, ElementType: "method", Name: "ReplaceFileRelationships", FilePath: "internal/store/store.go", LineStart: 10, Language: "go"},
+		{QualifiedName: pgReplace, ElementType: "method", Name: "ReplaceFileRelationships", FilePath: "internal/store/pgstore.go", LineStart: 20, Language: "go"},
+		{QualifiedName: indexFileCall, ElementType: "function", Name: "IndexFile", FilePath: "internal/index/index.go", LineStart: 40, Language: "go"},
+		{QualifiedName: indexPGCall, ElementType: "function", Name: "IndexPG", FilePath: "internal/index/pgindex.go", LineStart: 55, Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.UpsertRelationships(ctx, []store.Relationship{
+		{Source: indexFileCall, Target: storeReplace, RelType: "calls", Confidence: 1, Metadata: callMeta},
+		{Source: indexPGCall, Target: pgReplace, RelType: "calls", Confidence: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCallersUnionsSameNamedMethods pins the bare-name seed: a name shared by
+// Store.X and PGStore.X resolves to both, and callers answers for each.
+//
+// The defect: resolveGraphSeed kept only the shortest qualified name, so the
+// PGStore caller was dropped and the agent needed a second query per type.
+func TestCallersUnionsSameNamedMethods(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, nil)
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "callers", Query: "ReplaceFileRelationships"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSeeds := []string{storeReplace, pgReplace}
+	if got := out["seeds"]; !reflect.DeepEqual(got, wantSeeds) {
+		t.Errorf("seeds = %v, want %v", got, wantSeeds)
+	}
+	wantCallers := []string{indexFileCall, indexPGCall}
+	if got := out["callers"]; !reflect.DeepEqual(got, wantCallers) {
+		t.Errorf("callers = %v, want both same-named methods' callers %v", got, wantCallers)
+	}
+	// The edges carry no use line, so neither caller has a line to list: the
+	// callers above still count them, and sites stays empty. The defect was
+	// listing each caller's own LineStart (index.go:40) as if it were the call.
+	if got, want := out["sites"], []string{}; !reflect.DeepEqual(got, want) {
+		t.Errorf("sites = %v, want %v (no use line on either edge)", got, want)
+	}
+}
+
+// TestCallersQualifiedSeedResolvesOneSeed pins that a qualified name is not
+// widened: it still resolves to exactly the one element it names.
+func TestCallersQualifiedSeedResolvesOneSeed(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, nil)
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "callers", Query: storeReplace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out["seeds"], []string{storeReplace}; !reflect.DeepEqual(got, want) {
+		t.Errorf("seeds = %v, want %v", got, want)
+	}
+	if got, want := out["callers"], []string{indexFileCall}; !reflect.DeepEqual(got, want) {
+		t.Errorf("callers = %v, want %v", got, want)
+	}
+}
+
+// TestCallersSiteLineFromEdgeMetadata pins the call-site line: when a calls
+// edge carries metadata "line", the site uses it instead of the caller's
+// line_start.
+func TestCallersSiteLineFromEdgeMetadata(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, map[string]any{"line": float64(47)})
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "callers", Query: storeReplace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"internal/index/index.go:47 " + indexFileCall + " 1"}
+	if got := out["sites"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("sites = %v, want %v", got, want)
+	}
+}
+
+// TestCalleesSitesAtTheSeedFile pins the mirror for callees: the callee is
+// listed, and a call edge with no use line yields no site line. The seed's
+// line_start is a definition line, not the call line, so it is never used.
+func TestCalleesSitesAtTheSeedFile(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, nil)
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "callees", Query: indexFileCall})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out["callees"], []string{storeReplace}; !reflect.DeepEqual(got, want) {
+		t.Errorf("callees = %v, want %v", got, want)
+	}
+	// The call edge carries no use line, so there is no site to list. The
+	// seed's line_start (index.go:40 in the seeded graph) is not the call line.
+	if got, want := out["sites"], []string{}; !reflect.DeepEqual(got, want) {
+		t.Errorf("sites = %v, want %v (no use line on the edge)", got, want)
+	}
+}
+
+// seedRefGraph wires a type T referenced by F (a references edge with a call
+// site line), a function H called by G, and R which only references H.
+func seedRefGraph(t *testing.T, e *Engine) {
+	t.Helper()
+	ctx := context.Background()
+	if err := e.st.UpsertElements(ctx, []store.Element{
+		{QualifiedName: "internal/graph/graph.go::Impact", ElementType: "function", Name: "Impact", FilePath: "internal/graph/graph.go", LineStart: 80, Language: "go"},
+		{QualifiedName: "internal/graph/graph.go::Bounds", ElementType: "type", Name: "Bounds", FilePath: "internal/graph/graph.go", LineStart: 20, Language: "go"},
+		{QualifiedName: "internal/core/core.go::Run", ElementType: "function", Name: "Run", FilePath: "internal/core/core.go", LineStart: 5, Language: "go"},
+		{QualifiedName: "internal/core/core.go::Helper", ElementType: "function", Name: "Helper", FilePath: "internal/core/core.go", LineStart: 30, Language: "go"},
+		{QualifiedName: "internal/core/core.go::Reader", ElementType: "function", Name: "Reader", FilePath: "internal/core/core.go", LineStart: 60, Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.UpsertRelationships(ctx, []store.Relationship{
+		{Source: "internal/graph/graph.go::Impact", Target: "internal/graph/graph.go::Bounds", RelType: "references", Confidence: 0.5, Metadata: map[string]any{"line": float64(94)}},
+		{Source: "internal/core/core.go::Run", Target: "internal/core/core.go::Helper", RelType: "calls", Confidence: 0.5, Metadata: map[string]any{"line": float64(7)}},
+		{Source: "internal/core/core.go::Reader", Target: "internal/core/core.go::Helper", RelType: "references", Confidence: 0.5},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCallersOfTypeReportReferenceSites pins that callers of a type answer
+// with the functions that reference it, each site at the reference line, and
+// that rel_types names the relationship the sites were read through.
+func TestCallersOfTypeReportReferenceSites(t *testing.T) {
+	e, _ := newEngine(t)
+	seedRefGraph(t, e)
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "callers", Query: "internal/graph/graph.go::Bounds"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out["callers"], []string{"internal/graph/graph.go::Impact"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("callers = %v, want %v", got, want)
+	}
+	// A references edge is a value use, so its site names the seed and relation.
+	if got, want := out["sites"], []string{"internal/graph/graph.go:94 internal/graph/graph.go::Impact 0.5 seed=internal/graph/graph.go::Bounds via=references"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("sites = %v, want %v", got, want)
+	}
+	if got, want := out["rel_types"], []string{"references"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("rel_types = %v, want %v", got, want)
+	}
+}
+
+// TestCallersOfFunctionStayCallOnly pins that a callable seed keeps the
+// call-graph answer: a reference-only user is not a caller.
+func TestCallersOfFunctionStayCallOnly(t *testing.T) {
+	e, _ := newEngine(t)
+	seedRefGraph(t, e)
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "callers", Query: "internal/core/core.go::Helper"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out["callers"], []string{"internal/core/core.go::Run"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("callers = %v, want %v", got, want)
+	}
+	if got, want := out["rel_types"], []string{"calls"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("rel_types = %v, want %v", got, want)
+	}
+}
+
+// TestCallersExplicitRelTypeWinsOverDefault pins that an explicit rel_type arg
+// replaces the per-seed default: calls on a type seed is empty.
+func TestCallersExplicitRelTypeWinsOverDefault(t *testing.T) {
+	e, _ := newEngine(t)
+	seedRefGraph(t, e)
+
+	out, err := e.Query(context.Background(), QueryRequest{
+		Action: "callers", Query: "internal/graph/graph.go::Bounds", Args: map[string]any{"rel_type": "calls"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := out["callers"].([]string); len(got) != 0 {
+		t.Errorf("callers with rel_type=calls = %v, want none", got)
+	}
+}
+
+// fanIn wires n distinct callers, each in its own production file, to target,
+// each call edge at its own use line. It returns the caller qualified names in
+// sorted order.
+func fanIn(t *testing.T, e *Engine, target, name, file string, callers int, prefix string) []string {
+	t.Helper()
+	ctx := context.Background()
+	var els []store.Element
+	var rels []store.Relationship
+	var qns []string
+	for i := 0; i < callers; i++ {
+		qn := fmt.Sprintf("%s%d.go::%s%d", prefix, i, name, i)
+		qns = append(qns, qn)
+		els = append(els, store.Element{QualifiedName: qn, ElementType: "function", Name: fmt.Sprintf("%s%d", name, i), FilePath: fmt.Sprintf("%s%d.go", prefix, i), LineStart: 10 + i, Language: "go"})
+		// Each edge carries its use line, as the index writes it; a line-less
+		// edge lists no site.
+		rels = append(rels, store.Relationship{Source: qn, Target: target, RelType: "calls", Confidence: 1, Metadata: map[string]any{"line": float64(10 + i)}})
+	}
+	if err := e.st.UpsertElements(ctx, append(els, store.Element{QualifiedName: target, ElementType: "function", Name: name, FilePath: file, LineStart: 1, Language: "go"})); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.UpsertRelationships(ctx, rels); err != nil {
+		t.Fatal(err)
+	}
+	return qns
+}
+
+// TestCallersSitesPerCallLine pins the lines contract through Query: an edge
+// that carries every call-site line yields one site per line, at the caller.
+func TestCallersSitesPerCallLine(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, map[string]any{"lines": []any{float64(51), float64(47)}})
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "callers", Query: storeReplace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"internal/index/index.go:47 " + indexFileCall + " 1", "internal/index/index.go:51 " + indexFileCall + " 1"}
+	if got := out["sites"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("sites = %v, want %v", got, want)
+	}
+	if got, want := out["callers"], []string{indexFileCall}; !reflect.DeepEqual(got, want) {
+		t.Errorf("callers = %v, want %v (unique by caller)", got, want)
+	}
+}
+
+// TestCallersUnknownSeedAnswersWithDidYouMean pins the unknown-seed answer: a
+// seed that names no indexed element is an answer with resolved=false, the
+// candidates found by name on its last segment, and guidance naming the seed.
+// The seed here has the right name under the wrong path and type prefix.
+func TestCallersUnknownSeedAnswersWithDidYouMean(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, nil)
+
+	for _, verb := range []string{"callers", "callees"} {
+		out, err := e.Query(context.Background(), QueryRequest{Action: verb, Query: "internal/store/store.go::ReplaceFileRelationships"})
+		if err != nil {
+			t.Fatalf("%s on an unknown seed must answer, not error: %v", verb, err)
+		}
+		if got := out["resolved"]; got != false {
+			t.Errorf("%s resolved = %v, want false", verb, got)
+		}
+		if verb == "callers" {
+			if got, want := out["did_you_mean"], []string{storeReplace, pgReplace}; !reflect.DeepEqual(got, want) {
+				t.Errorf("did_you_mean = %v, want %v", got, want)
+			}
+		}
+		guidance, _ := out["guidance"].(string)
+		if !strings.Contains(guidance, "internal/store/store.go::ReplaceFileRelationships") {
+			t.Errorf("%s guidance must name the unresolved seed, got %q", verb, guidance)
+		}
+	}
+}
+
+// TestCallersKnownSeedWithoutCallersIsResolved pins that a seed which resolves
+// and has no callers is a different answer from an unknown seed: resolved stays
+// true, no did_you_mean is offered, and the empty-list guidance is kept.
+func TestCallersKnownSeedWithoutCallersIsResolved(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, nil)
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "callers", Query: indexFileCall})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out["resolved"]; got != true {
+		t.Errorf("resolved = %v, want true for a known seed", got)
+	}
+	if _, ok := out["did_you_mean"]; ok {
+		t.Errorf("did_you_mean offered for a resolved seed: %v", out["did_you_mean"])
+	}
+	if got, _ := out["guidance"].(string); !strings.HasPrefix(got, "No callers for ") {
+		t.Errorf("known seed with no callers guidance = %q, want the empty-list guidance", got)
+	}
+}
+
+// TestCallersCapSitesWithTotal pins the cap: 120 callers answer with the
+// default 50 sites, total_sites 120 and truncated true, while every caller
+// stays listed. An explicit limit replaces the default.
+func TestCallersCapSitesWithTotal(t *testing.T) {
+	e, _ := newEngine(t)
+	fanIn(t, e, "lib/t.go::Target", "Target", "lib/t.go", 120, "svc/c")
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "callers", Query: "lib/t.go::Target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(out["sites"].([]string)); got != 50 {
+		t.Errorf("sites = %d, want the default cap 50", got)
+	}
+	if got := out["total_sites"]; got != 120 {
+		t.Errorf("total_sites = %v, want 120", got)
+	}
+	if got := out["truncated"]; got != true {
+		t.Errorf("truncated = %v, want true", got)
+	}
+	if got := len(out["callers"].([]string)); got != 120 {
+		t.Errorf("callers = %d, want all 120 kept", got)
+	}
+
+	out, err = e.Query(context.Background(), QueryRequest{Action: "callers", Query: "lib/t.go::Target", Limit: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(out["sites"].([]string)); got != 7 {
+		t.Errorf("sites with limit 7 = %d, want 7", got)
+	}
+}
+
+// TestCallersProductionSitesFirst pins the truncation order: test-file callers
+// sort after production callers even though their qualified names sort first.
+func TestCallersProductionSitesFirst(t *testing.T) {
+	e, _ := newEngine(t)
+	fanIn(t, e, "lib/t.go::Target", "Target", "lib/t.go", 10, "zz/prod")
+	ctx := context.Background()
+	var els []store.Element
+	var rels []store.Relationship
+	for i := 0; i < 3; i++ {
+		qn := fmt.Sprintf("aa/x_test.go::TestTarget%d", i)
+		els = append(els, store.Element{QualifiedName: qn, ElementType: "function", Name: fmt.Sprintf("TestTarget%d", i), FilePath: "aa/x_test.go", LineStart: 5 + i, Language: "go"})
+		rels = append(rels, store.Relationship{Source: qn, Target: "lib/t.go::Target", RelType: "calls", Confidence: 1, Metadata: map[string]any{"line": float64(6 + i)}})
+	}
+	if err := e.st.UpsertElements(ctx, els); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.UpsertRelationships(ctx, rels); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := e.Query(ctx, QueryRequest{Action: "callers", Query: "lib/t.go::Target", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range out["sites"].([]string) {
+		if strings.Contains(s, "_test.go") {
+			t.Fatalf("a test-file caller took a production site slot: %q", s)
+		}
+	}
+	if got := out["total_sites"]; got != 13 {
+		t.Errorf("total_sites = %v, want 13", got)
+	}
+}
+
+// TestCallersBareNameCountsPerSeed pins the per-seed counts of a bare name that
+// resolves to four callables, and the guidance that names the top three seeds
+// by caller count when there are more than three.
+func TestCallersBareNameCountsPerSeed(t *testing.T) {
+	e, _ := newEngine(t)
+	counts := map[string]int{"a": 5, "b": 3, "c": 2, "d": 1}
+	for _, pkg := range []string{"a", "b", "c", "d"} {
+		fanIn(t, e, pkg+"/run.go::Run", "Run", pkg+"/run.go", counts[pkg], "src"+pkg)
+	}
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "callers", Query: "Run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCounts := map[string]int{"a/run.go::Run": 5, "b/run.go::Run": 3, "c/run.go::Run": 2, "d/run.go::Run": 1}
+	if got := out["seed_counts"]; !reflect.DeepEqual(got, wantCounts) {
+		t.Errorf("seed_counts = %v, want %v", got, wantCounts)
+	}
+	guidance, _ := out["guidance"].(string)
+	for _, want := range []string{"a/run.go::Run (5)", "b/run.go::Run (3)", "c/run.go::Run (2)"} {
+		if !strings.Contains(guidance, want) {
+			t.Errorf("guidance must name the top three seeds by caller count (missing %q): %q", want, guidance)
+		}
+	}
+	if strings.Contains(guidance, "d/run.go::Run (1)") {
+		t.Errorf("guidance names a fourth seed: %q", guidance)
+	}
+}
+
+// TestCallersUnknownSeedFuzzyCandidates pins the fuzzy rung of did_you_mean: a
+// seed one edit away from an indexed name (a typo, or a dropped letter) is
+// offered that element, while a seed close to nothing offers no candidate.
+func TestCallersUnknownSeedFuzzyCandidates(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, nil)
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "callers", Query: "internal/store/store.go::ReplaceFileRelationship"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out["did_you_mean"], []string{storeReplace, pgReplace}; !reflect.DeepEqual(got, want) {
+		t.Errorf("did_you_mean for a one-letter-short seed = %v, want %v", got, want)
+	}
+
+	out, err = e.Query(context.Background(), QueryRequest{Action: "callers", Query: "internal/x.go::Zzzz"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := out["did_you_mean"].([]string); len(got) != 0 {
+		t.Errorf("did_you_mean for an unrelated seed = %v, want none", got)
+	}
+}
+
+// TestCallersGuidanceNamesOnlySeedsWithCallers pins that the seed lead in the
+// guidance never names a seed with no callers: a bare name with one caller
+// seed and two seeds that have none recommends only the seed that has callers.
+func TestCallersGuidanceNamesOnlySeedsWithCallers(t *testing.T) {
+	e, _ := newEngine(t)
+	fanIn(t, e, "a/run.go::Run", "Run", "a/run.go", 2, "srca")
+	fanIn(t, e, "b/run.go::Run", "Run", "b/run.go", 0, "srcb")
+	fanIn(t, e, "c/run.go::Run", "Run", "c/run.go", 0, "srcc")
+	fanIn(t, e, "d/run.go::Run", "Run", "d/run.go", 0, "srcd")
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "callers", Query: "Run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guidance, _ := out["guidance"].(string)
+	if !strings.Contains(guidance, "a/run.go::Run (2)") {
+		t.Errorf("guidance must name the seed with callers: %q", guidance)
+	}
+	for _, zero := range []string{"b/run.go::Run (0)", "c/run.go::Run (0)", "d/run.go::Run (0)"} {
+		if strings.Contains(guidance, zero) {
+			t.Errorf("guidance names a seed with no callers %q: %q", zero, guidance)
+		}
+	}
+}
+
+// TestCallersUnknownSeedKeepsHitsAndReachable pins the response contract: an
+// unknown seed answers callers and callees with the keys the base answer
+// carried (hits: [], reachable: false) next to resolved: false, so a client
+// that reads them still gets an empty, typed answer.
+func TestCallersUnknownSeedKeepsHitsAndReachable(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, nil)
+
+	for _, verb := range []string{"callers", "callees"} {
+		out, err := e.Query(context.Background(), QueryRequest{Action: verb, Query: "internal/store/store.go::NoSuchFunc"})
+		if err != nil {
+			t.Fatalf("%s on an unknown seed must answer: %v", verb, err)
+		}
+		if got, ok := out["hits"].([]any); !ok || len(got) != 0 {
+			t.Errorf("%s: hits = %#v, want an empty list", verb, out["hits"])
+		}
+		if got := out["reachable"]; got != false {
+			t.Errorf("%s: reachable = %v, want false", verb, got)
+		}
+		if got := out["resolved"]; got != false {
+			t.Errorf("%s: resolved = %v, want false", verb, got)
+		}
+	}
+}
+
+// TestSeedsTruncatedAtTheStoreRowCap pins the silent seed cut: FindExact returns
+// at most graph.StoreFindExactLimit rows, so a bare name held by more elements
+// than that resolves to a partial seed set. The answer must say so.
+func TestSeedsTruncatedAtTheStoreRowCap(t *testing.T) {
+	e, _ := newEngine(t)
+	var els []store.Element
+	for i := 0; i < 250; i++ {
+		els = append(els, store.Element{QualifiedName: fmt.Sprintf("pkg/f%03d.go::Same", i), ElementType: "function",
+			Name: "Same", FilePath: fmt.Sprintf("pkg/f%03d.go", i), LineStart: 1, Language: "go"})
+	}
+	if err := e.st.UpsertElements(context.Background(), els); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "callers", Query: "Same"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(out["seeds"].([]string)); got != graph.StoreFindExactLimit {
+		t.Errorf("seeds = %d, want the store cap %d", got, graph.StoreFindExactLimit)
+	}
+	if got := out["seeds_truncated"]; got != true {
+		t.Errorf("seeds_truncated = %v, want true for 250 same-named elements", got)
+	}
+	if g, _ := out["guidance"].(string); !strings.Contains(g, "qualified name") {
+		t.Errorf("guidance = %q, want it to name the qualified-name retry", g)
+	}
+}
+
+// TestCallersCappedAtTheCallerLimit pins the caller list cap: callers are built
+// from every site, so 201 or 250 callers are cut to graphCallerLimit (200) and
+// the answer says so. Fewer callers keep the list whole and set no flag.
+func TestCallersCappedAtTheCallerLimit(t *testing.T) {
+	for _, tc := range []struct {
+		callers   int
+		wantLen   int
+		truncated bool
+	}{{150, 150, false}, {201, graphCallerLimit, true}, {250, graphCallerLimit, true}} {
+		t.Run(fmt.Sprint(tc.callers), func(t *testing.T) {
+			e, _ := newEngine(t)
+			qns := fanIn(t, e, "lib/t.go::Target", "Target", "lib/t.go", tc.callers, "svc/c")
+
+			out, err := e.Query(context.Background(), QueryRequest{Action: "callers", Query: "lib/t.go::Target"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, _ := out["callers"].([]string)
+			if len(got) != tc.wantLen {
+				t.Fatalf("callers = %d, want %d", len(got), tc.wantLen)
+			}
+			if tc.truncated {
+				sort.Strings(qns)
+				if !reflect.DeepEqual(got, qns[:tc.wantLen]) {
+					t.Errorf("the kept callers must be the first %d in qualified-name order", tc.wantLen)
+				}
+			}
+			if got, want := out["callers_truncated"] == true, tc.truncated; got != want {
+				t.Errorf("callers_truncated = %v, want %v", out["callers_truncated"], want)
+			}
+		})
+	}
+}
+
+// TestBareNameMatchesExactCaseBeforeFoldedCase pins S8: Go identifiers are
+// case-sensitive, so a bare name that exactly matches a callable answers for
+// that callable alone. The folded match (parse for Parse) is used only when no
+// callable has the exact name.
+func TestBareNameMatchesExactCaseBeforeFoldedCase(t *testing.T) {
+	e, _ := newEngine(t)
+	ctx := context.Background()
+	if err := e.st.UpsertElements(ctx, []store.Element{
+		{QualifiedName: "pkg/a.go::Parse", ElementType: "function", Name: "Parse", FilePath: "pkg/a.go", LineStart: 1, Language: "go"},
+		{QualifiedName: "pkg/b.go::parse", ElementType: "function", Name: "parse", FilePath: "pkg/b.go", LineStart: 1, Language: "go"},
+		{QualifiedName: "x/c.go::UseLower", ElementType: "function", Name: "UseLower", FilePath: "x/c.go", LineStart: 1, Language: "go"},
+		{QualifiedName: "x/d.go::UseUpper", ElementType: "function", Name: "UseUpper", FilePath: "x/d.go", LineStart: 1, Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.UpsertRelationships(ctx, []store.Relationship{
+		{Source: "x/c.go::UseLower", Target: "pkg/b.go::parse", RelType: "calls", Confidence: 1, Metadata: map[string]any{"line": float64(3)}},
+		{Source: "x/d.go::UseUpper", Target: "pkg/a.go::Parse", RelType: "calls", Confidence: 1, Metadata: map[string]any{"line": float64(3)}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := callersOf(t, e, "Parse", nil)
+	if got, want := out["seeds"], []string{"pkg/a.go::Parse"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("seeds = %v, want %v (exact case wins)", got, want)
+	}
+	if got, want := out["callers"], []string{"x/d.go::UseUpper"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("callers = %v, want %v: the caller of parse must not join", got, want)
+	}
+
+	// A name with no exact-case callable still reaches the folded one.
+	out = callersOf(t, e, "PARSE", nil)
+	if got, want := out["seeds"], []string{"pkg/a.go::Parse", "pkg/b.go::parse"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("PARSE seeds = %v, want both folded callables %v", got, want)
+	}
+}
+
+// TestNonFanVerbNamesTheSeedsItIgnored pins S7: a bare name that resolves to
+// several callables is answered for the first one only, so the answer must
+// name the others it did not walk.
+func TestNonFanVerbNamesTheSeedsItIgnored(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, nil)
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "impact", Query: "ReplaceFileRelationships"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, _ := out["guidance"].(string)
+	if !strings.Contains(g, pgReplace) || !strings.Contains(g, "Ignored: ") {
+		t.Errorf("guidance = %q, want it to name the ignored seed %s", g, pgReplace)
+	}
+}
+
+// TestGraphVerbsEchoScopeAndSayWhetherItApplied pins S9: a verb that does not
+// apply args.scope still echoes it, with scope_applied false, and the verbs
+// that filter by it report scope_applied true.
+func TestGraphVerbsEchoScopeAndSayWhetherItApplied(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, nil)
+	ctx := context.Background()
+	scoped := map[string]any{"scope": "prod"}
+
+	for _, tc := range []struct {
+		req     QueryRequest
+		applied bool
+	}{
+		{QueryRequest{Action: "impact", Query: storeReplace, Args: scoped}, true},
+		{QueryRequest{Action: "callers", Query: storeReplace, Args: scoped}, true},
+		{QueryRequest{Action: "callees", Query: indexFileCall, Args: scoped}, true},
+		{QueryRequest{Action: "context", Query: storeReplace, Args: scoped}, false},
+		{QueryRequest{Action: "explain", Query: storeReplace, Args: scoped}, false},
+		{QueryRequest{Action: "path", Query: storeReplace, Args: map[string]any{"scope": "prod", "to": indexFileCall}}, false},
+	} {
+		out, err := e.Query(ctx, tc.req)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.req.Action, err)
+		}
+		if got := out["scope"]; got != "prod" {
+			t.Errorf("%s: scope = %v, want prod", tc.req.Action, got)
+		}
+		if got := out["scope_applied"]; got != tc.applied {
+			t.Errorf("%s: scope_applied = %v, want %v", tc.req.Action, got, tc.applied)
+		}
+	}
+}
+
+// TestSiteLinesNameSeedAndRelationAcrossSeeds pins S1: a site line names the
+// seed it reached and the relationship it was read through when the answer
+// spans more than one seed, or when the relationship is not calls. A single
+// seed's call sites keep the short line.
+func TestSiteLinesNameSeedAndRelationAcrossSeeds(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, map[string]any{"line": float64(47)})
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "callers", Query: "ReplaceFileRelationships"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The PGStore caller's edge carries no use line, so it has no site line to
+	// name; the one site is the IndexFile call, and it names the seed it reached.
+	want := []string{"internal/index/index.go:47 " + indexFileCall + " 1 seed=" + storeReplace + " via=calls"}
+	if got := out["sites"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("sites = %v, want %v", got, want)
+	}
+}
+
+// TestImpactUnknownSeedOffersDidYouMean pins NIT 14: impact's unknown-seed
+// answer carries the same did_you_mean as callers and callees.
+func TestImpactUnknownSeedOffersDidYouMean(t *testing.T) {
+	e, _ := newEngine(t)
+	seedSameNamedMethods(t, e, nil)
+
+	out, err := e.Query(context.Background(), QueryRequest{Action: "impact", Query: "internal/store/store.go::ReplaceFileRelationship"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := out["did_you_mean"].([]string)
+	if len(got) == 0 || got[0] != storeReplace {
+		t.Errorf("did_you_mean = %v, want %s first (its name is one edit away)", got, storeReplace)
+	}
+}

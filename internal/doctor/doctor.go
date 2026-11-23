@@ -202,8 +202,9 @@ type Probes interface {
 	// (code_files) — the set the index walk itself maintains. The
 	// file-coverage check compares the two (#332 tripwire).
 	RecordedFiles(ctx context.Context) ([]string, error)
-	// QualifiedNames lists every qualified_name, duplicates preserved
-	// (duplicate detection depends on them).
+	// QualifiedNames lists the qualified_name of every embeddable element,
+	// duplicates preserved (duplicate detection depends on them); package
+	// elements are left out (see dbProbes.QualifiedNames).
 	QualifiedNames(ctx context.Context) ([]string, error)
 	// RelationshipEdges samples up to 1000 edges.
 	RelationshipEdges(ctx context.Context) ([]Edge, error)
@@ -326,8 +327,10 @@ func (p *dbProbes) AppliedMigrations(ctx context.Context) ([]int, error) {
 func (p *dbProbes) IndexedFiles(ctx context.Context) ([]string, error) {
 	// CAST keeps the predicate engine-portable: metadata is JSONB on
 	// PostgreSQL (LIKE needs text) and TEXT on sqlite.
+	// A package element's file_path is its directory, not a file (index.packageElementType).
 	return p.strings(ctx, `SELECT DISTINCT file_path FROM code_elements
 		WHERE COALESCE(CAST(metadata AS text), '') NOT LIKE '%"federation_source"%'
+		  AND element_type <> 'package'
 		ORDER BY file_path`)
 }
 
@@ -336,9 +339,13 @@ func (p *dbProbes) RecordedFiles(ctx context.Context) ([]string, error) {
 	return p.strings(ctx, `SELECT path FROM code_files ORDER BY path`)
 }
 
-// QualifiedNames enumerates every qualified_name; duplicates preserved.
+// QualifiedNames enumerates the qualified_name of every embeddable element;
+// duplicates preserved. A Go package element (element_type 'package') carries
+// no vector, so it is left out; its qualified_name is unique by key anyway.
 func (p *dbProbes) QualifiedNames(ctx context.Context) ([]string, error) {
-	return p.strings(ctx, `SELECT qualified_name FROM code_elements ORDER BY qualified_name`)
+	return p.strings(ctx, `SELECT qualified_name FROM code_elements
+		WHERE element_type <> 'package'
+		ORDER BY qualified_name`)
 }
 
 // RelationshipEdges samples the orphan-scan window.

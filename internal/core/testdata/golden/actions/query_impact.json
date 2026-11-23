@@ -1,6 +1,7 @@
 {
   "action": "impact",
   "depth": 2,
+  "filtered_out": 0,
   "freshness": "possibly_stale",
   "hits": [
     {
@@ -23,5 +24,7 @@
     }
   ],
   "limit": 10,
-  "query": "src/beta.go::Beta"
+  "query": "src/beta.go::Beta",
+  "scope": "all",
+  "scope_applied": true
 }

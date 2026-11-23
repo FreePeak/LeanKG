@@ -1,9 +1,10 @@
 package core
 
 import (
-	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // Test-file demotion. Descriptive test names (TestDockEndsWithMCPThenTrajectory)
@@ -21,10 +22,26 @@ import (
 // scores in both repositories; 3 and 5 lose too much of the all-files score.
 const testDemotion = 2
 
-var testPathRe = regexp.MustCompile(`(_test\.go$|\.(test|spec)\.[cm]?[jt]sx?$|(^|/)(tests?|__tests__|spec)/|(^|/)test_[^/]*\.py$|_test\.py$|Tests?\.(java|kt|cs|swift)$|_spec\.rb$)`)
+// testPathFilter is the one definition of a test path or a fixture: the
+// literal patterns every search rung applies in SQL (ElementFilter.where) and
+// every graph verb applies in Go (ElementFilter.Admits). isTestPath is derived
+// from it, so the demotion, the call-site order and the scope cannot disagree.
+// The suffixes cover the test conventions of Go, JS/TS, Python, Java, Kotlin,
+// C#, Swift and Ruby. A name that begins with "test_" in any directory counts
+// as a test, a superset of Python's test_*.py.
+var testPathFilter = store.ElementFilter{
+	ExcludePathContains: []string{"testdata", "/fixtures/", "/test/", "/tests/", "/__tests__/", "/spec/", "/test_"},
+	ExcludePathPrefixes: []string{"test/", "tests/", "__tests__/", "spec/", "test_"},
+	ExcludePathSuffixes: []string{
+		"_test.go", "_test.py", "_spec.rb", "fixtures.js",
+		".test.js", ".test.jsx", ".test.ts", ".test.tsx", ".test.mjs", ".test.cjs", ".test.mts", ".test.cts",
+		".spec.js", ".spec.jsx", ".spec.ts", ".spec.tsx", ".spec.mjs", ".spec.cjs", ".spec.mts", ".spec.cts",
+		"Test.java", "Tests.java", "Test.kt", "Tests.kt", "Test.cs", "Tests.cs", "Test.swift", "Tests.swift",
+	},
+}
 
-// isTestPath reports whether a file path is test code.
-func isTestPath(p string) bool { return testPathRe.MatchString(p) }
+// isTestPath reports whether a file path is test code or a fixture.
+func isTestPath(p string) bool { return !testPathFilter.Admits(store.Element{FilePath: p}) }
 
 // mentionsTests reports whether a query asks about tests, in which case test
 // files keep their natural rank.
@@ -48,9 +65,45 @@ func demotesTests(action string) bool {
 	return false
 }
 
+// Doc demotion. A markdown section matches a question in prose as well as the
+// code it documents, and bm25 favours the prose, so a question about the code
+// was answered by CLAUDE.md or a README chunk. Unless the question names docs,
+// a doc hit counts as docDemotion positions lower, on the same window as tests.
+// docDemotion is not swept: it is set to testDemotion so the two demotions
+// read the same way.
+const docDemotion = testDemotion
+
+// mentionsDocs reports whether a query asks about documentation, in which case
+// doc hits keep their natural rank.
+func mentionsDocs(q string) bool {
+	for _, w := range strings.Fields(strings.ToLower(q)) {
+		w = strings.Trim(w, ".,;:?!\"'`()")
+		switch w {
+		case "doc", "docs", "documentation", "documented", "readme", "markdown", "md", "mdx", "changelog", "guide":
+			return true
+		}
+		if strings.HasSuffix(w, ".md") || strings.HasSuffix(w, ".mdx") {
+			return true
+		}
+	}
+	return false
+}
+
+// isDocHit reports whether a ranked hit is documentation: a markdown section
+// (element_type doc) or a markdown file.
+func isDocHit(h map[string]any) bool {
+	if t, _ := h["element_type"].(string); t == "doc" {
+		return true
+	}
+	fp, _ := h["file_path"].(string)
+	return strings.HasSuffix(fp, ".md") || strings.HasSuffix(fp, ".mdx")
+}
+
 // demoteTestHits reorders hits so a test-file hit ranks testDemotion places
-// lower, then trims to limit. The order is otherwise stable.
-func demoteTestHits(hits []map[string]any, limit int) []map[string]any {
+// lower (when demoteTests is set) and a doc hit ranks docDemotion lower (when
+// demoteDocs is set), then trims to limit. A hit can take both. The order is
+// otherwise stable.
+func demoteTestHits(hits []map[string]any, limit int, demoteTests, demoteDocs bool) []map[string]any {
 	type ranked struct {
 		h   map[string]any
 		pos int
@@ -58,8 +111,11 @@ func demoteTestHits(hits []map[string]any, limit int) []map[string]any {
 	rs := make([]ranked, len(hits))
 	for i, h := range hits {
 		pos := i
-		if fp, _ := h["file_path"].(string); isTestPath(fp) {
+		if fp, _ := h["file_path"].(string); demoteTests && isTestPath(fp) {
 			pos += testDemotion
+		}
+		if demoteDocs && isDocHit(h) {
+			pos += docDemotion
 		}
 		rs[i] = ranked{h, pos}
 	}

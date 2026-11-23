@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -459,7 +460,9 @@ func (e *Engine) Status(ctx context.Context) (map[string]any, error) {
 	// The embeddings state is read BEFORE the payload is built: it is the
 	// one read whose failure used to be swallowed, so it is the one read
 	// that decides healthy.
-	emb, embErr := e.embeddingsState(ctx, els)
+	// A Go package element carries no vector (embed.readElements skips it), so
+	// coverage is taken over the embeddable elements.
+	emb, embErr := e.embeddingsState(ctx, els-byType["package"])
 	out := map[string]any{
 		"backend":          e.st.Engine(),
 		"healthy":          embErr == nil,
@@ -586,9 +589,10 @@ func (e *Engine) Status(ctx context.Context) (map[string]any, error) {
 //   - one model's vector count failed: the models that could be counted
 //     are still published, the failed one is named in the error.
 //
-// els is the element count Status already read (it fails the whole call when
-// that read fails), passed in so the coverage math does not query it twice.
-func (e *Engine) embeddingsState(ctx context.Context, els int) ([]map[string]any, error) {
+// embeddable is the count of elements that take a vector, which Status already
+// read (it fails the whole call when that read fails), so the coverage math does
+// not query it twice.
+func (e *Engine) embeddingsState(ctx context.Context, embeddable int) ([]map[string]any, error) {
 	stamps, err := e.st.Stamps(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read embedding stamps: %w", err)
@@ -606,8 +610,8 @@ func (e *Engine) embeddingsState(ctx context.Context, els int) ([]map[string]any
 		// RS-25: freshness tracks the index only, so a store with un-embedded
 		// elements still read "fresh"; coverage says how much L3 can see.
 		coverage := 0.0
-		if els > 0 {
-			coverage = float64(min(vecs, els)) / float64(els)
+		if embeddable > 0 {
+			coverage = float64(min(vecs, embeddable)) / float64(embeddable)
 		}
 		states = append(states, map[string]any{
 			"coverage":   coverage,
@@ -662,7 +666,9 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	if werr != nil {
 		return nil, werr
 	}
-	demote := demotesTests(req.Action) && !mentionsTests(req.Query)
+	demoteTest := demotesTests(req.Action) && !mentionsTests(req.Query)
+	demoteDoc := demotesTests(req.Action) && !mentionsDocs(req.Query)
+	demote := demoteTest || demoteDoc
 	limit := req.Limit
 	if limit <= 0 {
 		limit = 10
@@ -687,7 +693,7 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	}
 	if demote && out != nil {
 		if hits := hitsOf(out); len(hits) > 0 {
-			out["hits"] = demoteTestHits(hits, limit)
+			out["hits"] = demoteTestHits(hits, limit, demoteTest, demoteDoc)
 		}
 		out["limit"] = limit
 	}
@@ -810,7 +816,10 @@ func (e *Engine) rungExact(ctx context.Context, q string, limit int, resp map[st
 // PostgreSQL backend ranks its migration-012 tsvector with ts_rank and degrades
 // through pg_trgm similarity to ILIKE substring recall (issue #273). FindFuzzy
 // reports the arm that served the hits, so the rung has no engine branch.
-func (e *Engine) rungFuzzy(ctx context.Context, q string, limit int, resp map[string]any, pin bool, keep store.ElementFilter) (map[string]any, error) {
+//
+// commit is the lower-case SHA when q is a commit reference, "" otherwise; the
+// reference's commit rows join the full-text matches (addCommitRows).
+func (e *Engine) rungFuzzy(ctx context.Context, q string, limit int, resp map[string]any, pin bool, keep store.ElementFilter, commit string) (map[string]any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -820,7 +829,16 @@ func (e *Engine) rungFuzzy(ctx context.Context, q string, limit int, resp map[st
 		return nil, err
 	}
 	reason := keywordReason(arm)
+	note := ""
+	if commit != "" {
+		if matches, note, err = e.addCommitRows(ctx, commit, limit, keep, matches); err != nil {
+			return nil, err
+		}
+	}
 	matches = admit(matches, matchElement, keep, limit)
+	if note != "" {
+		resp["guidance"] = note
+	}
 	if pin {
 		if len(matches) == 0 {
 			reason = "no keyword match"
@@ -844,8 +862,10 @@ func (e *Engine) rungFuzzy(ctx context.Context, q string, limit int, resp map[st
 // over the first stamped collection. Provider failure or absent wiring
 // DEGRADES to L2 — never a hard error (issue #368 AC: query-time provider
 // failure degrades the ladder with retrieval.reason).
-func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map[string]any, pin bool, env envelopeArgs) (map[string]any, error) {
-	gitKeep := searchKeep(env.IncludeGit)
+//
+// commit is passed to the keyword rung when L3 degrades. The fused and vector
+// arms search the full text only: a SHA has no meaning as a vector query.
+func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map[string]any, pin bool, keep store.ElementFilter, env envelopeArgs, commit string) (map[string]any, error) {
 	degrade := func(reason string) (map[string]any, error) {
 		// A cancelled caller is not a provider failure: it ends the rung with
 		// ctx.Err() instead of an L2 answer that would be cached as a result.
@@ -857,7 +877,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 		}
 		// pin=false so rungFuzzy does not overwrite the L3-degrade reason;
 		// withEmptyHint still attaches next-step guidance on a zero-hit result.
-		return withEmptyHint(e.rungFuzzy(ctx, q, limit, resp, false, gitKeep))
+		return withEmptyHint(e.rungFuzzy(ctx, q, limit, resp, false, keep, commit))
 	}
 	if e.embedder == nil {
 		return degrade("no embedding provider wired; degraded from L3")
@@ -895,18 +915,9 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// The caller may name the population to rank (args.scope). Applied to BOTH
-	// arms through the store's scoped search, so the keyword arm cannot
-	// reintroduce the very rows the caller excluded; and reported in the
-	// answer, so a narrowed corpus is visible rather than inferred. An unknown
-	// scope is an error, never a silent full corpus.
-	keep, scopeName, serr := scopePredicate(env.Scope)
-	if serr != nil {
-		return nil, serr
-	}
-	// The history rule composes with the caller's scope, so every arm of the
-	// store's search sees the same population.
-	keep = keep.Merge(gitKeep)
+	// keep is the caller's population (scope and history rule, see
+	// searchPrelude). Both arms of the hybrid search receive it, so the keyword
+	// arm cannot reintroduce rows the caller excluded.
 	// Query validated this already; parsed again here because the rung is also
 	// reachable as a pinned action. An unset weight is the default.
 	fw, _ := parseFusionWeight(env.Weight)
@@ -937,7 +948,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 			out = append(out, m)
 		}
 		resp["hits"] = out
-		resp["retrieval"] = map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + fusionArms(fused), "scope": scopeName}
+		resp["retrieval"] = map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + fusionArms(fused)}
 		best, seen := 0.0, false
 		for _, h := range fused {
 			if _, ok := h.Ranks[store.ArmVector]; ok && (!seen || h.Similarity > best) {
@@ -958,7 +969,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 		out = append(out, m)
 	}
 	resp["hits"] = out
-	resp["retrieval"] = map[string]any{"rung": "L3", "reason": "vector similarity (cosine)", "scope": scopeName}
+	resp["retrieval"] = map[string]any{"rung": "L3", "reason": "vector similarity (cosine)"}
 	if len(hits) > 0 {
 		e.annotateConfidence(ctx, resp, *stamp, hits[0].Similarity, true)
 	}
@@ -1020,6 +1031,9 @@ func (e *Engine) MemoryRead(ctx context.Context, command, path, query string, li
 
 // --- shaping ---
 
+// hitSnippetBytes caps the content snippet of a search hit.
+const hitSnippetBytes = 200
+
 func shapeElements(els []store.Element, limit int) []map[string]any {
 	out := make([]map[string]any, 0, len(els))
 	for _, el := range els {
@@ -1031,6 +1045,10 @@ func shapeElements(els []store.Element, limit int) []map[string]any {
 	return out
 }
 
+// shapeElement is the one search-hit shape. It does not depend on the window:
+// the output shape is contractual (docs/mcp-tool-contract.md), so language and
+// line_end are present on every hit, whatever limit the caller or the ladder's
+// test demotion asked for.
 func shapeElement(el store.Element) map[string]any {
 	m := map[string]any{
 		"qualified_name": el.QualifiedName,
@@ -1044,9 +1062,14 @@ func shapeElement(el store.Element) map[string]any {
 	if el.ParentQualified != "" {
 		m["parent_qualified"] = el.ParentQualified
 	}
+	// A spec is a declaration, not an implementer, which changes what the
+	// element means, so the flag is kept on compact hits too.
+	if graph.IsInterfaceSpec(el) {
+		m["interface_spec"] = true
+	}
 	content := el.Content
-	if len(content) > 400 {
-		content = content[:400] + "…"
+	if len(content) > hitSnippetBytes {
+		content = store.ClipUTF8(content, hitSnippetBytes) + "…"
 	}
 	m["content"] = content
 	return m
@@ -1122,26 +1145,221 @@ func looksLikeIdentifier(s string) bool {
 	return true
 }
 
-// resolveGraphSeed turns a short name or bare identifier into the qualified
-// name graph verbs need. Relationships are keyed by qualified_name only, so a
+// resolveGraphSeeds turns a short name or bare identifier into the qualified
+// names graph verbs walk. Relationships are keyed by qualified_name only, so a
 // bare "ServeProjectDirs" used to look like a leaf (empty callers/callees) even
-// when the element and its edges were indexed. FindExact ranks an exact-case
-// match first, then the shorter qualified_name, then path and qualified_name,
-// matching L1. Unknown seeds pass through unchanged so
-// graph.ErrUnknownNode still fires for true misses.
-func (e *Engine) resolveGraphSeed(ctx context.Context, seed string) (string, error) {
+// when the element and its edges were indexed. A qualified name resolves to
+// exactly itself. A bare name shared by callable elements (Store.X and
+// PGStore.X) resolves to all of them, shortest qualified name first, so one
+// verb call answers for every same-named function or method. Any other bare
+// name resolves to the best FindExact match: an exact-case match first, then the
+// shorter qualified name, then path and qualified name. Unknown seeds
+// pass through unchanged so graph.ErrUnknownNode still fires for true misses.
+// When neither the exact nor the bare-name lookup finds anything, the package
+// and path-suffix forms of seedAliases are tried; aliased reports that they
+// resolved the seed. The result is never empty; index 0 is the seed the
+// single-seed verbs use.
+//
+// truncated reports that a name lookup hit the store's row cap
+// (graph.StoreFindExactLimit), so the seed set may be a partial one.
+func (e *Engine) resolveGraphSeeds(ctx context.Context, seed string) (seeds []string, aliased, truncated bool, err error) {
 	seed = strings.TrimSpace(seed)
 	if seed == "" {
-		return seed, nil
+		return []string{seed}, false, false, nil
 	}
 	els, err := e.st.FindExact(ctx, seed)
 	if err != nil {
-		return "", err
+		return nil, false, false, err
 	}
-	if len(els) == 0 {
-		return seed, nil
+	truncated = len(els) >= graph.StoreFindExactLimit
+	// Go identifiers are case-sensitive: callables whose name is exactly the seed
+	// answer alone; the case-folded ones (parse for Parse) are the fallback.
+	if _, ok := graph.ExactQN(els, seed); ok {
+		return []string{seed}, false, truncated, nil
 	}
-	return els[0].QualifiedName, nil
+	var exact, folded []string
+	for _, el := range els {
+		if el.ElementType != "function" && el.ElementType != "method" {
+			continue
+		}
+		switch {
+		case el.Name == seed:
+			exact = append(exact, el.QualifiedName)
+		case strings.EqualFold(el.Name, seed):
+			folded = append(folded, el.QualifiedName)
+		}
+	}
+	callables := exact
+	if len(callables) == 0 {
+		callables = folded
+	}
+	switch {
+	case len(callables) > 0:
+		sort.Slice(callables, func(i, j int) bool {
+			if len(callables[i]) != len(callables[j]) {
+				return len(callables[i]) < len(callables[j])
+			}
+			return callables[i] < callables[j]
+		})
+		return callables, false, truncated, nil
+	case len(els) > 0:
+		return []string{els[0].QualifiedName}, false, truncated, nil
+	}
+	alias, aliasTruncated, err := e.seedAliases(ctx, seed)
+	if err != nil {
+		return nil, false, false, err
+	}
+	if len(alias) > 0 {
+		return alias, true, truncated || aliasTruncated, nil
+	}
+	return []string{seed}, false, truncated, nil
+}
+
+// aliasElementTypes are the element kinds a package or path seed may name: the
+// callables, types, constants and variables an agent writes as seeds.
+var aliasElementTypes = map[string]bool{
+	"function": true, "method": true, "constructor": true, "type": true,
+	"class": true, "constant": true, "variable": true,
+}
+
+// seedAliases resolves a seed written without its exact qualified name to the
+// elements it names, sorted by qualified name. Two forms are accepted:
+//   - pkg.Name or pkg.Type.Method: the element's file directory is named pkg
+//     (its last path element), and it is named Name, or its qualified name ends
+//     in Type.Method;
+//   - a path suffix such as dir/file.go::Name or file.go::Name: the element's
+//     qualified name ends in the seed at a path-segment boundary.
+//
+// Both look the element up by its last name segment (FindExact), so no new
+// store lookup is needed. It returns nil when no element matches, and truncated
+// when that lookup hit the store's row cap.
+func (e *Engine) seedAliases(ctx context.Context, seed string) (out []string, truncated bool, err error) {
+	name := seedName(seed)
+	if name == "" {
+		return nil, false, nil
+	}
+	els, err := e.st.FindExact(ctx, name)
+	if err != nil {
+		return nil, false, err
+	}
+	truncated = len(els) >= graph.StoreFindExactLimit
+	pkg, tail, dotted := strings.Cut(seed, ".")
+	pathSuffix := strings.Contains(seed, "::")
+	for _, el := range els {
+		if !aliasElementTypes[el.ElementType] {
+			continue
+		}
+		ok := false
+		switch {
+		case pathSuffix:
+			ok = el.QualifiedName == seed || strings.HasSuffix(el.QualifiedName, "/"+seed)
+		case dotted:
+			ok = filepath.Base(filepath.Dir(el.FilePath)) == pkg &&
+				(el.Name == tail || strings.HasSuffix(el.QualifiedName, "::"+tail))
+		}
+		if ok {
+			out = append(out, el.QualifiedName)
+		}
+	}
+	sort.Strings(out)
+	return out, truncated, nil
+}
+
+// didYouMeanLimit caps the candidate names an unknown seed is offered.
+const didYouMeanLimit = 5
+
+// didYouMean offers qualified names for a seed that did not resolve. Exact
+// name matches come first (shortest qualified name first, as FindExact ranks
+// them), then names within a small edit distance of the seed's last segment,
+// nearest first. The list holds at most didYouMeanLimit names.
+func (e *Engine) didYouMean(ctx context.Context, seed string) ([]string, error) {
+	out := []string{}
+	name := seedName(seed)
+	if name == "" {
+		return out, nil
+	}
+	els, err := e.st.Elements(ctx)
+	if err != nil {
+		return nil, err
+	}
+	type candidate struct {
+		qn    string
+		exact bool
+		dist  int
+	}
+	var cands []candidate
+	for _, el := range els {
+		if strings.EqualFold(el.Name, name) {
+			cands = append(cands, candidate{qn: el.QualifiedName, exact: true})
+		} else if d, ok := nearName(name, el.Name); ok {
+			cands = append(cands, candidate{qn: el.QualifiedName, dist: d})
+		}
+	}
+	sort.SliceStable(cands, func(i, j int) bool {
+		a, b := cands[i], cands[j]
+		if a.exact != b.exact {
+			return a.exact
+		}
+		if a.dist != b.dist {
+			return a.dist < b.dist
+		}
+		if len(a.qn) != len(b.qn) {
+			return len(a.qn) < len(b.qn)
+		}
+		return a.qn < b.qn
+	})
+	for _, c := range cands {
+		if len(out) == didYouMeanLimit {
+			break
+		}
+		out = append(out, c.qn)
+	}
+	return out, nil
+}
+
+// nearName reports whether an indexed name is a near miss for the seed's name:
+// within max(2, len/4) edits, case-insensitively. Names shorter than four
+// characters are never near misses, so a short name cannot pull in noise.
+func nearName(seed, name string) (int, bool) {
+	a, b := strings.ToLower(seed), strings.ToLower(name)
+	if len(a) < 4 || len(b) < 4 {
+		return 0, false
+	}
+	d := editDistance(a, b)
+	return d, d <= max(2, len(a)/4)
+}
+
+// editDistance is the Levenshtein distance between a and b.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
+}
+
+// seedName is the last segment of a seed: the part after the "::" that ends a
+// file path, then the part after the last "." (Type.Method) or "/" (a path).
+func seedName(seed string) string {
+	if i := strings.LastIndex(seed, "::"); i >= 0 {
+		seed = seed[i+2:]
+	}
+	if i := strings.LastIndexAny(seed, "./"); i >= 0 {
+		seed = seed[i+1:]
+	}
+	return seed
 }
 
 // markBounds reports the effective depth of a traversal and, only when the node
@@ -1319,7 +1537,7 @@ func (e *Engine) patternQuery(ctx context.Context, req QueryRequest, a patternAr
 	runner, err := astgrep.New()
 	if err != nil {
 		resp["retrieval"] = map[string]any{"rung": "L2", "reason": "ast-grep CLI not installed; degraded to keyword search"}
-		return e.rungFuzzy(ctx, pattern, req.Limit, resp, false, searchKeep(a.IncludeGit))
+		return e.rungFuzzy(ctx, pattern, req.Limit, resp, false, searchKeep(a.IncludeGit), "")
 	}
 	root := e.projectDir
 	if root == "" {
@@ -1609,8 +1827,9 @@ const (
 // 22% of the elements are test fixtures and 37% are archived docs, so 60% of
 // the vector population is a document a working engineer is not asking about.
 //
-//	code  production source only
-//	prod  code plus current (non-archived) documentation
+//	code  production source only: prod minus markdown documents
+//	prod  production code and current docs: not a test file (testPathFilter),
+//	      not under docs/archive/
 //	all   everything, the default, spelled out so a caller can undo a narrower
 //	      scope it inherited
 //
@@ -1656,21 +1875,51 @@ func scopePredicate(scope string) (store.ElementFilter, string, error) {
 	case "", ScopeAll:
 		return store.ElementFilter{}, ScopeAll, nil
 	case ScopeCode:
-		return fixtureFilter.Merge(archivedFilter), ScopeCode, nil
+		return codeFilter, ScopeCode, nil
 	case ScopeProd:
-		return fixtureFilter, ScopeProd, nil
+		return prodFilter, ScopeProd, nil
 	}
 	return store.ElementFilter{}, "", fmt.Errorf("unknown scope %q (valid: all, code, prod)", scope)
 }
 
-// fixtureFilter excludes test fixtures; archivedFilter excludes archived docs.
-// The scope names below compose them.
-var (
-	fixtureFilter = store.ElementFilter{
-		ExcludePathContains: []string{"testdata", "/fixtures/"},
-		ExcludePathSuffixes: []string{"_test.go", "fixtures.js"},
+// graphScope is the file rule a graph verb's args.scope applies to the files its
+// answer names (a caller's file, an impact node's file). It is the same
+// ElementFilter scopePredicate returns for the search rungs, applied in Go, so
+// a graph answer and a search answer name the same population. It returns the
+// scope name the answer echoes. An unknown value is the error scopePredicate gives.
+func graphScope(scope string) (keep func(file string) bool, name string, err error) {
+	var f store.ElementFilter
+	f, name, err = scopePredicate(scope)
+	if err != nil {
+		return nil, "", err
 	}
+	return func(file string) bool { return f.Admits(store.Element{FilePath: file}) }, name, nil
+}
+
+// keepSiteFiles drops the sites of every seed whose file keep rejects.
+func keepSiteFiles(bySeed map[string][]graph.Site, keep func(file string) bool) map[string][]graph.Site {
+	out := make(map[string][]graph.Site, len(bySeed))
+	for seed, sites := range bySeed {
+		kept := make([]graph.Site, 0, len(sites))
+		for _, s := range sites {
+			if keep(s.File) {
+				kept = append(kept, s)
+			}
+		}
+		out[seed] = kept
+	}
+	return out
+}
+
+// archivedFilter excludes archived docs; markdownFilter excludes markdown
+// documents (root CLAUDE.md and AGENTS.md included, which a prefix rule would
+// miss). prodFilter and codeFilter are the populations the scope names select,
+// on every search rung and in every graph verb's file rule (graphScope).
+var (
 	archivedFilter = store.ElementFilter{ExcludePathPrefixes: []string{"docs/archive/"}}
+	markdownFilter = store.ElementFilter{ExcludePathSuffixes: []string{".md", ".mdx"}}
+	prodFilter     = testPathFilter.Merge(archivedFilter)
+	codeFilter     = prodFilter.Merge(markdownFilter)
 )
 
 // searchKeep is the default search population for every rung. Git history rows
@@ -1683,6 +1932,59 @@ func searchKeep(includeGit bool) store.ElementFilter {
 		return store.ElementFilter{}
 	}
 	return store.ElementFilter{ExcludeQNPrefixes: []string{"git:"}}
+}
+
+// commitRefRe is the shape of a git commit reference: 7 to 40 hex characters.
+var commitRefRe = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
+
+// commitQNPrefix is the qualified-name prefix githistory gives a commit row.
+const commitQNPrefix = "git:commit:"
+
+// commitRef reports whether q is a git commit reference and returns it in lower
+// case. A token of 7 to 12 characters must hold a digit, so a word made of hex
+// letters ("defaced", "effaced") is not a SHA; a longer token is one without it.
+func commitRef(q string) (string, bool) {
+	if !commitRefRe.MatchString(q) {
+		return "", false
+	}
+	if len(q) <= 12 && !strings.ContainsAny(q, "0123456789") {
+		return "", false
+	}
+	return strings.ToLower(q), true
+}
+
+// addCommitRows is the commit-reference arm of the keyword rung. The keyword
+// index holds a commit row only by its 7-character prefix, so a longer
+// reference reaches its row through that prefix: the arm looks the prefix up
+// and adds, after the full-text matches, the git commit rows whose full SHA
+// starts with the reference. It returns a note when the reference names more
+// than one commit.
+func (e *Engine) addCommitRows(ctx context.Context, sha string, limit int, keep store.ElementFilter, matches []store.FuzzyMatch) ([]store.FuzzyMatch, string, error) {
+	rows, _, err := e.st.FindFuzzy(ctx, sha[:7], fetchWindow(limit, keep))
+	if err != nil {
+		return nil, "", err
+	}
+	seen := map[string]bool{}
+	for _, m := range matches {
+		seen[m.Element.QualifiedName] = true
+	}
+	named := 0
+	for _, m := range rows {
+		full, ok := strings.CutPrefix(m.Element.QualifiedName, commitQNPrefix)
+		if !ok || !strings.HasPrefix(full, sha) || !keep.Admits(m.Element) {
+			continue
+		}
+		named++
+		if !seen[m.Element.QualifiedName] {
+			seen[m.Element.QualifiedName] = true
+			matches = append(matches, m)
+		}
+	}
+	note := ""
+	if named > 1 && len(sha) < 40 {
+		note = fmt.Sprintf("%d commits start with %q; give more characters, or the full 40-character SHA, to name one.", named, sha)
+	}
+	return matches, note, nil
 }
 
 // admit keeps the items whose element f admits, at most limit of them. The zero

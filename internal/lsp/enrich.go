@@ -111,6 +111,9 @@ func (b *Bridge) Enrich(ctx context.Context, st enrichStore, dir string, want []
 	existingQN := make(map[string]bool, len(els))
 	for i := range els {
 		existingQN[els[i].QualifiedName] = true
+		if els[i].ElementType == "package" {
+			continue // a Go directory (index.packageElementType): its file_path is not a file
+		}
 		id, ok := tagToCatalogID(els[i].Language)
 		if !ok {
 			spec, found := ForLanguage(els[i].Language)

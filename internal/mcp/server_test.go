@@ -100,6 +100,14 @@ func TestServerAdvertisesAgentProtocol(t *testing.T) {
 		"exactly 4 tools",
 		"leankg-embed",
 		"per-project",
+		"callers",
+		"did_you_mean",
+		"context",
+		"history",
+		"rg is fine",
+		"lists who imports it",
+		"scope=prod",
+		"interface_spec:true",
 	} {
 		if !strings.Contains(lower, strings.ToLower(want)) {
 			t.Fatalf("initialize instructions missing %q: %s", want, initialize.Instructions)

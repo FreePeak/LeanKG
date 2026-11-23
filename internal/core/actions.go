@@ -17,6 +17,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/docindex"
@@ -39,6 +42,9 @@ type memoryReadHandler func(e *Engine, ctx context.Context, path, query string, 
 
 // graphVerb answers one connection verb once the query's seed has resolved.
 type graphVerb func(e *Engine, ctx context.Context, req QueryRequest, a graphArgs, seed string, resp map[string]any) (map[string]any, error)
+
+// graphFanVerb answers one connection verb over every seed a bare name resolved to.
+type graphFanVerb func(e *Engine, ctx context.Context, req QueryRequest, a graphArgs, seeds []string, resp map[string]any) (map[string]any, error)
 
 // deprecatedSubCommandNote is the response note for a caller that still sends
 // the old `cmd` key for a sub-command (CX-44: `command` is the canonical key).
@@ -99,8 +105,8 @@ func init() {
 		"semantic":        queryAction((*Engine).querySemantic),
 		"impact":          graphQuery((*Engine).graphImpact),
 		"path":            graphQuery((*Engine).graphPath),
-		"callers":         graphQuery((*Engine).graphCallers),
-		"callees":         graphQuery((*Engine).graphCallees),
+		"callers":         graphFanQuery((*Engine).graphCallers),
+		"callees":         graphFanQuery((*Engine).graphCallees),
 		"context":         graphQuery((*Engine).graphContext),
 		"explain":         graphQuery((*Engine).graphExplain),
 		"memory":          queryAction((*Engine).queryMemory),
@@ -184,10 +190,13 @@ var memoryReadCommands = map[string]memoryReadHandler{
 
 // searchScope is the envelope every search, rung and graph action shares.
 type searchScope struct {
-	resp  map[string]any
-	limit int
-	els   int
-	keep  store.ElementFilter
+	resp   map[string]any
+	limit  int
+	els    int
+	keep   store.ElementFilter
+	lookup string // the text the keyword and semantic rungs search, in full
+	exact  string // the text the L1 rung matches: git:commit:<sha> for a full SHA
+	sha    string // the lower-case commit reference, "" when the query is not one
 }
 
 // searchPrelude validates the query text and builds the shared envelope: the
@@ -208,10 +217,24 @@ func (e *Engine) searchPrelude(ctx context.Context, req QueryRequest, env envelo
 		return searchScope{}, err
 	}
 	resp["freshness"] = e.freshness(ctx, els)
-	// One population rule for every rung: git history rows are hidden unless
-	// args.include_git is set (see searchKeep). The semantic rung applies the
-	// same rule as a store-side predicate.
-	return searchScope{resp: resp, limit: limit, els: els, keep: searchKeep(env.IncludeGit)}, nil
+	// One population rule for every rung: the caller's scope, and git history
+	// rows hidden unless args.include_git is set (see searchKeep). A commit
+	// reference admits them for its own lookup. The rules are store-side
+	// predicates on the semantic rung too.
+	scope, _, err := scopePredicate(env.Scope)
+	if err != nil {
+		return searchScope{}, err
+	}
+	sha, isCommit := commitRef(req.Query)
+	keep := searchKeep(env.IncludeGit || isCommit).Merge(scope)
+	s := searchScope{resp: resp, limit: limit, els: els, keep: keep, lookup: req.Query, exact: req.Query}
+	if isCommit {
+		s.sha = sha
+		if len(sha) == 40 {
+			s.exact = commitQNPrefix + sha
+		}
+	}
+	return s, nil
 }
 
 func (e *Engine) queryExact(ctx context.Context, req QueryRequest, env envelopeArgs) (map[string]any, error) {
@@ -219,7 +242,7 @@ func (e *Engine) queryExact(ctx context.Context, req QueryRequest, env envelopeA
 	if err != nil {
 		return nil, err
 	}
-	return e.rungExact(ctx, req.Query, s.limit, s.resp, true, s.keep)
+	return e.rungExact(ctx, s.exact, s.limit, s.resp, true, s.keep)
 }
 
 func (e *Engine) queryFuzzy(ctx context.Context, req QueryRequest, env envelopeArgs) (map[string]any, error) {
@@ -227,7 +250,7 @@ func (e *Engine) queryFuzzy(ctx context.Context, req QueryRequest, env envelopeA
 	if err != nil {
 		return nil, err
 	}
-	return e.rungFuzzy(ctx, req.Query, s.limit, s.resp, true, s.keep)
+	return e.rungFuzzy(ctx, s.lookup, s.limit, s.resp, true, s.keep, s.sha)
 }
 
 func (e *Engine) querySemantic(ctx context.Context, req QueryRequest, env envelopeArgs) (map[string]any, error) {
@@ -235,7 +258,7 @@ func (e *Engine) querySemantic(ctx context.Context, req QueryRequest, env envelo
 	if err != nil {
 		return nil, err
 	}
-	return e.rungSemantic(ctx, req.Query, s.limit, s.resp, true, env)
+	return e.rungSemantic(ctx, s.lookup, s.limit, s.resp, true, s.keep, env, s.sha)
 }
 
 // queryLadder is the ladder router: L0 cold, then L1 exact, L2 fuzzy, L3
@@ -245,7 +268,8 @@ func (e *Engine) queryLadder(ctx context.Context, req QueryRequest, env envelope
 	if err != nil {
 		return nil, err
 	}
-	resp, limit, els, keep := s.resp, s.limit, s.els, s.keep
+	resp, limit, els, keep, lookup := s.resp, s.limit, s.els, s.keep, s.lookup
+	exact, sha := s.exact, s.sha
 	// One check per rung boundary: a rung that misses falls through to the
 	// next one, so cancellation is checked here instead.
 	if err := ctx.Err(); err != nil {
@@ -259,7 +283,7 @@ func (e *Engine) queryLadder(ctx context.Context, req QueryRequest, env envelope
 		return resp, nil
 	}
 	// A store error ends the ladder: it is not a miss to fall through (CX-45).
-	if _, err := e.rungExact(ctx, req.Query, limit, resp, false, keep); err != nil {
+	if _, err := e.rungExact(ctx, exact, limit, resp, false, keep); err != nil {
 		return nil, err
 	} else if len(hitsOf(resp)) > 0 {
 		resp["retrieval"] = map[string]any{"rung": "L1", "reason": "exact identifier match"}
@@ -278,12 +302,12 @@ func (e *Engine) queryLadder(ctx context.Context, req QueryRequest, env envelope
 		}
 		if conf == 0 || conf >= ontology.MinConfidence {
 			delete(resp, "guidance")
-			return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true, env))
+			return withEmptyHint(e.rungSemantic(ctx, lookup, limit, resp, true, keep, env, sha))
 		}
 	}
 	// pin=true: the rung knows which keyword arm served the hits, so it owns
 	// the reason (an L2 miss is overwritten by L3 below, which always sets one).
-	if _, err := e.rungFuzzy(ctx, req.Query, limit, resp, true, keep); err != nil {
+	if _, err := e.rungFuzzy(ctx, lookup, limit, resp, true, keep, sha); err != nil {
 		return nil, err
 	} else if len(hitsOf(resp)) > 0 {
 		return resp, nil
@@ -295,39 +319,96 @@ func (e *Engine) queryLadder(ctx context.Context, req QueryRequest, env envelope
 		return nil, err
 	}
 	if conf > 0 && conf < ontology.MinConfidence {
-		return withEmptyHint(e.rungFuzzy(ctx, req.Query, limit, resp, true, keep))
+		return withEmptyHint(e.rungFuzzy(ctx, lookup, limit, resp, true, keep, sha))
 	}
 	// The empty L2 pass above left "No keyword match…" guidance; L3 sets its
 	// own (an outage reads as an outage, not as a phrasing problem — RS-15).
 	delete(resp, "guidance")
-	return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true, env))
+	return withEmptyHint(e.rungSemantic(ctx, lookup, limit, resp, true, keep, env, sha))
 }
 
 // graphArgs are the args of the connection verbs: depth (impact and path) and
 // to (path). Both are optional; depth stays nil when the caller did not send it,
-// because each verb has its own default.
+// because each verb has its own default. rel_type is read by callers and
+// callees only (an explicit relationship filter for the sites).
 type graphArgs struct {
 	envelopeArgs
-	Depth *int   `json:"depth"`
-	To    string `json:"to"`
+	Depth   *int   `json:"depth"`
+	To      string `json:"to"`
+	RelType string `json:"rel_type"`
 }
 
 // graphQuery adapts a connection verb to the registry: the shared envelope,
-// then the seed resolution every verb needs, then the verb itself.
+// then the seed resolution every verb needs, then the verb itself. The verb
+// answers for the first seed only, so a bare name with several callables says
+// which ones it did not walk. Every verb echoes args.scope; a verb that does
+// not filter by it says so with scope_applied false (graphCallSites and
+// graphImpact set it true).
 func graphQuery(verb graphVerb) actionHandler[QueryRequest] {
+	return graphFanQuery(func(e *Engine, ctx context.Context, req QueryRequest, a graphArgs, seeds []string, resp map[string]any) (map[string]any, error) {
+		out, err := verb(e, ctx, req, a, seeds[0], resp)
+		if err != nil {
+			return out, err
+		}
+		var notes []string
+		if len(seeds) > 1 {
+			notes = append(notes, fmt.Sprintf("The name %q resolves to %d callables; this answer is for %s only. Ignored: %s. Pass a qualified name to answer for another.", req.Query, len(seeds), seeds[0], strings.Join(seeds[1:], ", ")))
+		}
+		withGuidance(out, notes)
+		if _, ok := out["scope_applied"]; !ok {
+			_, name, err := scopePredicate(a.Scope)
+			if err != nil {
+				return nil, err
+			}
+			out["scope"] = name
+			out["scope_applied"] = false
+		}
+		return out, nil
+	})
+}
+
+// withGuidance puts notes ahead of the guidance an answer already has.
+func withGuidance(resp map[string]any, notes []string) {
+	if len(notes) == 0 {
+		return
+	}
+	if prev, _ := resp["guidance"].(string); prev != "" {
+		notes = append(notes, prev)
+	}
+	resp["guidance"] = strings.Join(notes, " ")
+}
+
+// graphFanQuery is graphQuery for a verb that walks every resolved seed.
+func graphFanQuery(verb graphFanVerb) actionHandler[QueryRequest] {
 	return queryAction(func(e *Engine, ctx context.Context, req QueryRequest, a graphArgs) (map[string]any, error) {
 		s, err := e.searchPrelude(ctx, req, a.envelopeArgs)
 		if err != nil {
 			return nil, err
 		}
-		seed, err := e.resolveGraphSeed(ctx, req.Query)
+		seeds, aliased, truncated, err := e.resolveGraphSeeds(ctx, req.Query)
 		if err != nil {
 			return nil, err
 		}
-		if seed != req.Query {
-			s.resp["resolved_query"] = seed
+		if seeds[0] != req.Query {
+			s.resp["resolved_query"] = seeds[0]
 		}
-		return verb(e, ctx, req, a, seed, s.resp)
+		if aliased {
+			s.resp["resolved_from"] = req.Query
+		}
+		out, err := verb(e, ctx, req, a, seeds, s.resp)
+		if err != nil {
+			return out, err
+		}
+		var notes []string
+		if aliased && len(seeds) >= 2 {
+			notes = append(notes, fmt.Sprintf("The seed %q matched %d elements (%s); retry with one qualified name to narrow it.", req.Query, len(seeds), strings.Join(seeds, ", ")))
+		}
+		if truncated {
+			out["seeds_truncated"] = true
+			notes = append(notes, fmt.Sprintf("The name %q matched %d or more elements, the most the store returns for one name, so the seeds are a partial set; pass a qualified name for the full answer.", req.Query, graph.StoreFindExactLimit))
+		}
+		withGuidance(out, notes)
+		return out, nil
 	})
 }
 
@@ -364,11 +445,30 @@ func (e *Engine) graphImpact(ctx context.Context, req QueryRequest, a graphArgs,
 	}
 	hits, bounds, err := graph.Impact(ctx, e.st, seed, depth)
 	if errors.Is(err, graph.ErrUnknownNode) {
+		candidates, derr := e.didYouMean(ctx, seed)
+		if derr != nil {
+			return nil, derr
+		}
+		resp["did_you_mean"] = candidates
 		return graphUnresolved(resp, req, "seed", req.Query)
 	}
 	if err != nil {
 		return nil, err
 	}
+	keep, scope, err := graphScope(a.Scope)
+	if err != nil {
+		return nil, err
+	}
+	kept := make([]graph.Hit, 0, len(hits))
+	for _, h := range hits {
+		if file, _, _ := strings.Cut(h.QN, "::"); keep(file) {
+			kept = append(kept, h)
+		}
+	}
+	resp["scope"] = scope
+	resp["scope_applied"] = true
+	resp["filtered_out"] = len(hits) - len(kept)
+	hits = kept
 	// The result carries the VERB's name, like every other graph verb:
 	// impact under `hits` was the same key the search ladder uses, and
 	// these are different shapes (qualified_name + depth, not elements),
@@ -386,10 +486,11 @@ func (e *Engine) graphPath(ctx context.Context, req QueryRequest, a graphArgs, s
 	if toRaw == "" {
 		return nil, fmt.Errorf("query path requires args.to (target qualified name)")
 	}
-	to, err := e.resolveGraphSeed(ctx, toRaw)
+	tos, _, _, err := e.resolveGraphSeeds(ctx, toRaw)
 	if err != nil {
 		return nil, err
 	}
+	to := tos[0]
 	if to != toRaw {
 		resp["resolved_to"] = to
 	}
@@ -436,34 +537,233 @@ func (e *Engine) graphPath(ctx context.Context, req QueryRequest, a graphArgs, s
 	return graphDone(resp, req)
 }
 
-func (e *Engine) graphCallers(ctx context.Context, req QueryRequest, _ graphArgs, seed string, resp map[string]any) (map[string]any, error) {
-	qns, err := graph.Callers(ctx, e.st, seed)
-	if errors.Is(err, graph.ErrUnknownNode) {
-		return graphUnresolved(resp, req, "seed", req.Query)
-	}
+func (e *Engine) graphCallers(ctx context.Context, req QueryRequest, a graphArgs, seeds []string, resp map[string]any) (map[string]any, error) {
+	return e.graphCallSites(ctx, req, a, seeds, true, "callers", resp)
+}
+
+func (e *Engine) graphCallees(ctx context.Context, req QueryRequest, a graphArgs, seeds []string, resp map[string]any) (map[string]any, error) {
+	return e.graphCallSites(ctx, req, a, seeds, false, "callees", resp)
+}
+
+// graphSiteLimit is the default cap on the sites a caller or callee answer
+// lists. An explicit top-level limit replaces it. total_sites counts every site
+// found, so a cut answer says how much it left out.
+const graphSiteLimit = 50
+
+// graphCallerLimit caps the caller names a callers or callees answer lists, and
+// callers_truncated says when it cut. The sites are capped separately.
+const graphCallerLimit = 200
+
+// graphSeedLead is how many seeds the guidance names, by caller count, when a
+// bare name resolves to more seeds than this.
+const graphSeedLead = 3
+
+// graphCallSites answers callers (incoming) or callees (outgoing) over every
+// seed. An unknown seed is an answer with resolved=false and did_you_mean. A
+// known one lists the names under key, the seeds walked with their caller
+// counts, and one "<file>:<line> <qn> <confidence>" line per call site. Sites
+// list production callers before test callers and are capped at graphSiteLimit
+// (or the caller's limit); total_sites and truncated say what the cap left out.
+//
+// A caller walk of an interface spec also walks the implementers and the
+// sharing specs it dispatches through (graph.ExpandSpecSeeds); seeds reports
+// that expanded set. args.scope drops the sites whose file the scope excludes
+// (graphScope); filtered_out counts them.
+func (e *Engine) graphCallSites(ctx context.Context, req QueryRequest, a graphArgs, seeds []string, incoming bool, key string, resp map[string]any) (map[string]any, error) {
+	resolved, err := e.seedsResolved(ctx, seeds)
 	if err != nil {
 		return nil, err
 	}
-	resp["callers"] = qns
-	if len(qns) == 0 {
-		resp["guidance"] = graphEmptyGuidance("callers", seed)
+	if !resolved {
+		return e.graphUnknownSeed(ctx, req, seeds, key, resp)
+	}
+	keep, scope, err := graphScope(a.Scope)
+	if err != nil {
+		return nil, err
+	}
+	walk := seeds
+	var expandTruncated bool
+	if incoming {
+		walk, expandTruncated, err = graph.ExpandSpecSeeds(ctx, e.st, seeds)
+		if err != nil {
+			return nil, err
+		}
+		if expandTruncated {
+			resp["seeds_truncated"] = true
+		}
+	}
+	bySeed, err := graph.SitesBySeed(ctx, e.st, walk, incoming, a.RelType)
+	if err != nil {
+		return nil, err
+	}
+	all := graph.UnionSites(walk, bySeed)
+	bySeed = keepSiteFiles(bySeed, keep)
+	sites := graph.UnionSites(walk, bySeed)
+	callers := graph.SiteEnds(sites)
+	if len(callers) > graphCallerLimit {
+		callers = callers[:graphCallerLimit]
+		resp[key+"_truncated"] = true
+	}
+	counts := seedCounts(walk, bySeed)
+	// A site without a use line is still a caller (callers above), but it has
+	// no line to list, so the site list and its total count only lined sites.
+	lined := graph.LinedSites(sites)
+	limit := graphSiteLimit
+	if req.Limit > 0 {
+		limit = req.Limit
+	}
+	shown := productionFirst(lined)
+	if len(shown) > limit {
+		shown = shown[:limit]
+	}
+	resp["seeds"] = walk
+	resp["resolved"] = true
+	resp["seed_counts"] = counts
+	resp["scope"] = scope
+	resp["scope_applied"] = true
+	resp["filtered_out"] = len(all) - len(sites)
+	resp[key] = callers
+	resp["sites"] = siteLines(shown, siteSeeds(walk, bySeed), len(walk) > 1)
+	resp["total_sites"] = len(lined)
+	resp["site_limit"] = limit
+	resp["rel_types"] = graph.SiteRelTypes(sites)
+	if len(shown) < len(lined) {
+		resp["truncated"] = true
+	}
+	if len(sites) == 0 {
+		resp["guidance"] = graphEmptyGuidance(key, strings.Join(seeds, ", "))
+	} else if g := graphSitesGuidance(seeds, counts, len(shown), len(lined)); g != "" {
+		resp["guidance"] = g
+	}
+	if expandTruncated {
+		g, _ := resp["guidance"].(string)
+		resp["guidance"] = strings.TrimSpace("Some implementers of this interface spec were not expanded (seeds_truncated is true), so the answer covers the expanded seeds only. " + g)
 	}
 	return graphDone(resp, req)
 }
 
-func (e *Engine) graphCallees(ctx context.Context, req QueryRequest, _ graphArgs, seed string, resp map[string]any) (map[string]any, error) {
-	qns, err := graph.Callees(ctx, e.st, seed)
-	if errors.Is(err, graph.ErrUnknownNode) {
-		return graphUnresolved(resp, req, "seed", req.Query)
-	}
+// graphUnknownSeed answers a seed that names no indexed element and no edge.
+// It says so, offers up to didYouMeanLimit qualified names found by its last
+// segment, and keeps every list key empty so the answer has the usual shape.
+func (e *Engine) graphUnknownSeed(ctx context.Context, req QueryRequest, seeds []string, key string, resp map[string]any) (map[string]any, error) {
+	candidates, err := e.didYouMean(ctx, seeds[0])
 	if err != nil {
 		return nil, err
 	}
-	resp["callees"] = qns
-	if len(qns) == 0 {
-		resp["guidance"] = graphEmptyGuidance("callees", seed)
+	resp["seeds"] = seeds
+	resp["resolved"] = false
+	resp["hits"] = []any{}
+	resp["reachable"] = false
+	resp[key] = []string{}
+	resp["sites"] = []string{}
+	resp["total_sites"] = 0
+	resp["rel_types"] = []string{}
+	resp["did_you_mean"] = candidates
+	guidance := fmt.Sprintf("The seed %q did not resolve to an indexed element; %s returned no answer for it.", seeds[0], key)
+	if len(candidates) > 0 {
+		guidance += fmt.Sprintf(" Did you mean %s? Retry %s with one of those qualified names.", strings.Join(candidates, ", "), req.Action)
+	} else {
+		guidance += fmt.Sprintf(" Resolve it with query (action empty) to a qualified_name, then retry %s with that exact QN.", req.Action)
 	}
+	resp["guidance"] = guidance
 	return graphDone(resp, req)
+}
+
+// seedsResolved reports whether every seed is known to the graph (graph.Known).
+func (e *Engine) seedsResolved(ctx context.Context, seeds []string) (bool, error) {
+	for _, seed := range seeds {
+		ok, err := graph.Known(ctx, e.st, seed)
+		if err != nil || !ok {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// productionFirst orders sites with production callers before test callers,
+// each group keeping its order, so a cut keeps production sites.
+func productionFirst(sites []graph.Site) []graph.Site {
+	out := make([]graph.Site, 0, len(sites))
+	for _, s := range sites {
+		if !isTestPath(s.File) {
+			out = append(out, s)
+		}
+	}
+	for _, s := range sites {
+		if isTestPath(s.File) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// seedCounts is the distinct-caller count of each seed.
+func seedCounts(seeds []string, bySeed map[string][]graph.Site) map[string]int {
+	counts := make(map[string]int, len(seeds))
+	for _, seed := range seeds {
+		distinct := map[string]bool{}
+		for _, s := range bySeed[seed] {
+			distinct[s.QN] = true
+		}
+		counts[seed] = len(distinct)
+	}
+	return counts
+}
+
+// graphSitesGuidance names what a site answer left out. A bare name that
+// resolved to more than graphSeedLead seeds gets the top seeds by caller count
+// as the qualified names to retry with. A cut answer says how many sites it
+// shows of how many it found.
+func graphSitesGuidance(seeds []string, counts map[string]int, shown, total int) string {
+	var parts []string
+	if len(seeds) > graphSeedLead {
+		ranked := slices.Clone(seeds)
+		sort.SliceStable(ranked, func(i, j int) bool { return counts[ranked[i]] > counts[ranked[j]] })
+		var top []string
+		for _, seed := range ranked {
+			if len(top) == graphSeedLead || counts[seed] == 0 {
+				break
+			}
+			top = append(top, fmt.Sprintf("%s (%d)", seed, counts[seed]))
+		}
+		if len(top) > 0 {
+			parts = append(parts, fmt.Sprintf("The name resolves to %d seeds; retry with a qualified name, the top %d by caller count: %s.", len(seeds), len(top), strings.Join(top, ", ")))
+		}
+	}
+	if shown < total {
+		parts = append(parts, fmt.Sprintf("Showing %d of %d sites (production callers first); raise limit or pass a qualified name to narrow.", shown, total))
+	}
+	return strings.Join(parts, " ")
+}
+
+// siteLines renders each call site as "<file>:<line> <qn> <confidence>". A site
+// also names the seed it reached and the relationship it was read through
+// (" seed=<qn> via=<rel_type>") when the answer spans several seeds or the
+// relationship is not calls (a value use), so a single-seed call answer stays
+// short.
+func siteLines(sites []graph.Site, seedOf map[graph.Site]string, multiSeed bool) []string {
+	out := make([]string, 0, len(sites))
+	for _, s := range sites {
+		line := fmt.Sprintf("%s:%d %s %s", s.File, s.Line, s.QN, strconv.FormatFloat(s.Confidence, 'f', -1, 64))
+		if multiSeed || s.RelType != "calls" {
+			line += fmt.Sprintf(" seed=%s via=%s", seedOf[s], s.RelType)
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// siteSeeds maps each site to the first seed (in walk order) whose sites hold it.
+func siteSeeds(walk []string, bySeed map[string][]graph.Site) map[graph.Site]string {
+	out := map[graph.Site]string{}
+	for _, seed := range walk {
+		for _, s := range bySeed[seed] {
+			if _, ok := out[s]; !ok {
+				out[s] = seed
+			}
+		}
+	}
+	return out
 }
 
 func (e *Engine) graphContext(ctx context.Context, req QueryRequest, _ graphArgs, seed string, resp map[string]any) (map[string]any, error) {
@@ -813,6 +1113,10 @@ func (e *Engine) importIndex(ctx context.Context, req ImportRequest) (map[string
 	// means the walk root did not cover the store's paths (see DeletedFiles).
 	if res.DeletedFiles > 0 {
 		indexed["deleted_files"] = res.DeletedFiles
+	}
+	// Go files the parser rejected and the regex tier indexed instead.
+	if res.ParseFallbacks > 0 {
+		indexed["parse_fallbacks"] = res.ParseFallbacks
 	}
 	out := map[string]any{"indexed": indexed, "status": status}
 	if serr != nil {

@@ -89,6 +89,36 @@ func TestImportRelativePathAnchorsAtProject(t *testing.T) {
 	}
 }
 
+// TestImportReportsParseFallbacks: a Go file the parser rejects is indexed by the
+// regex tier and counted in indexed.parse_fallbacks; a tree the parser accepts
+// omits the key, so the normal answer does not change.
+func TestImportReportsParseFallbacks(t *testing.T) {
+	dir := writeProject(t)
+	e := engineAt(t, dir)
+	ctx := context.Background()
+
+	out, err := e.Import(ctx, ImportRequest{Action: "repo", Path: "."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, _ := out["indexed"].(map[string]any)
+	if _, ok := idx["parse_fallbacks"]; ok {
+		t.Fatalf("clean tree reported parse_fallbacks: %v", idx)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "bad.go"), []byte("package p\n\nfunc Broken( {\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err = e.Import(ctx, ImportRequest{Action: "repo", Path: "."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, _ = out["indexed"].(map[string]any)
+	if got := idx["parse_fallbacks"]; got != 1 {
+		t.Fatalf("parse_fallbacks = %v, want 1; indexed=%v", got, idx)
+	}
+}
+
 // TestImportSubtreeRefused pins the guard: a walk root that is a strict
 // subdirectory of the project would read every outside file as deleted, so it is
 // refused instead of attempted.
@@ -167,7 +197,13 @@ func TestDeletedCodeIsNeverASemanticHit(t *testing.T) {
 		t.Fatal(err)
 	}
 	vecs, _ := e.st.VectorCount(context.Background(), p.Identity().Model)
-	if els := count(t, e); vecs != els {
+	// Go package elements carry no vector (embed.readElements skips them), so
+	// the vectors match every element but those.
+	byType, err := e.st.ElementsByType(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if els := count(t, e) - byType["package"]; vecs != els {
 		t.Fatalf("after re-index: %d vectors for %d elements (orphans left behind)", vecs, els)
 	}
 	out, err := e.Query(ctx, QueryRequest{Action: "semantic", Query: "RotateStagingCredentials", Limit: 50})

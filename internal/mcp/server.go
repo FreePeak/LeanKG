@@ -165,7 +165,12 @@ const serverInstructionsTemplate = `LeanKG is a code knowledge graph (exactly 4 
 3. Inspect retrieval{rung,reason}, guidance (when present), and freshness. If a store is cold, import it once with action=repo, path=<absolute repository path>, then query; do not re-import on every turn. On zero hits, follow guidance instead of abandoning LeanKG for bash.
 4. Importing indexes elements but does not create vectors. If L3 is required, run ` + "`leankg-embed run`" + ` (or ` + "`leankg-embed full`" + ` on stamp drift); a degraded L3 is not proof that the query ladder is broken.
 5. Use status for health, freshness, resolved project_dir, and embedding coverage — not as a substitute for query.
-6. Keep context across sessions: at session start call query action=memory with args.command=session_recall (or memories). At session end call import action=memory command=session_retain with session_id + turns[] (args.scope=per-project|global|per-project-tagged, args.cwd optional); durable lessons use import action=session command=lesson with session_id + text.`
+6. Keep context across sessions: at session start call query action=memory with args.command=session_recall (or memories). At session end call import action=memory command=session_retain with session_id + turns[] (args.scope=per-project|global|per-project-tagged, args.cwd optional); durable lessons use import action=session command=lesson with session_id + text.
+7. Call sites: callers, callees and impact take a qualified name; use them instead of re-grepping for a function's uses. callers on a bare method name merges every type that has it; pass a qualified name (file::Type.Method) to narrow; unknown names return did_you_mean.
+8. Who references a symbol: query action=context with its qualified name. context on a package path (the directory) lists who imports it and what it imports; on a qualified element name it lists its edges.
+9. A file's git history: query action=history with the file path (after import action=git).
+10. Literal text search (a string, a comment, a config key): rg is fine; the index holds symbols, not every string.
+11. callers/callees accept scope=prod to drop test callers; interface specs (interface_spec:true) are declarations, not implementers.`
 
 // projectRuleRequired is the project clause for a server that serves several
 // projects. The tool schema already requires the argument there; the clause
@@ -414,7 +419,7 @@ func (s *Server) registerTools() {
 				"payload": {"type": "string", "description": "payload to offload (action=session)"},
 				"summary": {"type": "string", "description": "offload summary (action=session)"},
 				"tags": {"type": "array", "items": {"type": "string"}, "description": "tags for action=memory command=session_retain (also accepted inside args.tags, or as one comma-separated string); persisted on the row so a later tag-scoped recall can match it"},
-				"args": {"type": "object", "description": "action params: turns[]/session_id/retained_through_user_turn/tags[]/scope/cwd/bank (memory session_retain); content/old/new (memory curation); mode/lines/fresh (read). For query: scope=all (default; the whole corpus, test fixtures and archived docs included) | code (production source only) | prod (code plus current docs) picks the population to RANK; an unknown value is an error; every answer reports retrieval.scope"},
+				"args": {"type": "object", "description": "action params: turns[]/session_id/retained_through_user_turn/tags[]/scope/cwd/bank (memory session_retain); content/old/new (memory curation); mode/lines/fresh (read). For query: scope=all (default; the whole corpus, test fixtures and archived docs included) | code (production source only: prod minus markdown) | prod (production code and current docs: not a test file, a fixture or under docs/archive/) picks the population to RANK; an unknown value is an error; every search answer reports retrieval.scope, and graph verbs report scope with scope_applied"},
 				"project": {"type": "string", "description": "target project (dir path or name); only meaningful when the server serves multiple projects (LEANKG_PROJECT_DIRS)"}
 			},
 			"required": []

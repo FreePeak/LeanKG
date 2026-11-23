@@ -82,8 +82,9 @@ func assertNoElement(t *testing.T, st store.Backend, name string) {
 func TestIndexDirElements(t *testing.T) {
 	dir, st := setupProject(t)
 	res := index(t, st, dir)
-	if res.Files != 5 || res.Elements != 16 || res.Skipped != 0 {
-		t.Fatalf("first run: %+v, want Files=5 Elements=16 Skipped=0", res)
+	// 16 definitions plus the package element of the one Go directory (v13).
+	if res.Files != 5 || res.Elements != 17 || res.Skipped != 0 {
+		t.Fatalf("first run: %+v, want Files=5 Elements=17 Skipped=0", res)
 	}
 
 	cases := []struct {
@@ -138,10 +139,11 @@ func TestRelationships(t *testing.T) {
 		"sample.ts": 1, // ping->double
 		"sample.md": 2, // Design Notes->API, API->Details (contains)
 	}
-	// Cross-file: sample.go greet's content says `hello %s`, matching
-	// sample.py::Greeter.hello -> one more calls edge.
-	if res.Relationships != 16 {
-		t.Fatalf("Relationships = %d, want 16 (%v)", res.Relationships, want)
+	// The Go AST reads identifiers, not text: greet's string literal
+	// "hello %s" no longer links sample.py::Greeter.hello (the v6 word
+	// heuristic made that edge), so the total is one lower than v6's 16.
+	if res.Relationships != 15 {
+		t.Fatalf("Relationships = %d, want 15 (%v)", res.Relationships, want)
 	}
 }
 
@@ -192,8 +194,10 @@ func TestRelationshipsPerFile(t *testing.T) {
 			t.Errorf("contains edge %v->%v confidence %v, want 1.0", r.Source, r.Target, r.Confidence)
 		}
 	}
-	if byType["contains"] != 2 || byType["calls"] != 4 {
-		t.Fatalf("python edges: %v, want 2 contains + 4 calls (%v)", byType, pyRels)
+	// A class names its methods as references, never calls (Greeter does not
+	// call hello); standalone's two uses are the calls.
+	if byType["contains"] != 2 || byType["calls"] != 2 || byType["references"] != 2 {
+		t.Fatalf("python edges: %v, want 2 contains + 2 calls + 2 references (%v)", byType, pyRels)
 	}
 	for _, pair := range [][2]string{
 		{"sample.py::Greeter", "sample.py::Greeter.__init__"},
@@ -216,11 +220,7 @@ func TestRelationshipsPerFile(t *testing.T) {
 // goRels builds the this-run name map for one file's elements and computes
 // its relationship batch.
 func goRels(fe fileElements) []store.Relationship {
-	names := map[string][]string{}
-	for _, e := range fe.elements {
-		names[e.name] = append(names[e.name], e.qn)
-	}
-	return relationships(fe.elements, names)
+	return relationships(fe.elements, nameTableOf(fe.elements).all)
 }
 
 func TestSkipList(t *testing.T) {
@@ -294,8 +294,9 @@ func TestChangeDetection(t *testing.T) {
 		t.Fatal(err)
 	}
 	third := index(t, st, dir)
-	if third.Files != 1 || third.Skipped != 4 || third.Elements != 4 {
-		t.Fatalf("edited run: %+v, want Files=1 Skipped=4 Elements=4", third)
+	// 4 definitions plus the package element of the changed file's directory (v13).
+	if third.Files != 1 || third.Skipped != 4 || third.Elements != 5 {
+		t.Fatalf("edited run: %+v, want Files=1 Skipped=4 Elements=5", third)
 	}
 	mustFind(t, st, "sample.py::runner")
 	assertNoElement(t, st, "standalone") // FTS + exact both clean

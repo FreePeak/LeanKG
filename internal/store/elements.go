@@ -290,15 +290,16 @@ func (s *Store) DeleteFileRecord(ctx context.Context, path string) error {
 	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
-// DeleteOrphanRelationships removes every edge whose endpoint is no longer a
-// live element. The watermark bumps only when something actually went.
+// DeleteOrphanRelationships removes every edge whose endpoint is neither a live
+// element nor a file in code_files. The watermark bumps only when something
+// actually went.
 func (s *Store) DeleteOrphanRelationships(ctx context.Context) (int, error) {
 	if err := requireWritable(s.mode); err != nil {
 		return 0, err
 	}
 	res, err := s.db.ExecContext(ctx, `DELETE FROM relationships
-		WHERE source_qualified NOT IN (SELECT qualified_name FROM code_elements)
-		   OR target_qualified NOT IN (SELECT qualified_name FROM code_elements)`)
+		WHERE source_qualified NOT IN (SELECT qualified_name FROM code_elements UNION SELECT path FROM code_files)
+		   OR target_qualified NOT IN (SELECT qualified_name FROM code_elements UNION SELECT path FROM code_files)`)
 	if err != nil {
 		return 0, err
 	}

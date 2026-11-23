@@ -46,6 +46,9 @@ func readElements(ctx context.Context, st Store) ([]elementText, error) {
 	}
 	out := make([]elementText, 0, len(els))
 	for _, e := range els {
+		if e.ElementType == "package" {
+			continue // a directory's package element (index.packageElementType): no embeddable text of its own
+		}
 		out = append(out, elementText{File: e.FilePath, QN: e.QualifiedName, Type: e.ElementType, Name: e.Name, Content: e.Content})
 	}
 	return out, nil

@@ -1,0 +1,2120 @@
+{
+ "schema": "leankg.callers_truth/v2",
+ "source_commit": "3f85ec23da7b2992c50698b4ce9a2773aae2fc56",
+ "generator": "benchmark/ab/callers_truth_gen_test.go (go/parser + go/types over HEAD)",
+ "rules": [
+  "Corpus: the tracked files of HEAD (git archive of the commit). Working-tree edits are never read. Each build configuration (default darwin; darwin with the tstree tag; linux) is checked on its own, and the truth is the union of their callers. A .go file joins a configuration when go/build matches it there; testdata/, vendor/, node_modules/ and dot or underscore directories are skipped.",
+  "Packages: a directory's non-test files and its in-package _test.go files form one package; its package X_test files form a second package. Module imports resolve to these packages; standard-library imports are type-checked from source; other imports stay unresolved and their selectors make no edges.",
+  "Targets: qualified_name file::F is the package-level function or type F; file::T.M is the method M declared on the concrete type T.",
+  "Reference (type-reference rule included): an identifier whose go/types use resolves to the target counts wherever it sits: a call, a method or function value, a signature, a field or var type, a composite literal, a conversion or an embedded field. A type is referenced by any use of its name. The definition itself does not count.",
+  "Own methods: a reference to a type from a method whose receiver is that type is not a caller of the type (TestCallersOfTypeExcludeOwnMethods, internal/graph/graph_test.go). A method target keeps the references from its own type's methods.",
+  "Interface dispatch: for a method target T.M, a reference to a method M declared by an interface (named or a literal) that *T implements counts as a caller of T.M (the graph's interface-dispatch edges).",
+  "Enclosing caller: the top-level declaration that holds the reference. A method is Recv.Name (receiver base type, pointer and type parameters stripped); a func, type or var spec is its name (a var spec with several names uses its first). Closures count toward their enclosing declaration.",
+  "A reference inside the target's own declaration (recursion) is not a caller.",
+  "One entry per (file, func). line is the lowest referencing line in that function and is informational. test is true for _test.go files.",
+  "possible: a selector X.M whose name matches a target and whose receiver type does not resolve (no go/types selection, and X is not a package name) is listed per symbol. The scorer reports possible hits and counts neither true positives nor false positives for them."
+ ],
+ "symbols": [
+  {
+   "id": "ReplaceFileRelationships",
+   "qualified_name": "internal/store/elements.go::Store.ReplaceFileRelationships",
+   "class": "interface",
+   "callers": [
+    {
+     "file": "internal/index/index.go",
+     "func": "indexDir",
+     "test": false,
+     "line": 595
+    },
+    {
+     "file": "internal/index/packages.go",
+     "func": "refreshPackages",
+     "test": false,
+     "line": 225
+    },
+    {
+     "file": "internal/index/packages.go",
+     "func": "writeGoPackage",
+     "test": false,
+     "line": 256
+    },
+    {
+     "file": "internal/store/store_test.go",
+     "func": "checkReplaceFileRelationships",
+     "test": true,
+     "line": 295
+    }
+   ],
+   "defects": [
+    {
+     "site": "internal/index/index.go:545",
+     "file": "internal/index/index.go",
+     "func": "indexDir"
+    }
+   ]
+  },
+  {
+   "id": "HTTPHandler",
+   "qualified_name": "internal/mcp/server.go::Server.HTTPHandler",
+   "class": "method",
+   "callers": [
+    {
+     "file": "cmd/leankg/main.go",
+     "func": "serve",
+     "test": false,
+     "line": 628
+    },
+    {
+     "file": "cmd/leankg/mcpscope_test.go",
+     "func": "mcpCallStatus",
+     "test": true,
+     "line": 88
+    },
+    {
+     "file": "internal/httpx/budget_parity_test.go",
+     "func": "TestSameQueryReturnsOneBodyOnEveryTransport",
+     "test": true,
+     "line": 146
+    },
+    {
+     "file": "internal/mcp/gate_test.go",
+     "func": "TestGateFailsClosedOnStoreError",
+     "test": true,
+     "line": 202
+    },
+    {
+     "file": "internal/mcp/gate_test.go",
+     "func": "newGateHandler",
+     "test": true,
+     "line": 49
+    },
+    {
+     "file": "internal/mcp/server_test.go",
+     "func": "TestMCPHonorsDBMintedTokens",
+     "test": true,
+     "line": 439
+    },
+    {
+     "file": "internal/mcp/server_test.go",
+     "func": "TestMCPNewProtocolVersionOverHTTP",
+     "test": true,
+     "line": 364
+    },
+    {
+     "file": "internal/mcp/server_test.go",
+     "func": "TestMCPRBACGatesWriteToolsOverWire",
+     "test": true,
+     "line": 272
+    }
+   ],
+   "defects": [
+    {
+     "site": "cmd/leankg/main.go:628",
+     "file": "cmd/leankg/main.go",
+     "func": "serve"
+    },
+    {
+     "site": "cmd/leankg/main.go:634",
+     "file": "cmd/leankg/main.go",
+     "func": "serve"
+    }
+   ]
+  },
+  {
+   "id": "OpenBackend",
+   "qualified_name": "internal/store/backend.go::OpenBackend",
+   "class": "qualified",
+   "callers": [
+    {
+     "file": "benchmark/ab/ab_test.go",
+     "func": "freshStore",
+     "test": true,
+     "line": 70
+    },
+    {
+     "file": "benchmark/ab/callers_score_test.go",
+     "func": "TestCallersScoreIntegration",
+     "test": true,
+     "line": 205
+    },
+    {
+     "file": "benchmark/ab/efficiency_bytes_test.go",
+     "func": "TestSearchAnswerBytes",
+     "test": true,
+     "line": 67
+    },
+    {
+     "file": "cmd/leankg-embed/main.go",
+     "func": "openStore",
+     "test": false,
+     "line": 124
+    },
+    {
+     "file": "cmd/leankg/annotaterefuse_test.go",
+     "func": "TestAnnotateRefusesAnElementTheIndexDoesNotHave",
+     "test": true,
+     "line": 31
+    },
+    {
+     "file": "cmd/leankg/annotdelete_test.go",
+     "func": "TestDeleteAnnotationRoundTrip",
+     "test": true,
+     "line": 18
+    },
+    {
+     "file": "cmd/leankg/annotsearch_test.go",
+     "func": "TestSearchAnnotationsHint",
+     "test": true,
+     "line": 22
+    },
+    {
+     "file": "cmd/leankg/multiproject_test.go",
+     "func": "engineOver",
+     "test": true,
+     "line": 63
+    },
+    {
+     "file": "cmd/leankg/noteread_test.go",
+     "func": "TestNoteReadRoundTrip",
+     "test": true,
+     "line": 26
+    },
+    {
+     "file": "cmd/leankg/noteread_test.go",
+     "func": "TestNoteVerbListsWhenContentIsEmpty",
+     "test": true,
+     "line": 72
+    },
+    {
+     "file": "cmd/leankg/store.go",
+     "func": "openStoreWith",
+     "test": false,
+     "line": 36
+    },
+    {
+     "file": "internal/annot/annot_test.go",
+     "func": "newStore",
+     "test": true,
+     "line": 15
+    },
+    {
+     "file": "internal/auth/auth_tokens_test.go",
+     "func": "openAuthStore",
+     "test": true,
+     "line": 18
+    },
+    {
+     "file": "internal/auth/role_clamp_test.go",
+     "func": "TestContributorCannotMintAdminOrForOthers",
+     "test": true,
+     "line": 77
+    },
+    {
+     "file": "internal/auth/role_clamp_test.go",
+     "func": "TestViewerCannotMintAboveItsRole",
+     "test": true,
+     "line": 20
+    },
+    {
+     "file": "internal/convo/convo.go",
+     "func": "MineIntoProject",
+     "test": false,
+     "line": 163
+    },
+    {
+     "file": "internal/convo/convo_test.go",
+     "func": "setupStore",
+     "test": true,
+     "line": 27
+    },
+    {
+     "file": "internal/core/actions_golden_test.go",
+     "func": "openActionFixture",
+     "test": true,
+     "line": 79
+    },
+    {
+     "file": "internal/core/core_test.go",
+     "func": "TestL3ProviderFailureDegrades",
+     "test": true,
+     "line": 179
+    },
+    {
+     "file": "internal/core/core_test.go",
+     "func": "TestL3SemanticWithDeterministicProvider",
+     "test": true,
+     "line": 116
+    },
+    {
+     "file": "internal/core/core_test.go",
+     "func": "TestL3StampDriftDegrades",
+     "test": true,
+     "line": 376
+    },
+    {
+     "file": "internal/core/core_test.go",
+     "func": "newEngine",
+     "test": true,
+     "line": 23
+    },
+    {
+     "file": "internal/core/githistory_test.go",
+     "func": "gitHistoryEngine",
+     "test": true,
+     "line": 22
+    },
+    {
+     "file": "internal/core/githistory_visibility_test.go",
+     "func": "TestSemanticHidesGitHistoryVectors",
+     "test": true,
+     "line": 154
+    },
+    {
+     "file": "internal/core/githistory_visibility_test.go",
+     "func": "openVisibilityEngine",
+     "test": true,
+     "line": 19
+    },
+    {
+     "file": "internal/core/headstate_test.go",
+     "func": "TestStatusHeadSyncTellsTheTreeMoved",
+     "test": true,
+     "line": 61
+    },
+    {
+     "file": "internal/core/headstate_test.go",
+     "func": "TestStatusHeadSyncUnknownWithoutGit",
+     "test": true,
+     "line": 125
+    },
+    {
+     "file": "internal/core/import_migrates_test.go",
+     "func": "TestImportMigratesTheStoreItWritesTo",
+     "test": true,
+     "line": 22
+    },
+    {
+     "file": "internal/core/importpath_test.go",
+     "func": "engineAt",
+     "test": true,
+     "line": 35
+    },
+    {
+     "file": "internal/core/l3scope_test.go",
+     "func": "TestL3ScopeArgReachesTheVectorArm",
+     "test": true,
+     "line": 27
+    },
+    {
+     "file": "internal/core/l3stampreason_test.go",
+     "func": "TestL3DegradeReasonNamesUnreadableStamp",
+     "test": true,
+     "line": 40
+    },
+    {
+     "file": "internal/core/l3stampreason_test.go",
+     "func": "TestL3DegradeReasonStillSaysNoVectorCollection",
+     "test": true,
+     "line": 86
+    },
+    {
+     "file": "internal/core/ladderorder_test.go",
+     "func": "TestLadderPrefersSemanticOverWeakKeyword",
+     "test": true,
+     "line": 34
+    },
+    {
+     "file": "internal/core/namearm_test.go",
+     "func": "TestL3FusesANameArm",
+     "test": true,
+     "line": 37
+    },
+    {
+     "file": "internal/core/portfolio.go",
+     "func": "Engine.portfolioChild",
+     "test": false,
+     "line": 148
+    },
+    {
+     "file": "internal/core/portfolio_test.go",
+     "func": "seedFleetProject",
+     "test": true,
+     "line": 21
+    },
+    {
+     "file": "internal/core/statushealth_test.go",
+     "func": "TestStatusHealthyStoreWithoutEmbeddings",
+     "test": true,
+     "line": 143
+    },
+    {
+     "file": "internal/core/statushealth_test.go",
+     "func": "seededStore",
+     "test": true,
+     "line": 32
+    },
+    {
+     "file": "internal/docgen/docgen_test.go",
+     "func": "newFixture",
+     "test": true,
+     "line": 28
+    },
+    {
+     "file": "internal/docindex/docindex_test.go",
+     "func": "setupStore",
+     "test": true,
+     "line": 17
+    },
+    {
+     "file": "internal/docindex/markdown_ownership_test.go",
+     "func": "openOwnershipStore",
+     "test": true,
+     "line": 29
+    },
+    {
+     "file": "internal/doctor/doctor_test.go",
+     "func": "TestFileCoverageRealSqlite",
+     "test": true,
+     "line": 525
+    },
+    {
+     "file": "internal/doctor/doctor_test.go",
+     "func": "TestPackageElementsAreNotFiles",
+     "test": true,
+     "line": 563
+    },
+    {
+     "file": "internal/doctor/doctor_test.go",
+     "func": "TestRunDeepSqlite",
+     "test": true,
+     "line": 389
+    },
+    {
+     "file": "internal/doctor/fleet.go",
+     "func": "fleetProbe.Fleet",
+     "test": false,
+     "line": 98
+    },
+    {
+     "file": "internal/embed/embed_test.go",
+     "func": "testStore",
+     "test": true,
+     "line": 29
+    },
+    {
+     "file": "internal/embed/githistory_read_test.go",
+     "func": "TestReadElementsIncludesGitHistoryRows",
+     "test": true,
+     "line": 16
+    },
+    {
+     "file": "internal/export/export_test.go",
+     "func": "newFixture",
+     "test": true,
+     "line": 16
+    },
+    {
+     "file": "internal/federation/federation_test.go",
+     "func": "openStore",
+     "test": true,
+     "line": 22
+    },
+    {
+     "file": "internal/githistory/githistory_test.go",
+     "func": "openStore",
+     "test": true,
+     "line": 14
+    },
+    {
+     "file": "internal/golden/golden_test.go",
+     "func": "openStore",
+     "test": true,
+     "line": 123
+    },
+    {
+     "file": "internal/graph/budget_test.go",
+     "func": "openGraph",
+     "test": true,
+     "line": 17
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "newFixture",
+     "test": true,
+     "line": 18
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "newSiteFixture",
+     "test": true,
+     "line": 213
+    },
+    {
+     "file": "internal/graph/quality_test.go",
+     "func": "TestOversizedTieBreakByQualifiedName",
+     "test": true,
+     "line": 91
+    },
+    {
+     "file": "internal/graph/quality_test.go",
+     "func": "qualityFixture",
+     "test": true,
+     "line": 16
+    },
+    {
+     "file": "internal/graph/specseeds_test.go",
+     "func": "newSpecFixture",
+     "test": true,
+     "line": 32
+    },
+    {
+     "file": "internal/httpx/budget_parity_test.go",
+     "func": "newSeededParityEngine",
+     "test": true,
+     "line": 36
+    },
+    {
+     "file": "internal/httpx/parity_test.go",
+     "func": "newParityEngine",
+     "test": true,
+     "line": 32
+    },
+    {
+     "file": "internal/index/cancel_test.go",
+     "func": "TestIndexStopsMidPackage",
+     "test": true,
+     "line": 44
+    },
+    {
+     "file": "internal/index/cancel_test.go",
+     "func": "openIndexStore",
+     "test": true,
+     "line": 109
+    },
+    {
+     "file": "internal/index/count_parity_test.go",
+     "func": "newParityStore",
+     "test": true,
+     "line": 18
+    },
+    {
+     "file": "internal/index/dart_elements_e2e_test.go",
+     "func": "TestIndexDartConstructorAndEnumElements",
+     "test": true,
+     "line": 34
+    },
+    {
+     "file": "internal/index/doccomment_test.go",
+     "func": "indexedGraph",
+     "test": true,
+     "line": 80
+    },
+    {
+     "file": "internal/index/goast_cross_test.go",
+     "func": "newCrossTree",
+     "test": true,
+     "line": 24
+    },
+    {
+     "file": "internal/index/goast_test.go",
+     "func": "TestGoPackageLevelDeclarationsAreQueryable",
+     "test": true,
+     "line": 162
+    },
+    {
+     "file": "internal/index/index_git_test.go",
+     "func": "gitIndexStore",
+     "test": true,
+     "line": 20
+    },
+    {
+     "file": "internal/index/index_test.go",
+     "func": "TestExtractorBumpPurgesPhantomKeepsVectors",
+     "test": true,
+     "line": 452
+    },
+    {
+     "file": "internal/index/index_test.go",
+     "func": "TestExtractorVersionReextractsOnce",
+     "test": true,
+     "line": 414
+    },
+    {
+     "file": "internal/index/index_test.go",
+     "func": "TestIndexRootTripwire",
+     "test": true,
+     "line": 376
+    },
+    {
+     "file": "internal/index/index_test.go",
+     "func": "setupProject",
+     "test": true,
+     "line": 30
+    },
+    {
+     "file": "internal/index/objc_calls_tstree_test.go",
+     "func": "TestIndexObjCMessageSendCallEdges",
+     "test": true,
+     "line": 43
+    },
+    {
+     "file": "internal/index/specialists_index_test.go",
+     "func": "TestIndexDirSpecialistDoesNotShiftNextRecord",
+     "test": true,
+     "line": 149
+    },
+    {
+     "file": "internal/index/specialists_index_test.go",
+     "func": "TestIndexKotlinExtrasPersists",
+     "test": true,
+     "line": 97
+    },
+    {
+     "file": "internal/index/specialists_index_test.go",
+     "func": "TestIndexSpecialistFilePersists",
+     "test": true,
+     "line": 29
+    },
+    {
+     "file": "internal/index/tstree_index_test.go",
+     "func": "TestIndexDirWithRegistryLazyNested",
+     "test": true,
+     "line": 67
+    },
+    {
+     "file": "internal/index/walkgate_test.go",
+     "func": "newScratchStore",
+     "test": true,
+     "line": 19
+    },
+    {
+     "file": "internal/lsp/enrich_test.go",
+     "func": "newTestStore",
+     "test": true,
+     "line": 17
+    },
+    {
+     "file": "internal/maintain/fleet_reconcile_test.go",
+     "func": "TestFleetPassReconcilesStoreWithHEAD",
+     "test": true,
+     "line": 35
+    },
+    {
+     "file": "internal/maintain/pass_test.go",
+     "func": "TestPassFailsWhenHeaderUpgradeIsRefused",
+     "test": true,
+     "line": 244
+    },
+    {
+     "file": "internal/maintain/pass_test.go",
+     "func": "TestPassSkipsReclaimBelowFloor",
+     "test": true,
+     "line": 120
+    },
+    {
+     "file": "internal/maintain/pass_test.go",
+     "func": "bloatFixture",
+     "test": true,
+     "line": 19
+    },
+    {
+     "file": "internal/maintain/reclaim_test.go",
+     "func": "TestPassOnAFreshStoreGrows",
+     "test": true,
+     "line": 100
+    },
+    {
+     "file": "internal/maintain/reconcile_test.go",
+     "func": "openStore",
+     "test": true,
+     "line": 31
+    },
+    {
+     "file": "internal/maintain/scheduled_reclaim_test.go",
+     "func": "smallFreelistFixture",
+     "test": true,
+     "line": 26
+    },
+    {
+     "file": "internal/maintain/sweep_test.go",
+     "func": "TestPassKeepsACollectionWhenTheKeepOneIsAbsent",
+     "test": true,
+     "line": 92
+    },
+    {
+     "file": "internal/maintain/sweep_test.go",
+     "func": "collectionFixture",
+     "test": true,
+     "line": 17
+    },
+    {
+     "file": "internal/mcp/authenticate_test.go",
+     "func": "newAdminServer",
+     "test": true,
+     "line": 25
+    },
+    {
+     "file": "internal/mcp/budget_golden_test.go",
+     "func": "TestBudgetNeverDropsPrimaryPayload",
+     "test": true,
+     "line": 26
+    },
+    {
+     "file": "internal/mcp/capture_test.go",
+     "func": "benchCapture",
+     "test": true,
+     "line": 530
+    },
+    {
+     "file": "internal/mcp/capture_test.go",
+     "func": "newCaptureEngine",
+     "test": true,
+     "line": 67
+    },
+    {
+     "file": "internal/mcp/delete_document_test.go",
+     "func": "newMemoryTestServer",
+     "test": true,
+     "line": 23
+    },
+    {
+     "file": "internal/mcp/gate_test.go",
+     "func": "newGateStore",
+     "test": true,
+     "line": 32
+    },
+    {
+     "file": "internal/mcp/project_required_test.go",
+     "func": "newProjectServerForTest",
+     "test": true,
+     "line": 184
+    },
+    {
+     "file": "internal/mcp/server_test.go",
+     "func": "TestMCPHonorsDBMintedTokens",
+     "test": true,
+     "line": 424
+    },
+    {
+     "file": "internal/mcp/server_test.go",
+     "func": "TestMCPNewProtocolVersionOverHTTP",
+     "test": true,
+     "line": 355
+    },
+    {
+     "file": "internal/mcp/server_test.go",
+     "func": "TestMCPRBACGatesWriteToolsOverWire",
+     "test": true,
+     "line": 263
+    },
+    {
+     "file": "internal/mcp/server_test.go",
+     "func": "newServerForTest",
+     "test": true,
+     "line": 516
+    },
+    {
+     "file": "internal/mcp/server_test.go",
+     "func": "newTestServer",
+     "test": true,
+     "line": 24
+    },
+    {
+     "file": "internal/metrics/metrics_test.go",
+     "func": "openTestBackend",
+     "test": true,
+     "line": 18
+    },
+    {
+     "file": "internal/obsidian/obsidian_test.go",
+     "func": "openStore",
+     "test": true,
+     "line": 18
+    },
+    {
+     "file": "internal/ontology/ontology_test.go",
+     "func": "setupStore",
+     "test": true,
+     "line": 17
+    },
+    {
+     "file": "internal/orgknowledge/orgknowledge_test.go",
+     "func": "openStore",
+     "test": true,
+     "line": 15
+    },
+    {
+     "file": "internal/pack/pack_test.go",
+     "func": "newStore",
+     "test": true,
+     "line": 52
+    },
+    {
+     "file": "internal/portfolioreg/portfolioreg.go",
+     "func": "Open",
+     "test": false,
+     "line": 149
+    },
+    {
+     "file": "internal/portfolioreg/portfolioreg_test.go",
+     "func": "TestChildOpenOptionsNeverWrites",
+     "test": true,
+     "line": 373
+    },
+    {
+     "file": "internal/portfolioreg/portfolioreg_test.go",
+     "func": "TestPortfolioAcrossPGSiblingSchemas",
+     "test": true,
+     "line": 400
+    },
+    {
+     "file": "internal/portfolioreg/portfolioreg_test.go",
+     "func": "newProject",
+     "test": true,
+     "line": 23
+    },
+    {
+     "file": "internal/portfolioreg/portfolioreg_test.go",
+     "func": "storeChild",
+     "test": true,
+     "line": 51
+    },
+    {
+     "file": "internal/portfolioreg/sweep.go",
+     "func": "CheckStore",
+     "test": false,
+     "line": 218
+    },
+    {
+     "file": "internal/portfolioreg/sweep_root_test.go",
+     "func": "TestCheckStoreIgnoresASharedStore",
+     "test": true,
+     "line": 255
+    },
+    {
+     "file": "internal/portfolioreg/sweep_root_test.go",
+     "func": "TestSweepRootCheckIgnoresHealthyStores",
+     "test": true,
+     "line": 132
+    },
+    {
+     "file": "internal/portfolioreg/sweep_root_test.go",
+     "func": "newStoreWithRoot",
+     "test": true,
+     "line": 29
+    },
+    {
+     "file": "internal/prdindex/prdindex_test.go",
+     "func": "setupStore",
+     "test": true,
+     "line": 47
+    },
+    {
+     "file": "internal/projects/projects.go",
+     "func": "Config.open",
+     "test": false,
+     "line": 378
+    },
+    {
+     "file": "internal/projects/projects_test.go",
+     "func": "TestLazyOpenSeedAndClose",
+     "test": true,
+     "line": 114
+    },
+    {
+     "file": "internal/projects/read_does_not_migrate_test.go",
+     "func": "TestRoutedReadDoesNotMigrateTheStore",
+     "test": true,
+     "line": 75
+    },
+    {
+     "file": "internal/projects/read_does_not_migrate_test.go",
+     "func": "pre017Project",
+     "test": true,
+     "line": 26
+    },
+    {
+     "file": "internal/projects/routed_memory_test.go",
+     "func": "indexedProject",
+     "test": true,
+     "line": 18
+    },
+    {
+     "file": "internal/refresh/refresh.go",
+     "func": "Run",
+     "test": false,
+     "line": 98
+    },
+    {
+     "file": "internal/refresh/refresh_test.go",
+     "func": "TestEmbedStageSkipsWhenEmbedLockHeld",
+     "test": true,
+     "line": 264
+    },
+    {
+     "file": "internal/refresh/refresh_test.go",
+     "func": "TestRunIndexesCodeDocsAndEmbeds",
+     "test": true,
+     "line": 91
+    },
+    {
+     "file": "internal/refresh/refresh_test.go",
+     "func": "TestRunSkipsEmbedOnBadProvider",
+     "test": true,
+     "line": 243
+    },
+    {
+     "file": "internal/registry/registry.go",
+     "func": "Status",
+     "test": false,
+     "line": 205
+    },
+    {
+     "file": "internal/registry/registry_test.go",
+     "func": "TestStatusReadsLiveCountsForIndexedRepo",
+     "test": true,
+     "line": 189
+    },
+    {
+     "file": "internal/rest/auto/auto_cwd_test.go",
+     "func": "TestAutoConfigCwdInsideServedProject",
+     "test": true,
+     "line": 115
+    },
+    {
+     "file": "internal/rest/auto/auto_cwd_test.go",
+     "func": "TestAutoConfigNoCWDKeepsServingDefault",
+     "test": true,
+     "line": 73
+    },
+    {
+     "file": "internal/rest/auto/auto_cwd_test.go",
+     "func": "TestAutoConfigRefusesCwdOutsideServedProject",
+     "test": true,
+     "line": 32
+    },
+    {
+     "file": "internal/rest/auto/auto_project_test.go",
+     "func": "openEngineWithStore",
+     "test": true,
+     "line": 51
+    },
+    {
+     "file": "internal/rest/listshape_test.go",
+     "func": "TestTheRESTSuccessShapeNeverContradictsTheBody",
+     "test": true,
+     "line": 43
+    },
+    {
+     "file": "internal/rest/rest_test.go",
+     "func": "newEngineWithStore",
+     "test": true,
+     "line": 31
+    },
+    {
+     "file": "internal/rest/retain_test.go",
+     "func": "TestRESTRetainActuallyWrote",
+     "test": true,
+     "line": 103
+    },
+    {
+     "file": "internal/rest/retain_test.go",
+     "func": "TestRESTRetainRejectsTheShapeItDoesNotUnderstand",
+     "test": true,
+     "line": 44
+    },
+    {
+     "file": "internal/rest/route_gate_test.go",
+     "func": "gatedREST",
+     "test": true,
+     "line": 26
+    },
+    {
+     "file": "internal/rpc/capture_test.go",
+     "func": "serveRPC",
+     "test": true,
+     "line": 50
+    },
+    {
+     "file": "internal/rpc/memoryread_test.go",
+     "func": "memoryReadService",
+     "test": true,
+     "line": 24
+    },
+    {
+     "file": "internal/store/open_options_test.go",
+     "func": "TestOpenBackendReadOnlyNeverCreatesTheStore",
+     "test": true,
+     "line": 15
+    },
+    {
+     "file": "internal/store/vectorscope_ext_test.go",
+     "func": "newScopeFixture",
+     "test": true,
+     "line": 140
+    },
+    {
+     "file": "internal/summarize/summarize_test.go",
+     "func": "newFixture",
+     "test": true,
+     "line": 36
+    },
+    {
+     "file": "internal/watch/watch_test.go",
+     "func": "openStore",
+     "test": true,
+     "line": 23
+    },
+    {
+     "file": "internal/web/api_switch_test.go",
+     "func": "TestProjectSwitchBehavior",
+     "test": true,
+     "line": 32
+    },
+    {
+     "file": "internal/web/api_test.go",
+     "func": "TestServiceTopologyMultiRepo",
+     "test": true,
+     "line": 462
+    },
+    {
+     "file": "internal/web/api_test.go",
+     "func": "seedFixture",
+     "test": true,
+     "line": 35
+    },
+    {
+     "file": "internal/web/tunnels_test.go",
+     "func": "TestTunnelsEmptyGraph",
+     "test": true,
+     "line": 147
+    },
+    {
+     "file": "internal/web/tunnels_test.go",
+     "func": "newTunnelStore",
+     "test": true,
+     "line": 18
+    }
+   ],
+   "defects": [
+    {
+     "site": "cmd/leankg/store.go:36",
+     "file": "cmd/leankg/store.go",
+     "func": "openStoreWith"
+    }
+   ]
+  },
+  {
+   "id": "handleAuthenticate",
+   "qualified_name": "internal/mcp/authenticate.go::Server.handleAuthenticate",
+   "class": "method",
+   "callers": [
+    {
+     "file": "internal/mcp/server.go",
+     "func": "Server.registerTools",
+     "test": false,
+     "line": 464
+    }
+   ],
+   "defects": [
+    {
+     "site": "internal/mcp/server.go:459",
+     "file": "internal/mcp/server.go",
+     "func": "Server.registerTools"
+    }
+   ]
+  },
+  {
+   "id": "RebaseRoot",
+   "qualified_name": "internal/index/index.go::RebaseRoot",
+   "class": "qualified",
+   "callers": [
+    {
+     "file": "cmd/leankg/helpers.go",
+     "func": "runIndex",
+     "test": false,
+     "line": 360
+    },
+    {
+     "file": "internal/index/index_test.go",
+     "func": "TestIndexRootTripwire",
+     "test": true,
+     "line": 398
+    },
+    {
+     "file": "internal/portfolioreg/sweep_root_test.go",
+     "func": "TestCheckStoreIgnoresASharedStore",
+     "test": true,
+     "line": 262
+    },
+    {
+     "file": "internal/portfolioreg/sweep_root_test.go",
+     "func": "newStoreWithRoot",
+     "test": true,
+     "line": 37
+    }
+   ]
+  },
+  {
+   "id": "IndexDirWith",
+   "qualified_name": "internal/index/index.go::IndexDirWith",
+   "class": "qualified",
+   "callers": [
+    {
+     "file": "benchmark/ab/callers_score_test.go",
+     "func": "TestCallersScoreIntegration",
+     "test": true,
+     "line": 213
+    },
+    {
+     "file": "benchmark/ab/efficiency_bytes_test.go",
+     "func": "TestSearchAnswerBytes",
+     "test": true,
+     "line": 79
+    },
+    {
+     "file": "cmd/leankg/helpers.go",
+     "func": "runIndex",
+     "test": false,
+     "line": 364
+    },
+    {
+     "file": "cmd/leankg/wire.go",
+     "func": "cmdWriter",
+     "test": false,
+     "line": 47
+    },
+    {
+     "file": "internal/core/actions.go",
+     "func": "Engine.importIndex",
+     "test": false,
+     "line": 1003
+    },
+    {
+     "file": "internal/core/core.go",
+     "func": "Engine.IndexDir",
+     "test": false,
+     "line": 180
+    },
+    {
+     "file": "internal/index/index.go",
+     "func": "IndexDir",
+     "test": false,
+     "line": 122
+    },
+    {
+     "file": "internal/index/index_git_test.go",
+     "func": "gitIndexRun",
+     "test": true,
+     "line": 34
+    },
+    {
+     "file": "internal/index/tstree_index_test.go",
+     "func": "TestIndexDirWithRegistryLazyNested",
+     "test": true,
+     "line": 99
+    },
+    {
+     "file": "internal/refresh/refresh.go",
+     "func": "Run",
+     "test": false,
+     "line": 112
+    },
+    {
+     "file": "internal/watch/watch.go",
+     "func": "flushIndex",
+     "test": false,
+     "line": 348
+    }
+   ]
+  },
+  {
+   "id": "ResolveProjectRoot",
+   "qualified_name": "internal/projectcfg/projectcfg.go::ResolveProjectRoot",
+   "class": "qualified",
+   "callers": [
+    {
+     "file": "cmd/leankg/helpers.go",
+     "func": "resolveProjectDir",
+     "test": false,
+     "line": 145
+    },
+    {
+     "file": "cmd/leankg/main.go",
+     "func": "cmdDoctor",
+     "test": false,
+     "line": 903
+    },
+    {
+     "file": "cmd/leankg/status.go",
+     "func": "cmdStatus",
+     "test": false,
+     "line": 39
+    },
+    {
+     "file": "cmd/leankg/store.go",
+     "func": "anchorProjectDir",
+     "test": false,
+     "line": 49
+    },
+    {
+     "file": "internal/projectcfg/projectcfg_test.go",
+     "func": "TestResolveProjectRootCanonicalizes",
+     "test": true,
+     "line": 597
+    },
+    {
+     "file": "internal/projects/projects.go",
+     "func": "Config.open",
+     "test": false,
+     "line": 355
+    }
+   ]
+  },
+  {
+   "id": "VerifyAdminLogin",
+   "qualified_name": "internal/auth/admin.go::VerifyAdminLogin",
+   "class": "qualified",
+   "callers": [
+    {
+     "file": "cmd/leankg/auth.go",
+     "func": "bootstrapAdmin",
+     "test": false,
+     "line": 140
+    },
+    {
+     "file": "cmd/leankg/auth_admin_test.go",
+     "func": "TestAdminInitCreatesFromEnvPassword",
+     "test": true,
+     "line": 89
+    },
+    {
+     "file": "cmd/leankg/auth_admin_test.go",
+     "func": "TestAdminInitGeneratesPasswordWhenAbsent",
+     "test": true,
+     "line": 74
+    },
+    {
+     "file": "internal/mcp/authenticate.go",
+     "func": "Server.handleAuthenticate",
+     "test": false,
+     "line": 54
+    }
+   ]
+  },
+  {
+   "id": "Freshness",
+   "qualified_name": "internal/store/backend.go::Freshness",
+   "class": "qualified",
+   "callers": [
+    {
+     "file": "internal/core/core.go",
+     "func": "Engine.freshness",
+     "test": false,
+     "line": 208
+    },
+    {
+     "file": "internal/doctor/fleet.go",
+     "func": "fleetProbe.Fleet",
+     "test": false,
+     "line": 110
+    },
+    {
+     "file": "internal/maintain/reconcile_inventory_test.go",
+     "func": "TestReconcileHealsAnInventoryLeftBehind",
+     "test": true,
+     "line": 160
+    },
+    {
+     "file": "internal/maintain/reconcile_inventory_test.go",
+     "func": "TestReconcileKeepsTheStoreFresh",
+     "test": true,
+     "line": 53
+    },
+    {
+     "file": "internal/watch/watch_test.go",
+     "func": "TestFlushRefreshesInventorySnapshot",
+     "test": true,
+     "line": 350
+    }
+   ]
+  },
+  {
+   "id": "Impact",
+   "qualified_name": "internal/graph/graph.go::Impact",
+   "class": "qualified",
+   "callers": [
+    {
+     "file": "cmd/leankg/query.go",
+     "func": "impactFrom",
+     "test": false,
+     "line": 229
+    },
+    {
+     "file": "internal/core/actions.go",
+     "func": "Engine.graphImpact",
+     "test": false,
+     "line": 400
+    },
+    {
+     "file": "internal/graph/budget_test.go",
+     "func": "TestImpactAtExactBudgetIsComplete",
+     "test": true,
+     "line": 118
+    },
+    {
+     "file": "internal/graph/budget_test.go",
+     "func": "TestImpactHonoursCancelledCtx",
+     "test": true,
+     "line": 144
+    },
+    {
+     "file": "internal/graph/budget_test.go",
+     "func": "TestImpactReportsClampedDepth",
+     "test": true,
+     "line": 129
+    },
+    {
+     "file": "internal/graph/budget_test.go",
+     "func": "TestImpactTruncatesAtNodeBudget",
+     "test": true,
+     "line": 100
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "TestImpact",
+     "test": true,
+     "line": 62
+    },
+    {
+     "file": "internal/graph/store_role_test.go",
+     "func": "TestImpactOverNarrowedReader",
+     "test": true,
+     "line": 49
+    }
+   ]
+  },
+  {
+   "id": "NormalizeEmail",
+   "qualified_name": "internal/auth/accounts.go::NormalizeEmail",
+   "class": "qualified",
+   "callers": [
+    {
+     "file": "cmd/leankg/auth.go",
+     "func": "authAdminInit",
+     "test": false,
+     "line": 98
+    },
+    {
+     "file": "cmd/leankg/auth.go",
+     "func": "bootstrapAdmin",
+     "test": false,
+     "line": 124
+    },
+    {
+     "file": "cmd/leankg/auth_admin_test.go",
+     "func": "TestAdminInitFailsWhenExistingAccountCannotBeConfirmed",
+     "test": true,
+     "line": 172
+    },
+    {
+     "file": "internal/auth/accounts.go",
+     "func": "Register",
+     "test": false,
+     "line": 165
+    },
+    {
+     "file": "internal/auth/admin.go",
+     "func": "CreateSiteAdmin",
+     "test": false,
+     "line": 24
+    },
+    {
+     "file": "internal/auth/login.go",
+     "func": "verifyLogin",
+     "test": false,
+     "line": 45
+    }
+   ]
+  },
+  {
+   "id": "CallSites",
+   "qualified_name": "internal/graph/graph.go::CallSites",
+   "class": "qualified",
+   "callers": [
+    {
+     "file": "internal/graph/budget_test.go",
+     "func": "TestCallersHonourCancelledCtx",
+     "test": true,
+     "line": 176
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "TestCallSitesOnePerCallLine",
+     "test": true,
+     "line": 427
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "TestCallersCalleesFilterRelType",
+     "test": true,
+     "line": 134
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "TestCallersExplicitRelTypeWins",
+     "test": true,
+     "line": 294
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "TestCallersOfConstantSiteFromReferenceEdge",
+     "test": true,
+     "line": 278
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "TestCallersOfFunctionIncludeValueUses",
+     "test": true,
+     "line": 323
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "TestCallersOfMethodIncludeValueUseFromAnotherFile",
+     "test": true,
+     "line": 368
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "TestCallersOfTypeExcludeOwnMethods",
+     "test": true,
+     "line": 400
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "TestCallersOfTypeIncludeReferenceUsers",
+     "test": true,
+     "line": 248
+    }
+   ]
+  },
+  {
+   "id": "PGURL",
+   "qualified_name": "internal/projectcfg/projectcfg.go::PGURL",
+   "class": "qualified",
+   "callers": [
+    {
+     "file": "cmd/leankg/helpers.go",
+     "func": "runIndex",
+     "test": false,
+     "line": 391
+    },
+    {
+     "file": "cmd/leankg/main.go",
+     "func": "doctorDeep",
+     "test": false,
+     "line": 943
+    },
+    {
+     "file": "cmd/leankg/portfolio.go",
+     "func": "portfolioOptions",
+     "test": false,
+     "line": 30
+    },
+    {
+     "file": "cmd/leankg/store.go",
+     "func": "openStoreWith",
+     "test": false,
+     "line": 36
+    },
+    {
+     "file": "internal/portfolioreg/portfolioreg.go",
+     "func": "Options.pgURL",
+     "test": false,
+     "line": 128
+    }
+   ]
+  },
+  {
+   "id": "ParseScope",
+   "qualified_name": "internal/memory/scope.go::ParseScope",
+   "class": "qualified",
+   "callers": [
+    {
+     "file": "internal/core/actions.go",
+     "func": "Engine.memDeleteDocument",
+     "test": false,
+     "line": 1143
+    },
+    {
+     "file": "internal/core/actions.go",
+     "func": "Engine.memSessionRetain",
+     "test": false,
+     "line": 1106
+    },
+    {
+     "file": "internal/core/core.go",
+     "func": "Engine.SessionMemoryRead",
+     "test": false,
+     "line": 1757
+    },
+    {
+     "file": "internal/memory/memory_test.go",
+     "func": "TestParseScopeModes",
+     "test": true,
+     "line": 401
+    },
+    {
+     "file": "internal/memory/telemetry_hook_test.go",
+     "func": "TestInjectEventRowsAndTokens",
+     "test": true,
+     "line": 270
+    },
+    {
+     "file": "internal/rest/rest.go",
+     "func": "Handler",
+     "test": false,
+     "line": 275
+    }
+   ]
+  },
+  {
+   "id": "AuditTail",
+   "qualified_name": "internal/store/store_audit.go::Store.AuditTail",
+   "class": "interface",
+   "callers": [
+    {
+     "file": "cmd/leankg/audit.go",
+     "func": "auditEntries",
+     "test": false,
+     "line": 174
+    },
+    {
+     "file": "internal/store/ctx_conformance_test.go",
+     "func": "ctxConformanceRoles",
+     "test": true,
+     "line": 167
+    },
+    {
+     "file": "internal/store/engine_shared_test.go",
+     "func": "TestSharedAuditReadersPinBehaviour",
+     "test": true,
+     "line": 175
+    },
+    {
+     "file": "internal/store/store_audit_test.go",
+     "func": "TestAuditLedgerChain",
+     "test": true,
+     "line": 15
+    }
+   ]
+  },
+  {
+   "id": "PGStore.AuditTail",
+   "qualified_name": "internal/store/store_pg.go::PGStore.AuditTail",
+   "class": "method",
+   "callers": [
+    {
+     "file": "cmd/leankg/audit.go",
+     "func": "auditEntries",
+     "test": false,
+     "line": 174
+    },
+    {
+     "file": "internal/store/ctx_conformance_test.go",
+     "func": "ctxConformanceRoles",
+     "test": true,
+     "line": 167
+    },
+    {
+     "file": "internal/store/engine_shared_test.go",
+     "func": "TestSharedAuditReadersPinBehaviour",
+     "test": true,
+     "line": 175
+    },
+    {
+     "file": "internal/store/store_pg_test.go",
+     "func": "TestPGAudit",
+     "test": true,
+     "line": 411
+    }
+   ]
+  },
+  {
+   "id": "VerifyAuditChain",
+   "qualified_name": "internal/store/store_audit.go::Store.VerifyAuditChain",
+   "class": "interface",
+   "callers": [
+    {
+     "file": "cmd/leankg/audit.go",
+     "func": "cmdAuditVerify",
+     "test": false,
+     "line": 120
+    },
+    {
+     "file": "internal/store/engine_shared_test.go",
+     "func": "TestSharedAuditReadersPinBehaviour",
+     "test": true,
+     "line": 191
+    },
+    {
+     "file": "internal/store/store_audit_test.go",
+     "func": "TestAuditLedgerChain",
+     "test": true,
+     "line": 30
+    }
+   ]
+  },
+  {
+   "id": "PGStore.VerifyAuditChain",
+   "qualified_name": "internal/store/store_pg.go::PGStore.VerifyAuditChain",
+   "class": "method",
+   "callers": [
+    {
+     "file": "cmd/leankg/audit.go",
+     "func": "cmdAuditVerify",
+     "test": false,
+     "line": 120
+    },
+    {
+     "file": "internal/store/engine_shared_test.go",
+     "func": "TestSharedAuditReadersPinBehaviour",
+     "test": true,
+     "line": 191
+    },
+    {
+     "file": "internal/store/store_pg_test.go",
+     "func": "TestPGAudit",
+     "test": true,
+     "line": 422
+    }
+   ]
+  },
+  {
+   "id": "Hybrid",
+   "qualified_name": "internal/store/hybrid_sqlite.go::Store.Hybrid",
+   "class": "interface",
+   "callers": [
+    {
+     "file": "internal/core/core.go",
+     "func": "Engine.rungSemantic",
+     "test": false,
+     "line": 920
+    },
+    {
+     "file": "internal/store/ctx_conformance_test.go",
+     "func": "ctxConformanceRoles",
+     "test": true,
+     "line": 59
+    },
+    {
+     "file": "internal/store/filter_before_limit_test.go",
+     "func": "checkFilterBeforeLimit",
+     "test": true,
+     "line": 76
+    },
+    {
+     "file": "internal/store/filter_before_limit_test.go",
+     "func": "hybridSearch",
+     "test": true,
+     "line": 100
+    }
+   ]
+  },
+  {
+   "id": "LoadInventory",
+   "qualified_name": "internal/store/vectors.go::Store.LoadInventory",
+   "class": "interface",
+   "callers": [
+    {
+     "file": "internal/maintain/reconcile.go",
+     "func": "healInventory",
+     "test": false,
+     "line": 177
+    },
+    {
+     "file": "internal/maintain/reconcile_inventory_test.go",
+     "func": "TestReconcileRefreshesTheInventoryCounts",
+     "test": true,
+     "line": 102
+    },
+    {
+     "file": "internal/store/backend.go",
+     "func": "Freshness",
+     "test": false,
+     "line": 144
+    },
+    {
+     "file": "internal/store/store_test.go",
+     "func": "TestInventoryFreshness",
+     "test": true,
+     "line": 428
+    }
+   ]
+  },
+  {
+   "id": "PGStore.LoadInventory",
+   "qualified_name": "internal/store/store_pg.go::PGStore.LoadInventory",
+   "class": "method",
+   "callers": [
+    {
+     "file": "internal/maintain/reconcile.go",
+     "func": "healInventory",
+     "test": false,
+     "line": 177
+    },
+    {
+     "file": "internal/maintain/reconcile_inventory_test.go",
+     "func": "TestReconcileRefreshesTheInventoryCounts",
+     "test": true,
+     "line": 102
+    },
+    {
+     "file": "internal/store/backend.go",
+     "func": "Freshness",
+     "test": false,
+     "line": 144
+    },
+    {
+     "file": "internal/store/store_pg_test.go",
+     "func": "TestPGKVAndInventory",
+     "test": true,
+     "line": 367
+    }
+   ]
+  },
+  {
+   "id": "SaveInventory",
+   "qualified_name": "internal/store/vectors.go::Store.SaveInventory",
+   "class": "interface",
+   "callers": [
+    {
+     "file": "internal/store/store_test.go",
+     "func": "TestInventoryFreshness",
+     "test": true,
+     "line": 434
+    },
+    {
+     "file": "internal/store/vectors.go",
+     "func": "RefreshInventory",
+     "test": false,
+     "line": 872
+    }
+   ]
+  },
+  {
+   "id": "PGStore.SaveInventory",
+   "qualified_name": "internal/store/store_pg.go::PGStore.SaveInventory",
+   "class": "method",
+   "callers": [
+    {
+     "file": "internal/store/store_pg_test.go",
+     "func": "TestPGKVAndInventory",
+     "test": true,
+     "line": 376
+    },
+    {
+     "file": "internal/store/vectors.go",
+     "func": "RefreshInventory",
+     "test": false,
+     "line": 872
+    }
+   ]
+  },
+  {
+   "id": "AdminExists",
+   "qualified_name": "internal/store/store_accounts.go::Store.AdminExists",
+   "class": "interface",
+   "callers": [
+    {
+     "file": "cmd/leankg/auth.go",
+     "func": "bootstrapAdmin",
+     "test": false,
+     "line": 154
+    },
+    {
+     "file": "internal/auth/admin_test.go",
+     "func": "TestCreateSiteAdminStoresOnlyAVerifier",
+     "test": true,
+     "line": 135
+    },
+    {
+     "file": "internal/auth/resolve.go",
+     "func": "registry.tokensConfigured",
+     "test": false,
+     "line": 180
+    },
+    {
+     "file": "internal/store/store_accounts_test.go",
+     "func": "TestAdminExistsSQLite",
+     "test": true,
+     "line": 48
+    }
+   ]
+  },
+  {
+   "id": "PGStore.AdminExists",
+   "qualified_name": "internal/store/pg_accounts.go::PGStore.AdminExists",
+   "class": "method",
+   "callers": [
+    {
+     "file": "cmd/leankg/auth.go",
+     "func": "bootstrapAdmin",
+     "test": false,
+     "line": 154
+    },
+    {
+     "file": "internal/auth/admin_test.go",
+     "func": "TestCreateSiteAdminStoresOnlyAVerifier",
+     "test": true,
+     "line": 135
+    },
+    {
+     "file": "internal/auth/resolve.go",
+     "func": "registry.tokensConfigured",
+     "test": false,
+     "line": 180
+    },
+    {
+     "file": "internal/store/pg_accounts_test.go",
+     "func": "TestPGAdminExists",
+     "test": true,
+     "line": 35
+    }
+   ]
+  },
+  {
+   "id": "ElementsByType",
+   "qualified_name": "internal/store/elements.go::Store.ElementsByType",
+   "class": "interface",
+   "callers": [
+    {
+     "file": "internal/core/core.go",
+     "func": "Engine.Status",
+     "test": false,
+     "line": 451
+    },
+    {
+     "file": "internal/core/importpath_test.go",
+     "func": "TestDeletedCodeIsNeverASemanticHit",
+     "test": true,
+     "line": 172
+    },
+    {
+     "file": "internal/refresh/refresh_test.go",
+     "func": "TestRunIndexesCodeDocsAndEmbeds",
+     "test": true,
+     "line": 126
+    },
+    {
+     "file": "internal/store/vectors.go",
+     "func": "RefreshInventory",
+     "test": false,
+     "line": 853
+    }
+   ]
+  },
+  {
+   "id": "PGStore.ElementsByType",
+   "qualified_name": "internal/store/store_pg.go::PGStore.ElementsByType",
+   "class": "method",
+   "callers": [
+    {
+     "file": "internal/core/core.go",
+     "func": "Engine.Status",
+     "test": false,
+     "line": 451
+    },
+    {
+     "file": "internal/core/importpath_test.go",
+     "func": "TestDeletedCodeIsNeverASemanticHit",
+     "test": true,
+     "line": 172
+    },
+    {
+     "file": "internal/refresh/refresh_test.go",
+     "func": "TestRunIndexesCodeDocsAndEmbeds",
+     "test": true,
+     "line": 126
+    },
+    {
+     "file": "internal/store/store_pg_test.go",
+     "func": "TestPGElementOps",
+     "test": true,
+     "line": 140
+    },
+    {
+     "file": "internal/store/vectors.go",
+     "func": "RefreshInventory",
+     "test": false,
+     "line": 853
+    }
+   ]
+  },
+  {
+   "id": "TokenFind",
+   "qualified_name": "internal/store/store_tokens.go::Store.TokenFind",
+   "class": "interface",
+   "callers": [
+    {
+     "file": "internal/auth/tokens.go",
+     "func": "Verify",
+     "test": false,
+     "line": 119
+    },
+    {
+     "file": "internal/store/ctx_conformance_test.go",
+     "func": "ctxConformanceRoles",
+     "test": true,
+     "line": 157
+    },
+    {
+     "file": "internal/store/store_tokens_test.go",
+     "func": "TestTokenFindRejectsRevokedAndExpired",
+     "test": true,
+     "line": 147
+    },
+    {
+     "file": "internal/store/store_tokens_test.go",
+     "func": "TestTokenMigrationUpgradesExistingStore",
+     "test": true,
+     "line": 301
+    },
+    {
+     "file": "internal/store/store_tokens_test.go",
+     "func": "TestTokenRevokeIsSoftAndIdempotent",
+     "test": true,
+     "line": 190
+    },
+    {
+     "file": "internal/store/store_tokens_test.go",
+     "func": "TestTokenRoundTrip",
+     "test": true,
+     "line": 68
+    }
+   ]
+  },
+  {
+   "id": "PGStore.TokenFind",
+   "qualified_name": "internal/store/pg_tokens.go::PGStore.TokenFind",
+   "class": "method",
+   "callers": [
+    {
+     "file": "internal/auth/tokens.go",
+     "func": "Verify",
+     "test": false,
+     "line": 119
+    },
+    {
+     "file": "internal/store/ctx_conformance_test.go",
+     "func": "ctxConformanceRoles",
+     "test": true,
+     "line": 157
+    },
+    {
+     "file": "internal/store/pg_tokens_test.go",
+     "func": "TestPGTokenLifecycle",
+     "test": true,
+     "line": 73
+    },
+    {
+     "file": "internal/store/pg_tokens_test.go",
+     "func": "TestPGTokenRoundTrip",
+     "test": true,
+     "line": 28
+    }
+   ]
+  },
+  {
+   "id": "Bounds",
+   "qualified_name": "internal/graph/graph.go::Bounds",
+   "class": "type",
+   "callers": [
+    {
+     "file": "internal/core/core.go",
+     "func": "markBounds",
+     "test": false,
+     "line": 1337
+    },
+    {
+     "file": "internal/graph/graph.go",
+     "func": "Impact",
+     "test": false,
+     "line": 97
+    },
+    {
+     "file": "internal/graph/graph.go",
+     "func": "ShortestPath",
+     "test": false,
+     "line": 151
+    }
+   ]
+  },
+  {
+   "id": "EmbedRun",
+   "qualified_name": "internal/store/vectors.go::EmbedRun",
+   "class": "type",
+   "callers": [
+    {
+     "file": "internal/core/storeerr_test.go",
+     "func": "lastEmbedRunFails.LastEmbedRunAny",
+     "test": true,
+     "line": 36
+    },
+    {
+     "file": "internal/store/engine_shared.go",
+     "func": "scanEmbedRun",
+     "test": false,
+     "line": 66
+    },
+    {
+     "file": "internal/store/engine_shared_test.go",
+     "func": "lastRunReader",
+     "test": true,
+     "line": 17
+    },
+    {
+     "file": "internal/store/roles.go",
+     "func": "EmbedRuns",
+     "test": false,
+     "line": 138
+    },
+    {
+     "file": "internal/store/store_pg.go",
+     "func": "PGStore.LastEmbedRun",
+     "test": false,
+     "line": 1093
+    },
+    {
+     "file": "internal/store/store_pg.go",
+     "func": "PGStore.LastEmbedRunAny",
+     "test": false,
+     "line": 1061
+    },
+    {
+     "file": "internal/store/vectors.go",
+     "func": "Store.LastEmbedRun",
+     "test": false,
+     "line": 826
+    },
+    {
+     "file": "internal/store/vectors.go",
+     "func": "Store.LastEmbedRunAny",
+     "test": false,
+     "line": 821
+    }
+   ]
+  },
+  {
+   "id": "SpaceReport",
+   "qualified_name": "internal/store/maintenance.go::SpaceReport",
+   "class": "type",
+   "callers": [
+    {
+     "file": "internal/core/storeerr_test.go",
+     "func": "spaceFails.Space",
+     "test": true,
+     "line": 45
+    },
+    {
+     "file": "internal/store/maintenance.go",
+     "func": "Store.Space",
+     "test": false,
+     "line": 177
+    },
+    {
+     "file": "internal/store/maintenance_pg.go",
+     "func": "PGStore.Space",
+     "test": false,
+     "line": 17
+    },
+    {
+     "file": "internal/store/roles.go",
+     "func": "Maintainer",
+     "test": false,
+     "line": 158
+    }
+   ]
+  },
+  {
+   "id": "SitesBySeed",
+   "qualified_name": "internal/graph/graph.go::SitesBySeed",
+   "class": "qualified",
+   "callers": [
+    {
+     "file": "internal/core/actions.go",
+     "func": "Engine.graphCallSites",
+     "test": false,
+     "line": 535
+    },
+    {
+     "file": "internal/graph/graph.go",
+     "func": "CallSites",
+     "test": false,
+     "line": 311
+    }
+   ]
+  },
+  {
+   "id": "UnionSites",
+   "qualified_name": "internal/graph/graph.go::UnionSites",
+   "class": "qualified",
+   "callers": [
+    {
+     "file": "internal/core/actions.go",
+     "func": "Engine.graphCallSites",
+     "test": false,
+     "line": 539
+    },
+    {
+     "file": "internal/graph/graph.go",
+     "func": "CallSites",
+     "test": false,
+     "line": 315
+    }
+   ]
+  }
+ ],
+ "known_misses": [
+  {
+   "symbol": "ElementsByType",
+   "file": "internal/core/importpath_test.go",
+   "func": "TestDeletedCodeIsNeverASemanticHit",
+   "reason": "product miss, not a truth error: the call e.st.ElementsByType sits in a test whose receiver e is bound by e := engineAt(t, dir); the typed-receiver path (internal/index/crosspkg.go:283 receiverType) does not resolve it, while Engine.Status (internal/core/core.go:451) is found. Cause not confirmed; product code, out of scope for this change"
+  },
+  {
+   "symbol": "PGStore.ElementsByType",
+   "file": "internal/core/importpath_test.go",
+   "func": "TestDeletedCodeIsNeverASemanticHit",
+   "reason": "same call as ElementsByType: the interface-dispatch caller of PGStore.ElementsByType is missed for the same receiver reason; product code, out of scope for this change"
+  }
+ ],
+ "floors": {
+  "overall": {
+   "precision": 0.98,
+   "recall": 0.973
+  },
+  "overall_without_tests": {
+   "precision": 0.98,
+   "recall": 0.98
+  },
+  "classes": {
+   "interface": {
+    "precision": 0.98,
+    "recall": 0.951
+   },
+   "method": {
+    "precision": 0.98,
+    "recall": 0.951
+   },
+   "qualified": {
+    "precision": 0.98,
+    "recall": 0.98
+   },
+   "type": {
+    "precision": 0.98,
+    "recall": 0.98
+   }
+  }
+ }
+}

@@ -25,6 +25,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -50,6 +51,9 @@ type Result struct {
 	Elements      int
 	Relationships int
 	Skipped       int
+	// ParseFallbacks counts changed Go files the parser rejected; the regex tier
+	// indexed them, and each was logged. Zero is omitted from JSON.
+	ParseFallbacks int `json:"parse_fallbacks,omitempty"`
 }
 
 // skipDirs are skipped path components during the walk and for git candidates;
@@ -285,11 +289,52 @@ func checkRoot(ctx context.Context, st store.KV, dir string, hasFiles bool) erro
 // `function` keyword) drops phantom elements such as `ality` from
 // `functionality`; v4 (incremental edge fix): stores indexed before it lost
 // cross-file edges on incremental runs, and the bump re-extracts them once;
-// v5 (brace-bounded spans, comments not call edges): stores indexed before it
-// hold a span that runs into the next declaration's comment, and a false
-// calls edge from that comment.
+// v5 (doc-comment boundaries, type/class references only, line comments not
+// scanned): stores indexed before it carry calls edges from prose mentions and
+// absorbed doc blocks, and the bump re-extracts them once; v6 (Go definitions
+// from the go/parser AST: package-level const and var names, every type kind,
+// AST line ranges, generic receivers owned by the bare type name) changes the
+// Go element set and ranges, so stores re-extract once; v7 (same-named
+// elements of one file get distinct qualified names, Room query edges name the
+// entity class, Hilt provided types are trimmed): stores indexed before it lost
+// same-named elements on upsert and carry edges to table names and padded types;
+// v8 (Go call and reference edges from the AST: whole-body name seeds with
+// call-site lines, no word heuristic for AST elements, locals and comments never
+// edges) changes every Go edge set, so stores re-extract once; v9 (cross-package
+// Go edges: qualified alias.Name calls, method seeds by name and interface
+// dispatch, uncalled method values as references) adds edges that no v8 store
+// has, so stores re-extract once; v10 (receiver-typed Go method resolution: a
+// method seed resolves through the receiver's static type, field reads and
+// stdlib receivers make no edge) replaces
+// v9's name-only edges, so stores re-extract once; v11 (interface
+// dispatch needs the implementer's full method set, which the directory KV
+// record now carries) changes the same record, so stores re-extract once; v12
+// (unknown receivers link to nothing; constructor results of the run's packages
+// are in the KV record) changes the same record and the edges, so stores
+// re-extract once. v13 (Go package elements, one per directory, with imports
+// edges between the package directories a Go file imports) adds elements and
+// edges that no v12 store has. v14 (receivers typed by an inline interface
+// literal dispatch like a named local interface) adds call edges that no v13
+// store has. v15 is the merge of both: a store recorded under v12, v13 or v14
+// re-extracts every file once. v16 (every call site of a Go edge kept in its
+// "lines" metadata; interface method specs as method elements, linked from the
+// interface-typed call sites) adds elements and metadata no v15 store has. v17
+// (Go imports resolve inside module boundaries, from the go.mod files that cover
+// the run) changes the imports and cross-package edges that v16 resolved by
+// suffix. v18 (blank and dot imports make imports edges of the package graph)
+// adds the edges of those imports. v19 (the ast-tier Go fixes: method values
+// and explicit instantiations seed call edges, generic receivers are named alike
+// in both Go tiers, external test packages stay out of the package's name table,
+// and the per-file edge ceiling counts call edges only) changes Go edges and
+// element names that no v18 store has.
+// v20 (main's #601 regex-tier lexer, merged into this branch): brace-bounded
+// spans and comments that make no call edge, in every non-Go language and in
+// a Go file the parser rejects. Main recorded that as v5 (stores indexed
+// before it hold a span that runs into the next declaration's comment, and a
+// false calls edge from that comment); v5 is already taken above by the
+// doc-comment boundaries, so the merged bump is 20.
 // A store recorded under another version re-extracts every file once.
-const extractorVersion = "5"
+const extractorVersion = "20"
 
 const extractorKVKey = "extractor_version"
 
@@ -393,6 +438,12 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 		return res, err
 	}
 	res.DeletedFiles += deleted
+	var goGone []string // the directory of every deleted Go file
+	for _, m := range missing {
+		if strings.HasSuffix(m, ".go") {
+			goGone = append(goGone, dirOf(m))
+		}
+	}
 
 	// Changed/new files. A git candidate is keyed by its blob ID: a stored record
 	// with the same key is skipped without reading anything. A walk candidate
@@ -472,6 +523,22 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 		}
 	}
 	slices.Sort(dirOrder) // a stable order across runs, so the cursor means the same thing in each
+	changedDirs := make(map[string]bool, len(dirOrder))
+	for _, d := range dirOrder {
+		changedDirs[d] = true
+	}
+	mods, err := loadGoModules(dir, goPackageDirs(cands), blobs, rd)
+	if err != nil {
+		return res, err
+	}
+	pr, err := refreshPackages(ctx, st, cands, goGone, changedDirs, mods, rd, &res)
+	if err != nil {
+		return res, err
+	}
+	cx, err := newCrossIndex(ctx, st, dirCands, changedDirs, rd, mods)
+	if err != nil {
+		return res, err
+	}
 
 	// pendingFile pairs each extracted file with its own record: a specialist
 	// file that writes itself is dropped here, so later files must not shift.
@@ -537,6 +604,10 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 			if err != nil {
 				return dirStart, rollbackDir(wctx, st, touched, err)
 			}
+			if fe.fallbackErr != nil {
+				res.ParseFallbacks++
+				log.Printf("index: %s: Go parser rejected the file, regex tier used: %v", f.rel, fe.fallbackErr)
+			}
 			pending = append(pending, pendingFile{changedFile: f, fe: fe, src: src})
 		}
 		// The unchanged files of a directory with a changed file are re-linked:
@@ -565,11 +636,13 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 		for _, fe := range siblings {
 			extracted[fe.rel] = fe.elements
 		}
-		names := map[string][]string{} // package-scoped call targets
+		var dirEls []indexedElem // package-scoped call targets, in candidate order
 		for _, c := range dirCands[d] {
-			for _, e := range extracted[c.rel] {
-				names[e.name] = append(names[e.name], e.qn)
-			}
+			dirEls = append(dirEls, extracted[c.rel]...)
+		}
+		names := nameTableOf(dirEls)
+		if err := cx.prefetch(ctx, st, dirEls); err != nil {
+			return res, err
 		}
 		// Sibling edges go first: a cancel or crash after this point leaves the
 		// changed files' records stale, so the rerun redoes the whole directory.
@@ -577,8 +650,21 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 			if err := ctx.Err(); err != nil {
 				return dirStart, rollbackDir(wctx, st, touched, err)
 			}
-			rels := callEdges(relationships(fe.elements, names))
+			rels := callEdges(fileRelationships(fe, names.forFile(cx, fe)))
 			if err := st.ReplaceFileRelationships(wctx, fe.rel, callEdgeTypes, rels); err != nil {
+				return dirStart, rollbackDir(wctx, st, touched, err)
+			}
+		}
+		// The package of a Go directory is written before its files, like the
+		// sibling edges: a cut run leaves the files' records stale, so the rerun
+		// redoes the whole directory and rewrites the package.
+		if pr.pkgs[d] {
+			fes := make([]fileElements, 0, len(pending)+len(siblings))
+			for _, p := range pending {
+				fes = append(fes, p.fe)
+			}
+			fes = append(fes, siblings...)
+			if err := writeGoPackage(ctx, st, pr, d, goImports(fes), &res); err != nil {
 				return dirStart, rollbackDir(wctx, st, touched, err)
 			}
 		}
@@ -595,7 +681,7 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 				if err := st.UpsertElements(wctx, p.fe.toStore()); err != nil {
 					return err
 				}
-				rels := relationships(p.fe.elements, names)
+				rels := fileRelationships(p.fe, names.forFile(cx, p.fe))
 				if err := st.UpsertRelationships(wctx, rels); err != nil {
 					return err
 				}
@@ -609,7 +695,7 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 				res.Elements += len(p.fe.elements)
 				res.Relationships += len(rels)
 				if f.lang == "kotlin" {
-					if err := indexKotlinExtras(wctx, st, f.rel, p.src, &res); err != nil {
+					if err := indexKotlinExtras(wctx, st, p.fe, p.src, &res); err != nil {
 						return err
 					}
 				}
@@ -626,12 +712,19 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 			}
 		}
 	}
-	// Vectors are keyed by qualified name and DeleteByFile does not own them,
-	// so every deleted file or removed symbol left a vector behind (RS-05).
-	// Sweep once per run that changed anything, instead of cascading inside
-	// DeleteByFile, which would also discard the vectors of a changed file's
-	// UNCHANGED symbols and force them to re-embed.
+	// Two sweeps, once per run that changed anything, instead of cascading
+	// inside DeleteByFile (which owns only a file's OUTGOING edges):
+	//   - edges: an edge INTO a deleted file, and an edge to a target no
+	//     extractor made an element for, outlive the run that stopped them being
+	//     valid, so the stored counts would drift from a fresh index;
+	//   - vectors: keyed by qualified name and not owned by DeleteByFile, so every
+	//     deleted file or removed symbol left a vector behind (RS-05). A
+	//     per-file cascade would also discard the vectors of a changed file's
+	//     UNCHANGED symbols and force them to re-embed.
 	if res.DeletedFiles > 0 || res.Files > 0 {
+		if _, err := st.DeleteOrphanRelationships(ctx); err != nil {
+			return res, fmt.Errorf("index: reclaim orphan relationships: %w", err)
+		}
 		if _, err := st.DeleteOrphanVectors(ctx); err != nil {
 			return res, fmt.Errorf("index: reclaim orphan vectors: %w", err)
 		}

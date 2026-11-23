@@ -89,3 +89,26 @@ func TestExtractHiltFixture(t *testing.T) {
 		t.Fatalf("hilt_injected = %d, want 2 (api + db)", len(injected))
 	}
 }
+
+// TestExtractHiltProvidesTargetIsTrimmedType: the provided type is the return
+// type without the space that precedes the body brace.
+func TestExtractHiltProvidesTargetIsTrimmedType(t *testing.T) {
+	src := `
+            @Module
+            @InstallIn(SingletonComponent::class)
+            object AppModule {
+                @Provides
+                fun provideDatabase(): AppDatabase {
+                    return AppDatabase()
+                }
+            }
+        `
+	_, rels := ExtractHilt("./test.kt", []byte(src))
+	provides := filterRels(rels, "hilt_provides")
+	if len(provides) != 1 {
+		t.Fatalf("hilt_provides = %d, want 1", len(provides))
+	}
+	if provides[0].Target != "__type__AppDatabase" {
+		t.Fatalf("hilt_provides target = %q, want %q", provides[0].Target, "__type__AppDatabase")
+	}
+}

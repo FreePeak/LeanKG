@@ -49,10 +49,12 @@ ranks; the top ranks keep the server's order.
 
 ## Only extractable symbols are labelled
 
-The indexer's Go extractor emits types, functions, methods and consts it can see;
-unexported helpers, interface methods and named constants are **not**
-`code_elements` rows, so a label pointing at one could never be retrieved by any
-arm and would measure nothing but the indexer's extractor. Every label below was
+The indexer's Go extractor (`go/parser`, `internal/index/goast.go`) emits the
+package-level types, functions, methods, constants and variables, unexported ones
+included, and interface method specs as `method` elements flagged
+`interface_spec`. A label pointing at an element the store does not hold could
+never be retrieved by any arm and would measure nothing but the indexer's
+extractor. Every label below was
 checked against the live store with `select count(*) from code_elements where
 qualified_name=...` — a label that returns 0 is replaced, not tolerated.
 
@@ -86,7 +88,7 @@ checkable rather than arguable.
 | 11 | find one element by exact identifier | `internal/store/elements.go::Store.FindExact` | elements.go |
 | 12 | take the single-flight lock for embedding | `cmd/leankg-embed/main.go::lock` | main.go |
 | 13 | the one tool that opens a project store | `internal/projects/projects.go::Config.open` | projects.go |
-| 14 | resolve a short name to a qualified name for graph verbs | `internal/core/core.go::Engine.resolveGraphSeed` | core.go |
+| 14 | resolve a short name to a qualified name for graph verbs | `internal/core/core.go::Engine.resolveGraphSeeds` | core.go |
 | 16 | how a batch that fails validation is handled | `internal/embed/provider.go::validateBatch` | provider.go |
 | 17 | hash one element's content for the embed state | `internal/embed/provider.go::contentHashHex` | provider.go |
 | 18 | compose the model stamp for a provider | `internal/embed/run.go::StampOf` | run.go |

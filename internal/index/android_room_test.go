@@ -148,3 +148,27 @@ func filterElems(els []store.Element, typ string) []store.Element {
 	}
 	return out
 }
+
+// TestExtractRoomQueryResolvesTableToEntityClass: a DAO query names a TABLE;
+// the entity element is named by its CLASS. The edge must land on the class,
+// or it dangles (the table name is not an element).
+func TestExtractRoomQueryResolvesTableToEntityClass(t *testing.T) {
+	src := `
+            @Entity(tableName = "channels")
+            data class ChannelEntity(@PrimaryKey val id: Long)
+
+            @Dao
+            interface ChannelDao {
+                @Query("SELECT * FROM channels")
+                fun getAll(): List<ChannelEntity>
+            }
+        `
+	_, rels := ExtractRoom("./test.kt", []byte(src))
+	query := findRel(rels, "room_dao_queries_entity")
+	if query == nil {
+		t.Fatal("missing room_dao_queries_entity")
+	}
+	if query.Target != "./test.kt::RoomEntity:ChannelEntity" {
+		t.Fatalf("query target = %q, want the entity class", query.Target)
+	}
+}

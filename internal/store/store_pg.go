@@ -333,15 +333,15 @@ func (s *PGStore) DeleteFileRecord(ctx context.Context, path string) error {
 	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
-// DeleteOrphanRelationships removes every edge whose endpoint is no longer a
-// live element (leankg gc).
+// DeleteOrphanRelationships removes every edge whose endpoint is neither a live
+// element nor a file in code_files (leankg gc).
 func (s *PGStore) DeleteOrphanRelationships(ctx context.Context) (int, error) {
 	if err := requireWritable(s.mode); err != nil {
 		return 0, err
 	}
 	tag, err := s.pool.Exec(ctx, `DELETE FROM relationships
-		WHERE source_qualified NOT IN (SELECT qualified_name FROM code_elements)
-		   OR target_qualified NOT IN (SELECT qualified_name FROM code_elements)`)
+		WHERE source_qualified NOT IN (SELECT qualified_name FROM code_elements UNION SELECT path FROM code_files)
+		   OR target_qualified NOT IN (SELECT qualified_name FROM code_elements UNION SELECT path FROM code_files)`)
 	if err != nil {
 		return 0, err
 	}

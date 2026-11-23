@@ -3,7 +3,23 @@
   "callers": [
     "src/alpha.go::Alpha"
   ],
+  "filtered_out": 0,
   "freshness": "possibly_stale",
   "limit": 10,
-  "query": "src/beta.go::Beta"
+  "query": "src/beta.go::Beta",
+  "rel_types": [
+    "calls"
+  ],
+  "resolved": true,
+  "scope": "all",
+  "scope_applied": true,
+  "seed_counts": {
+    "src/beta.go::Beta": 1
+  },
+  "seeds": [
+    "src/beta.go::Beta"
+  ],
+  "site_limit": 50,
+  "sites": [],
+  "total_sites": 0
 }

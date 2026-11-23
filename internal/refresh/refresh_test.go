@@ -122,8 +122,13 @@ func TestRunIndexesCodeDocsAndEmbeds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if vectors != elements {
-		t.Fatalf("vectors = %d, want one per element (%d)", vectors, elements)
+	// A Go package element carries no vector (embed.readElements skips it).
+	byType, err := st.ElementsByType(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := elements - byType["package"]; vectors != want {
+		t.Fatalf("vectors = %d, want one per embeddable element (%d)", vectors, want)
 	}
 
 	out := Render(res)

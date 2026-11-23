@@ -10,6 +10,22 @@
 
 ## Changelog
 
+### graph-accuracy: callers and callees answer per call site; the Go extractor reads the AST (2026-11-20)
+
+**Trigger:** callers returned a name list with no call lines, a bare name shared by several functions answered for one of them only, and the Go regex tier missed package-level constants, variables and interface methods.
+
+- **callers / callees** (`internal/core/actions.go`, `graphCallSites`). A bare name walks every callable it resolves to (`seeds`, `seed_counts`). `sites` holds one `"<file>:<line> <caller_qn> <confidence>"` line per call site with a use line (a caller whose edge has none still counts in `callers` but lists no site), production callers first, capped at 50 or `limit` (`total_sites`, `truncated`, `site_limit`, `rel_types`). A line gets ` seed=<qn> via=<rel_type>` when the answer spans several seeds or the relation is not `calls`. `callers` and `callees` cap at 200 names (`callers_truncated`, `callees_truncated`), and `seeds_truncated` marks a seed set cut by the store row cap or the spec expansion cap. `args.rel_type` filters the edge type (callers and callees only). `args.scope` (`all|code|prod`) drops sites by file and reports `filtered_out`. An unknown seed answers `resolved: false` with `did_you_mean`.
+- **Seeds** (`internal/core/core.go`, `seedAliases`). `pkg.Name`, `pkg.Type.Method` and `dir/file.go::Name` resolve when the element's directory (or path) matches; `resolved_from` echoes the text as written. `Type.Method` without a package does not resolve.
+- **Types, constants, variables.** Their callers read `references` edges as well as `calls`. A callable seed reads only references that carry a use line.
+- **Interface specs.** An interface method is a `method` element with `interface_spec: true`. A caller walk on a spec also walks its implementers (`internal/graph/specseeds.go`, `ExpandSpecSeeds`).
+- **Package context.** `context` on a package directory reports `incoming_imports_summary` (`non_test`, `test_only` counts) and `incoming_imports_test_only`.
+- **Search scope.** One population per name, on every search rung and in every graph verb: `scope=prod` drops test files (any convention: `_test.go`, `*.test.ts`, `*.spec.*`, `test_*.py`, `tests/`, `__tests__/`, `spec/`, Java/Kotlin/C#/Swift `*Test`, Ruby `*_spec.rb`), fixtures (`testdata`, `fixtures/`, `fixtures.js`) and `docs/archive/`; `scope=code` is prod minus markdown (`.md`, `.mdx`). The Go predicate is `testPathFilter` in `internal/core/testrank.go`; `isTestPath` is derived from it.
+- **Commit lookup.** A query of 7 to 40 hex characters is looked up by its first 7 characters and admits `git:` rows without `include_git`.
+- **Hit shape.** The content snippet is capped at 200 bytes. Every search hit carries `language` and `line_end` at any window: the output shape is contractual (`docs/mcp-tool-contract.md`, stable tools), so no window drops them. A shape that omitted them above limit 5 was tried and withdrawn; the window (including the ladder's 2x demotion window) does not change the shape.
+- **Go extractor** (`internal/index/goast.go`, `crosspkg.go`, `packages.go`). Package-level `const`, `var` and every `type` kind come from `go/parser`, with exact line ranges. Call-site lines are kept in each edge's `lines` metadata. Cross-package calls resolve through the import alias (confidence 0.8), a typed receiver's method by name (0.4), or interface dispatch and interface specs (0.3); an unknown receiver makes no edge. Each directory is a `package` element, and `imports` edges link package directories with `test_only` metadata.
+- **Store hygiene.** Same-named elements of one file get distinct qualified names (the first repeat is `name (2)`; each later repeat takes the lowest free number). The index sweeps orphan edges next to the orphan vectors, and its summary prints the stored totals, which equal `leankg status`.
+- **extractorVersion 4 to 20.** Stores recorded under another version re-extract every file once. The version history is the comment at `internal/index/index.go:283`.
+
 ### route-roles: every route declares its role; isWritePath is gone (CX-38, CX-49) (2026-11-15)
 
 The gate resolves the caller once and stores its role in the request context. Each route on a gated listener declares its access at registration: `auth.Require(role, h)` or `auth.Public(h)`. `TestRouteRegistrationsDeclareRole` fails on a route without a declaration, so a route with no role cannot ship. The path lists (`isWritePath`, `writePrefixes`, `memoryWritePrefixes`) are deleted.
@@ -219,8 +235,8 @@ force a full re-embed.
 > caller resolved to Admin.
 >
 > ```
-> curl http://192.168.100.199:9700/api/v1/status      → 200
-> POST http://192.168.100.199:9700/v1/default/banks/lanprobe-1792524856/memories
+> curl http://<internal-host>:9700/api/v1/status      → 200
+> POST http://<internal-host>:9700/v1/default/banks/lanprobe-1792524856/memories
 >                                                     → 200 {"written":1}
 > ```
 >
@@ -839,15 +855,15 @@ $ leankg migrate --project DIR                   # exit 0, creates DIR/.leankg/
 ```
 
 **The blast radius is not local, and that is what makes it severe.** The
-portfolio registry holds a row for `/private/tmp` (name `tmp`), so a writer
-sweep over the fleet materialises `/private/tmp/.leankg` — and that ONE
+portfolio registry holds a row for `<scratch>` (name `tmp`), so a writer
+sweep over the fleet materialises `<scratch>/.leankg` — and that ONE
 stray directory breaks the WHOLE REPO TEST SUITE:
 
 ```
-$ mkdir -p /private/tmp/.leankg
+$ mkdir -p <scratch>/.leankg
 $ go test ./internal/projectcfg/
 FAIL internal/projectcfg  "no marker: got \"/tmp\", want \"/tmp/TestFindProjectRootWalksUp.../002\""
-$ rm -rf /private/tmp/.leankg
+$ rm -rf <scratch>/.leankg
 $ go test ./internal/projectcfg/    # ok
 ```
 
@@ -2423,7 +2439,7 @@ without erroring. Gate: 62 packages ok, `go vet` clean, `gofmt` clean.
 
 ### v4.15-bare-mcp-url — the client writers can no longer emit a stale `?project=` (2026-10-11)
 
-**Trigger:** on this machine, `xdev mcps` showed leankg online while the Cursor and Claude-plugin configs of the same repo pointed at `http://localhost:9699/mcp?project=/workspace-freepeak` — a Docker mount path that exists nowhere on the host. Every initialize failed with `unknown project "/workspace-freepeak"` (FR-ZCP-02 fail-closed), so the clients reading those configs dropped leankg from their tool list while the same server answered the bare URL normally.
+**Trigger:** on this machine, `xdev mcps` showed leankg online while the Cursor and Claude-plugin configs of the same repo pointed at `http://localhost:9699/mcp?project=/workspace-other` — a Docker mount path that exists nowhere on the host. Every initialize failed with `unknown project "/workspace-other"` (FR-ZCP-02 fail-closed), so the clients reading those configs dropped leankg from their tool list while the same server answered the bare URL normally.
 
 **Why the writers allowed it.** FR-ZCP-04 already says the emitted entry carries the bare URL, but that was prose only: `connect --http --url` and `install --http --url` passed `cfg.URL` straight through to every writer, so a caller carrying a query produced a query in the file.
 
@@ -2502,7 +2518,7 @@ without erroring. Gate: 62 packages ok, `go vet` clean, `gofmt` clean.
 
 **What landed:**
 
-- **`resolveGraphSeed`** in `internal/core` — graph verbs run `FindExact` first and traverse on the shortest qualified_name (same ranking L1 already uses). Bare names and full QNs both work; `resolved_query` / `resolved_to` echo the canonical form. Unknown seeds still surface `graph.ErrUnknownNode`.
+- **`resolveGraphSeeds`** in `internal/core` — graph verbs run `FindExact` first and traverse on the shortest qualified_name (same ranking L1 already uses). A bare name shared by callable elements (e.g. `Store.X` and `PGStore.X`) resolves to all of them, and `callers` / `callees` walk every one and report `seeds` plus `sites` (`<file>:<line> <qn> <confidence>`). Bare names and full QNs both work; `resolved_query` / `resolved_to` echo the canonical form. Unknown seeds still surface `graph.ErrUnknownNode`.
 - **Auth gate enablement** — `tokensConfigured` counts LIVE DB tokens only. Soft-revoked and expired rows no longer keep REST locked at 401; the documented ceiling shifts to "keep an env token if you must never run open".
 - **`compressRead` path anchor** — relative paths join `projectDir` before open, matching the import repo/dir contract.
 

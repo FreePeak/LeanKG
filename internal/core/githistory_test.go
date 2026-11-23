@@ -138,3 +138,27 @@ func TestConcurrentGitImportsSerializeOnOneStore(t *testing.T) {
 		t.Fatalf("cochange main.go after concurrent imports = %#v, want one partner with count 1", partners)
 	}
 }
+
+// TestShortAndFullSHAFindTheCommit pins the commit lookup: a 7-character or a
+// 40-character SHA of an imported commit answers with that commit row. The row
+// is named by its 7-character prefix (githistory.commitElement), so the lookup
+// rewrites the query to that prefix and admits git rows for it.
+func TestShortAndFullSHAFindTheCommit(t *testing.T) {
+	e, dir := gitHistoryEngine(t)
+	ctx := context.Background()
+	if _, err := e.Import(ctx, ImportRequest{Action: "git"}); err != nil {
+		t.Fatalf("import git: %v", err)
+	}
+	full := gittest.Git(t, dir, "rev-parse", "HEAD")
+	want := "git:commit:" + full
+
+	for _, q := range []string{full[:7], full} {
+		out, err := e.Query(ctx, QueryRequest{Query: q})
+		if err != nil {
+			t.Fatalf("query %s: %v", q, err)
+		}
+		if qns := qnsOf(hitsOf(out)); !hasQN(qns, want) {
+			t.Errorf("query %s must return %s, got %v", q, want, qns)
+		}
+	}
+}

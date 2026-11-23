@@ -22,12 +22,8 @@ func extractedElem(t *testing.T, fe fileElements, name string) indexedElem {
 // callEdgesFrom returns the calls and references edges whose source ends with
 // src, as "rel target" strings.
 func callEdgesFrom(fe fileElements, src string) []string {
-	names := map[string][]string{}
-	for _, e := range fe.elements {
-		names[e.name] = append(names[e.name], e.qn)
-	}
 	var out []string
-	for _, r := range relationships(fe.elements, names) {
+	for _, r := range relationships(fe.elements, nameTableOf(fe.elements).all) {
 		if (r.RelType == "calls" || r.RelType == "references") && strings.HasSuffix(r.Source, src) {
 			out = append(out, r.RelType+" "+r.Target)
 		}

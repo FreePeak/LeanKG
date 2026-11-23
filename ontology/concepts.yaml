@@ -287,7 +287,7 @@ concepts:
       - tstree
       - tree-sitter
       - ast tier
-    description: Tree-sitter extraction, compiled only with the tstree build tag (CGO). Default builds use the regex extractors.
+    description: Tree-sitter extraction, compiled only with the tstree build tag (CGO). Default builds use the regex extractors, except Go, which uses the go/parser AST tier in every build.
     owned_by:
       - leankg
     code_refs:

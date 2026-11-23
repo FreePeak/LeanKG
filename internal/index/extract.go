@@ -2,6 +2,7 @@ package index
 
 import (
 	"context"
+	"go/parser"
 	"regexp"
 	"slices"
 	"strconv"
@@ -35,6 +36,13 @@ type indexedElem struct {
 	qn      string
 	recv    string   // Go method receiver type
 	calls   []string // grammar-derived call targets (objc message sends)
+	// seeds are the Go AST's name uses (goast.go). seeded marks an element the
+	// AST tier produced: relationships() then resolves seeds and never scans
+	// the element's text with the word heuristic.
+	seeds  []goSeed
+	seeded bool
+	spec   bool   // a Go interface method spec (indexDef.Spec)
+	pkg    string // Go package clause of the element's file ("" outside Go)
 }
 
 // Package-level compiled regexes (documented ceiling: regex extraction,
@@ -90,52 +98,31 @@ var (
 func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fileElements, error) {
 	lines := strings.Split(strings.TrimSuffix(string(src), "\n"), "\n")
 
-	// Tree-sitter tier first (tstree build only): richer symbol extraction
-	// for the bundled grammars, with real end lines. No grammar for the
-	// language ⇒ nil ⇒ regex fallback below.
-	defs, err := tsExtract(ctx, src, lang)
-	if cerr := ctx.Err(); cerr != nil {
-		return fileElements{}, cerr
-	}
-	if err == nil && len(defs) > 0 {
-		fe := fileElements{rel: rel}
-		for _, d := range defs {
-			end := d.EndLine
-			if end < d.StartLine {
-				end = d.StartLine
-			}
-			e := indexedElem{
-				name: d.Name, etype: d.Kind, lang: lang,
-				start: d.StartLine, end: end, parent: -1,
-			}
-			if d.Kind == "constructor" || d.Kind == "constant" {
-				// The grammar names a constructor after the constructor, not the
-				// class (and an enum value carries no type at all); recv carries
-				// the owning type so qualify() spells "<file>::Class.ctor" and
-				// "<file>::Enum.value" without depending on line-based parent
-				// detection (a one-line body has none).
-				e.recv = d.Owner
-			}
-			if d.Kind == "method" && d.Owner != "" {
-				// A Go method's owning type is its RECEIVER, and the receiver
-				// is not an enclosing node — a Go method is a sibling of its
-				// type, not a child of it — so line-based parent detection
-				// cannot find it. Without recv the method's qualified name was
-				// "<file>::Method" instead of "<file>::Type.Method", and the
-				// same repository indexed under `-tags tstree` answered
-				// DIFFERENT qualified names than the shipped CGO-free build.
-				e.recv = d.Owner
-			}
-			fe.elements = append(fe.elements, e)
+	// Go: the standard-library parser is the definitions tier in every build
+	// (CGO-free). A file it rejects falls through to the regex tier below, and
+	// the parser's error rides on the result (fallbackErr) so the run can count it.
+	var fallbackErr error
+	if lang == "go" {
+		defs, seeds, imports, bare, decls, pkg, err := goDefinitions(src)
+		if err == nil {
+			fe, err := finishDefinitions(ctx, rel, src, lines, lang, defs, imports, seeds)
+			fe.bareImports = bare
+			fe.decls = decls
+			fe.setPackage(pkg)
+			return fe, err
 		}
-		assignParents(fe.elements)
-		qualify(fe)
-		boundContent(fe.elements, lines)
-		// Grammar-derived call sites seed "calls" edges in relationships().
-		if err := tsAttributeCalls(ctx, src, lang, fe.elements); err != nil {
-			return fileElements{}, err
+		fallbackErr = err
+	} else {
+		// Tree-sitter tier (tstree build only): richer symbol extraction for
+		// the bundled grammars, with real end lines. No grammar for the
+		// language ⇒ nil ⇒ regex fallback below.
+		defs, err := tsExtract(ctx, src, lang)
+		if cerr := ctx.Err(); cerr != nil {
+			return fileElements{}, cerr
 		}
-		return fe, nil
+		if err == nil && len(defs) > 0 {
+			return finishDefinitions(ctx, rel, src, lines, lang, defs, nil, nil)
+		}
 	}
 
 	var ms []match
@@ -166,7 +153,7 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 		ms, _ = matchLangExp(lang, lines)
 	}
 	if len(ms) == 0 {
-		return fileElements{rel: rel}, nil
+		return fileElements{rel: rel, fallbackErr: fallbackErr}, nil
 	}
 
 	ends := make([]int, len(ms))
@@ -185,7 +172,12 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 		for i := range ms {
 			ends[i] = len(lines)
 			if i+1 < len(ms) {
-				ends[i] = ms[i+1].line - 1
+				// Stop before the next declaration's doc block, so that block
+				// is not absorbed into this element.
+				ends[i] = docCommentStart(lines, ms[i+1].line, lang) - 1
+				for ends[i] > ms[i].line && strings.TrimSpace(lines[ends[i]-1]) == "" {
+					ends[i]--
+				}
 			}
 			if ends[i] < ms[i].line {
 				ends[i] = ms[i].line
@@ -200,17 +192,13 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 		}
 	}
 
-	fe := fileElements{rel: rel}
+	defs := make([]indexDef, len(ms))
 	for i, m := range ms {
-		fe.elements = append(fe.elements, indexedElem{
-			name: m.name, etype: m.kind, lang: lang,
-			start: m.line, end: ends[i], parent: -1, recv: m.recv,
-		})
+		defs[i] = indexDef{Kind: m.kind, Name: m.name, StartLine: m.line, EndLine: ends[i], Owner: m.recv}
 	}
-	assignParents(fe.elements)
-	qualify(fe)
+	fe := indexDefsToElements(rel, lang, defs)
+	fe.fallbackErr = fallbackErr
 	if lang == "md" {
-		mdUniqueNames(fe.elements)
 		markdownContent(fe.elements, ms, ends, lines)
 		return fe, nil
 	}
@@ -222,6 +210,97 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 type fileElements struct {
 	rel      string
 	elements []indexedElem
+	// imports maps each Go import name (the alias, or the default package name)
+	// to its import path; nil for other languages.
+	imports map[string]string
+	// bareImports holds the Go blank and dot imports, which imports has no name for.
+	bareImports bareImports
+	// qualified holds the Go selector calls and references `alias.Name`, which
+	// qualifiedEdges resolves across packages.
+	qualified []qualifiedSeed
+	// decls are the Go type declarations receiver typing reads (goast.go).
+	decls goDecls
+	// fallbackErr is the Go parser's error when a Go file fell back to the regex
+	// tier; nil otherwise.
+	fallbackErr error
+	// pkg is the Go package clause ("" for other languages and for a Go file the
+	// parser rejects). Same-directory name lookups are keyed by it (nameTableOf).
+	pkg string
+}
+
+// setPackage records the Go package clause of fe and of each of its elements.
+func (fe *fileElements) setPackage(pkg string) {
+	fe.pkg = pkg
+	for i := range fe.elements {
+		fe.elements[i].pkg = pkg
+	}
+}
+
+// qualifiedSeed is one `alias.Name` use inside a Go element: the alias is an
+// import name, Name is the package member, Line the use line, Call whether it
+// is a call site.
+type qualifiedSeed struct {
+	Source string
+	Alias  string
+	Name   string
+	Line   int
+	Call   bool
+}
+
+// indexDefsToElements is the one place definitions become indexed elements:
+// the owning type rides on recv for members (method, constructor, constant),
+// the parent is found by line containment and qualified names are assigned.
+// Every tier (go parser, tree-sitter, regex) calls it.
+func indexDefsToElements(rel, lang string, defs []indexDef) fileElements {
+	fe := fileElements{rel: rel, elements: make([]indexedElem, len(defs))}
+	for i, d := range defs {
+		end := d.EndLine
+		if end < d.StartLine {
+			end = d.StartLine
+		}
+		e := indexedElem{
+			name: d.Name, etype: d.Kind, lang: lang,
+			start: d.StartLine, end: end, parent: -1, spec: d.Spec,
+		}
+		switch d.Kind {
+		case "method", "constructor", "constant":
+			// A Go method's owning type is its RECEIVER, which is a sibling of
+			// the method rather than an enclosing node, so line-based parent
+			// detection cannot find it. A constructor is named after the
+			// constructor, and an enum value carries no type. recv carries the
+			// owner so qualify() spells "<file>::Type.member" without depending
+			// on line-based parent detection (a one-line body has none).
+			e.recv = d.Owner
+		}
+		fe.elements[i] = e
+	}
+	assignParents(fe.elements)
+	qualify(fe)
+	uniqueElemQNs(map[string]bool{}, fe.elements)
+	return fe
+}
+
+// finishDefinitions is the shared tail of the structural tiers (go parser and
+// tree-sitter): definitions become elements, content is bounded from the
+// source, and call seeds are attached (the Go AST's name seeds when seeds is
+// non-nil, grammar-derived call sites otherwise).
+func finishDefinitions(ctx context.Context, rel string, src []byte, lines []string, lang string, defs []indexDef, imports map[string]string, seeds [][]goSeed) (fileElements, error) {
+	fe := indexDefsToElements(rel, lang, defs)
+	fe.imports = imports
+	if seeds != nil {
+		// seeds[i] belongs to defs[i]: the AST tier emits one entry per definition.
+		for i := range fe.elements {
+			fe.elements[i].seeds = seeds[i]
+			fe.elements[i].seeded = true
+		}
+		fe.qualified = qualifiedOf(fe.elements)
+	}
+	boundContent(fe.elements, lines)
+	// Grammar-derived call sites seed "calls" edges in relationships().
+	if err := tsAttributeCalls(ctx, src, lang, fe.elements); err != nil {
+		return fileElements{}, err
+	}
+	return fe, nil
 }
 
 // toStore converts extracted elements to store rows.
@@ -232,6 +311,9 @@ func (fe fileElements) toStore() []store.Element {
 			QualifiedName: e.qn, ElementType: e.etype, Name: e.name,
 			FilePath: fe.rel, LineStart: e.start, LineEnd: e.end,
 			Language: e.lang, Content: e.content,
+		}
+		if e.spec {
+			out[i].Metadata = map[string]any{"interface_spec": true}
 		}
 		if e.parent >= 0 {
 			out[i].ParentQualified = fe.elements[e.parent].qn
@@ -258,10 +340,18 @@ func matchGo(lines []string) []match {
 	return ms
 }
 
-// goRecvType pulls the type out of a receiver like "*Srv", "_ Srv", "s *Srv".
+// goRecvType pulls the bare type out of a receiver like "*Srv", "_ Srv",
+// "s *Set[T]": the type is read as Go syntax, so it names the same owner
+// bareTypeName gives the AST tier ("Set", not "Set[T]").
 func goRecvType(recv string) string {
 	f := strings.Fields(strings.TrimSpace(recv))
-	return strings.TrimPrefix(f[len(f)-1], "*")
+	typ := f[len(f)-1]
+	if e, err := parser.ParseExpr(typ); err == nil {
+		if name := bareTypeName(e); name != "" {
+			return name
+		}
+	}
+	return strings.TrimPrefix(typ, "*")
 }
 
 func matchRust(lines []string) []match {
@@ -452,27 +542,36 @@ func mdIsDescendantTitle(i int, ms []match, ends []int, line int) bool {
 	return false
 }
 
-// mdUniqueNames disambiguates repeated heading titles inside one file. Two
-// headings with the same text ("## Notes" twice) would share a qualified
-// name, and the store's UNIQUE index on qualified_name would silently drop
-// one of them: the file would hold fewer elements than it has headings. The
-// suffix mirrors the doc indexer's own slug disambiguation.
-func mdUniqueNames(els []indexedElem) {
-	used := make(map[string]bool, len(els))
+// uniqueQNs gives each qualified name in qns its own spelling, in order, so
+// that no two elements of one file share a row in the store (qualified_name is
+// UNIQUE, and an upsert silently replaces the earlier row). The first spelling
+// of a name is kept; the n-th repeat (n >= 2) becomes "name (n)", taking the
+// lowest n whose spelling is not yet used. used holds every spelling taken so
+// far and is updated, so a caller can share it across the element batches of
+// one file. The scheme is a pure function of file order, so a re-index of an
+// unchanged file names every element the same way.
+func uniqueQNs(used map[string]bool, qns []string) []string {
+	out := make([]string, len(qns))
+	for i, q := range qns {
+		cand := q
+		for n := 2; used[cand]; n++ {
+			cand = q + " (" + strconv.Itoa(n) + ")"
+		}
+		used[cand] = true
+		out[i] = cand
+	}
+	return out
+}
+
+// uniqueElemQNs applies uniqueQNs to the qualified names of one file's
+// extracted elements.
+func uniqueElemQNs(used map[string]bool, els []indexedElem) {
+	qns := make([]string, len(els))
 	for i := range els {
-		q := els[i].qn
-		if !used[q] {
-			used[q] = true
-			continue
-		}
-		for n := 2; ; n++ {
-			cand := q + " (" + strconv.Itoa(n) + ")"
-			if !used[cand] {
-				els[i].qn = cand
-				used[cand] = true
-				break
-			}
-		}
+		qns[i] = els[i].qn
+	}
+	for i, q := range uniqueQNs(used, qns) {
+		els[i].qn = q
 	}
 }
 
@@ -827,34 +926,42 @@ func boundContent(els []indexedElem, lines []string) {
 		if e > len(lines) {
 			e = len(lines)
 		}
-		if doc := docCommentStart(lines, s); doc < s {
+		if doc := docCommentStart(lines, s, els[i].lang); doc < s {
+			// The doc block is the content's leading bytes; relationships()
+			// scans past them, so prose in it never becomes an edge.
+			if els[i].etype != "doc" {
+				els[i].docLen = len(strings.Join(lines[doc-1:s-1], "\n")) + 1
+			}
 			s = doc
 		}
 		els[i].content = strings.Join(lines[s-1:e], "\n")
-		if els[i].etype != "doc" {
-			if doc := leadingDoc(lines, s, els[i].lang); doc != "" {
-				els[i].content = doc + "\n" + els[i].content
-				els[i].docLen = len(doc) + 1
-			}
-		}
 		els[i].content = store.ClipUTF8(els[i].content, maxContent)
 	}
 }
 
 // docCommentStart walks back from line `start` over a CONTIGUOUS comment block
 // directly above it and returns that block's first line (start itself when there
-// is none). Contiguity is the rule: a blank line or a second declaration ends
+// is none). Attribute or annotation lines for lang (`@Override`, `#[inline]`)
+// may sit between the block and the declaration; they are passed over and belong
+// to the block. Contiguity is the rule: a blank line or a second declaration ends
 // the block, so a comment belonging to the PREVIOUS element is never stolen.
 //
 // Recognised forms are the ones the indexed languages use: `//`, `///`, `//!`,
 // `#`, and a `/* … */` block. Anything else stops the walk.
-func docCommentStart(lines []string, start int) int {
+func docCommentStart(lines []string, start int, lang string) int {
 	if start < 2 || start > len(lines) {
 		return start
 	}
+	style := commentStyles[lang]
 	// `start` is 1-based, so the line above it is index start-2 in the 0-based
 	// slice below.
 	i := start - 2
+	for i >= 0 && isAttrLine(strings.TrimSpace(lines[i]), style) {
+		i--
+	}
+	if i < 0 {
+		return start
+	}
 	// A /* … */ block that ends on the line above. Having SEEN the terminator we
 	// know a block is open, and everything up to its `/*` is that block's body —
 	// a block comment cannot contain code, so no per-line filtering is needed or
@@ -876,6 +983,9 @@ func docCommentStart(lines []string, start int) int {
 	j := i
 	for j >= 0 && isDocCommentLine(lines[j]) {
 		j--
+	}
+	if j == i {
+		return start
 	}
 	return j + 2
 }
