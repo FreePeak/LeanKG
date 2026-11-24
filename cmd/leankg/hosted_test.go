@@ -193,3 +193,55 @@ func TestAutoConfigRefusesAnOrgScopedToken(t *testing.T) {
 		t.Fatalf("token with no org on auto-config = %d; want 200", code)
 	}
 }
+
+// TestHostedMCPCallsNamingAProjectPassTheDispatcher: in hosted mode the MCP
+// listener carries the project in the tool arguments, so the URL-only checks
+// in the dispatcher must not refuse those calls. engineFor still enforces the
+// caller's grant and org scope per call. The MCP request goes through the same
+// dispatcher wrapping serve mounts (mcpListenerOver), and REST keeps its URL rule.
+func TestHostedMCPCallsNamingAProjectPassTheDispatcher(t *testing.T) {
+	f := newIsolation(t)
+	hosted := f.hostedRouter()
+	t.Cleanup(func() { _ = hosted.Close() })
+	mcpH := f.mcpListenerOver(hosted)
+	restH := f.restHandlerOver(hosted)
+	own, other, unknown := filepath.Base(f.alpha), filepath.Base(f.beta), "does-not-exist"
+	const hostedMCPRefusal = "this server is hosted, so a tool call must name its project"
+	mcpCall := func(sel string) string {
+		args := `{}`
+		if sel != "" {
+			args = `{"project":` + jsonString(t, sel) + `}`
+		}
+		return mcpStatus(t, mcpH, args, f.orgA)
+	}
+
+	// MCP: own project answers; no project is refused in-band by engineFor;
+	// another org's project answers exactly like an unknown project.
+	if body := mcpCall(own); strings.Contains(body, `"isError":true`) || !strings.Contains(body, `\"elements\":1`) {
+		t.Errorf("MCP own project %q = %s; want alpha's status without isError", own, body)
+	}
+	if body := mcpCall(""); !strings.Contains(body, hostedMCPRefusal) {
+		t.Errorf("MCP without project = %s; want in-band %q", body, hostedMCPRefusal)
+	}
+	wantUnknown := blankSelector(mcpCall(unknown), unknown)
+	for _, sel := range []string{other, realOrSelf(f.beta)} {
+		if got := blankSelector(mcpCall(sel), sel); got != wantUnknown {
+			t.Errorf("MCP other org's project %q = %s; want the unknown-project answer", sel, got)
+		}
+	}
+
+	// REST (URL-only): own project 200, no project 400, other org's project 404 as unknown.
+	if code, body := restStatus(t, restH, own, f.orgA); code != http.StatusOK {
+		t.Errorf("REST own project = %d %s; want 200", code, body)
+	}
+	if code, body := restStatus(t, restH, "", f.orgA); code != http.StatusBadRequest || !strings.Contains(body, "must name its project") {
+		t.Errorf("REST without project = %d %s; want 400 naming the project", code, body)
+	}
+	_, wantRESTUnknown := restStatus(t, restH, unknown, f.orgA)
+	for _, sel := range []string{other, realOrSelf(f.beta)} {
+		code, body := restStatus(t, restH, sel, f.orgA)
+		if code != http.StatusNotFound || blankSelector(body, sel) != blankSelector(wantRESTUnknown, unknown) {
+			t.Errorf("REST other org's project %q = %d %s; want 404 as unknown", sel, code, body)
+		}
+	}
+}

@@ -82,6 +82,27 @@ func sendJSON(t *testing.T, h http.Handler, method, target, bearer, body string)
 	return rec.Code, string(out)
 }
 
+// hostedRouter is the router a hosted serve builds over the fixture's projects:
+// no default project is served to a request that names none.
+func (f isolation) hostedRouter() *projects.Router {
+	return projects.NewRouter(f.router.Default(), projects.Config{
+		ExtraDirs: []string{f.alpha, f.beta}, Mode: store.RW, EngineName: store.EngineSQLite, Hosted: true,
+	})
+}
+
+// mcpListenerOver mounts the MCP handler as serve mounts the MCP listener
+// (main.go): the project dispatcher wraps the MCP mux and resolves the caller.
+func (f isolation) mcpListenerOver(router *projects.Router) http.Handler {
+	srv := leankgmcp.New(f.defaultEng, leankgmcp.WithProjectRequired(router.MultiProject() || router.Hosted()))
+	srv.SetProjectRouter(router)
+	srv.SetAuthStore(f.home)
+	return routeByProject(router, f.home, resolveCaller(f.home), httpMux(srv.HTTPHandler()), func(p *projects.Project) http.Handler {
+		pSrv := newScopedMCPServer(p.Engine, router)
+		pSrv.SetAuthStore(f.home)
+		return httpMux(pSrv.HTTPHandler())
+	})
+}
+
 // restStatus is GET /api/v1/status with wire as the raw ?project= value, so a
 // test controls the exact percent-encoding the client sends. An empty wire
 // omits the parameter.
@@ -301,9 +322,7 @@ func TestRevokedOrgTokenIsRejected(t *testing.T) {
 // that names no project is refused on REST and MCP, not answered from a default.
 func TestHostedRefusesOrgTokenWithoutProject(t *testing.T) {
 	f := newIsolation(t)
-	hosted := projects.NewRouter(f.router.Default(), projects.Config{
-		ExtraDirs: []string{f.alpha, f.beta}, Mode: store.RW, EngineName: store.EngineSQLite, Hosted: true,
-	})
+	hosted := f.hostedRouter()
 	t.Cleanup(func() { _ = hosted.Close() })
 
 	code, body := restStatus(t, f.restHandlerOver(hosted), "", f.orgA)
