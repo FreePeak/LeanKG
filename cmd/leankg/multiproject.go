@@ -24,7 +24,7 @@ type projectRouting struct {
 	build    func(*projects.Project) http.Handler
 
 	mu    sync.Mutex
-	cache map[string]http.Handler // project dir -> built handler
+	cache map[string]cachedHandler // project dir -> handler built over one instance
 }
 
 // routeByProject wraps fallback with `?project=` dispatch. build mounts
@@ -59,7 +59,7 @@ func newProjectRouting(router *projects.Router, st auth.Store, identify func(*ht
 		identify: identify,
 		fallback: fallback,
 		build:    build,
-		cache:    map[string]http.Handler{},
+		cache:    map[string]cachedHandler{},
 	}
 	router.OnEvict(h.forget)
 	return h
@@ -149,14 +149,22 @@ func (h *projectRouting) forget(dir string) {
 	delete(h.cache, dir)
 }
 
-// handlerFor builds (once) the transport handler for a project.
+// cachedHandler is the handler built over one project instance. The cache is
+// keyed by directory, but an evicted project reopens as a new instance with a
+// new engine, so an entry is reused only for the instance it was built over.
+type cachedHandler struct {
+	p *projects.Project
+	h http.Handler
+}
+
+// handlerFor builds (once per project instance) the transport handler for a project.
 func (h *projectRouting) handlerFor(p *projects.Project) http.Handler {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if got, ok := h.cache[p.Dir]; ok {
-		return got
+	if got, ok := h.cache[p.Dir]; ok && got.p == p {
+		return got.h
 	}
 	built := h.build(p)
-	h.cache[p.Dir] = built
+	h.cache[p.Dir] = cachedHandler{p: p, h: built}
 	return built
 }
