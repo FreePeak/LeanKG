@@ -57,6 +57,7 @@ func TestStatusForClassifiesEveryCatalogCode(t *testing.T) {
 		errs.Unauthorized:          http.StatusUnauthorized,
 		errs.PermissionDenied:      http.StatusForbidden,
 		errs.ReadOnly:              http.StatusForbidden,
+		errs.RoutedReadOnly:        http.StatusBadRequest,
 		errs.NoVectors:             http.StatusConflict,
 		errs.IndexRootMismatch:     http.StatusConflict,
 		errs.UnknownAction:         http.StatusBadRequest,
