@@ -67,6 +67,7 @@ type Engine struct {
 	embedder   embed.Provider             // optional; nil ⇒ L3 degrades with reason
 	embedProbe embedHealth                // cached reachability of the embedder (status)
 	compressor *compress.LeanKGCompressor // context compression (reader/cmd/response paths, Rust parity)
+	hosted     bool                       // hosted mode: no portfolio fan-out
 
 	// lspMu guards the LSP pool and the closed flag. The pool is created on
 	// the first lsp query and shut down by Close (CX-45).
@@ -88,6 +89,9 @@ type Options struct {
 	// Langs is the language registry (lazy activation state) for the opened
 	// codebase; nil leaves every language idle.
 	Langs *langs.Registry
+	// Hosted turns off the fleet paths: a portfolio query fans out across
+	// registered projects, which a hosted server must not do.
+	Hosted bool
 }
 
 // wireMemoryVectors gives the memory layer the dense recall arm (RS-19): the
@@ -120,7 +124,7 @@ func New(st store.Backend, opts Options) *Engine {
 	}
 	e := &Engine{
 		st: st, mem: opts.Memory, embedder: opts.Embedder, langsReg: opts.Langs,
-		projectDir: projectDir, compressor: compress.New(),
+		projectDir: projectDir, compressor: compress.New(), hosted: opts.Hosted,
 	}
 	if e.embedder != nil {
 		e.wireMemoryVectors()

@@ -407,6 +407,7 @@ func serve(ctx context.Context, args []string) error {
 	uiAddr := fs.String("ui", "", "dashboard address serving the embedded ui-v2 build (e.g. 127.0.0.1:8081; deliberately public — its API is unauthenticated)")
 	hindsightCompat := fs.Bool("hindsight-compat", false, "on the REST listener, mount the Hindsight-wire compat aliases (/v1/default/banks/...) that omp's memory.backend=hindsight speaks; requires --memory")
 	memoryGlobal := fs.Bool("memory-global", false, "keep the memory layer in ~/.leankg/memory instead of <project>/.leankg/memory (shared/portfolio memory root; requires --memory)")
+	hosted := fs.Bool("hosted", false, "serve a hosted control plane: every call names its project, routed project stores are read-only, the portfolio fan-out and the maintenance fleet are off, and POST/DELETE /api/v1/projects register projects (needs --rest and a token source; refuses --read-only, --memory-global, --ui, --rpc, --stdio)")
 	if err := cliexit.Parse(fs, args); err != nil {
 		return err
 	}
@@ -431,6 +432,12 @@ func serve(ctx context.Context, args []string) error {
 	}
 	if *stdio && (*httpAddr != "" || *restAddr != "" || *rpcAddr != "" || *uiAddr != "") {
 		return errors.New("--stdio is exclusive of --http/--rest/--rpc/--ui")
+	}
+	if err := checkHostedFlags(*hosted, hostedOpts{
+		readOnly: *readOnly, memoryGlobal: *memoryGlobal, stdio: *stdio,
+		rest: *restAddr, rpc: *rpcAddr, ui: *uiAddr,
+	}); err != nil {
+		return err
 	}
 	for _, l := range binds {
 		if err := servebind.Check(l.kind, l.addr, servebind.Options{GateOn: true}); err != nil {
@@ -471,6 +478,9 @@ func serve(ctx context.Context, args []string) error {
 	// by design (the Render demo serves --read-only --ui :${PORT}), so it keeps
 	// its own warning.
 	gateOn := serveGateOn(ctx, dir, eng, *dbFlag)
+	if *hosted && !gateOn {
+		return hostedGateError()
+	}
 	for _, l := range binds {
 		if err := servebind.Check(l.kind, l.addr, servebind.Options{GateOn: gateOn}); err != nil {
 			return err
@@ -584,7 +594,7 @@ afterSidecars:
 		sort.Strings(summary)
 		log.Printf("languages active: %s", strings.Join(summary, "; "))
 	}
-	engine := core.New(st, core.Options{Memory: mem, Embedder: embedder, ProjectDir: dir, Langs: langReg})
+	engine := core.New(st, core.Options{Memory: mem, Embedder: embedder, ProjectDir: dir, Langs: langReg, Hosted: *hosted})
 	defer engine.Close()
 
 	// Multi-project serving (LEANKG_PROJECT_DIRS): register the extra
@@ -599,6 +609,7 @@ afterSidecars:
 		PGURL:      projectcfg.PGURL(dir),
 		Memory:     *withMemory,
 		Embedder:   embedder,
+		Hosted:     *hosted,
 		Logf:       log.Printf,
 	})
 	router.SeedDefault(&projects.Project{
@@ -633,7 +644,9 @@ afterSidecars:
 	//
 	// Skipped under --read-only (a reader takes no lock it may need to
 	// rewrite) and disabled by LEANKG_VACUUM_INTERVAL_HOURS=0.
-	if mode == store.RW {
+	if *hosted {
+		log.Printf("hosted mode: the maintenance fleet and the registry sweep are off; index projects with a worker")
+	} else if mode == store.RW {
 		interval := maintain.IntervalFromEnv(os.Getenv)
 		var keepModelIDs []string
 		if embedder != nil {
@@ -692,7 +705,7 @@ afterSidecars:
 	// already in use is reported before any of them starts serving.
 	var eps []endpoint
 	if addr != "" {
-		mcpSrv := leankgmcp.New(engine, leankgmcp.WithProjectRequired(router.MultiProject()))
+		mcpSrv := leankgmcp.New(engine, leankgmcp.WithProjectRequired(router.MultiProject() || router.Hosted()))
 		mcpSrv.SetProjectRouter(router)
 		mcpSrv.SetAuthStore(st)
 		mcpSrv.SetRecorder(rec) // plan v4.15 DS-04/DS-05: HTTP capture and headers
@@ -737,6 +750,11 @@ afterSidecars:
 		// Everything else sits behind the bearer gate.
 		root := http.NewServeMux()
 		root.Handle("/api/v1/auth/", auth.Public(auth.Routes(st)))
+		if *hosted {
+			root.Handle("/api/v1/projects", auth.Public(projectAdminRoute(st, router, portfolioreg.Options{
+				Engine: eng, PGURL: projectcfg.PGURL(dir),
+			})))
+		}
 		root.Handle("/", auth.Public(auth.MiddlewareWithStore(st, h)))
 		log.Printf("leankg serve (REST) on %s", *restAddr)
 		eps = append(eps, endpoint{addr: *restAddr, h: root})

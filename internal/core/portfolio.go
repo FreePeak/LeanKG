@@ -60,6 +60,9 @@ func (e *Engine) portfolioOptions() portfolioreg.Options {
 // action (default: each child's own ladder router); "portfolio" is refused — a
 // fleet query must not recurse into a fleet query.
 func (e *Engine) portfolioQuery(ctx context.Context, req QueryRequest, a portfolioArgs) (map[string]any, error) {
+	if e.hosted {
+		return nil, fmt.Errorf("portfolio queries are disabled in hosted mode: name one project")
+	}
 	opts := e.portfolioOptions()
 	grant, _ := auth.AuthFrom(ctx)
 	cmd, alias := subCommandKey(a.Command, a.Cmd)

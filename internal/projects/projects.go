@@ -106,6 +106,11 @@ type Config struct {
 	// LEANKG_HOSTED_MAX_OPEN_PROJECTS, else 64). The default project is not
 	// counted: it is seeded, never evicted.
 	MaxOpen int
+	// Hosted serves a control plane: routed project stores open read-only
+	// (a separate worker is their only writer), they never migrate, and the
+	// engines refuse the fleet paths. The home store is not routed, so it is
+	// unaffected.
+	Hosted bool
 	// Logf receives one line per lazily-opened project (may be nil).
 	Logf func(format string, args ...any)
 }
@@ -132,6 +137,9 @@ type Router struct {
 func NewRouter(defaultDir string, cfg Config) *Router {
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
+	}
+	if cfg.Hosted {
+		cfg.Mode = store.RO
 	}
 	r := &Router{
 		cfg:     cfg,
@@ -182,6 +190,10 @@ func (r *Router) List() []string {
 
 // Default is the serving process's own project directory.
 func (r *Router) Default() string { return r.def }
+
+// Hosted reports whether the router serves a hosted control plane (see
+// Config.Hosted). A hosted router refuses a request that names no project.
+func (r *Router) Hosted() bool { return r.cfg.Hosted }
 
 // Add registers dir at runtime, so it routes like a LEANKG_PROJECT_DIRS
 // entry. The store is opened lazily on first use, so Add performs no I/O.
@@ -685,7 +697,7 @@ func (cfg Config) open(ctx context.Context, dir string) (*Project, error) {
 	if _, aerr := reg.Activate(ctx, dir); aerr != nil {
 		cfg.Logf("language detection failed for %s: %v", dir, aerr)
 	}
-	eng := core.New(st, core.Options{Memory: mem, Embedder: cfg.Embedder, ProjectDir: dir, Langs: reg})
+	eng := core.New(st, core.Options{Memory: mem, Embedder: cfg.Embedder, ProjectDir: dir, Langs: reg, Hosted: cfg.Hosted})
 	return &Project{Dir: dir, Name: filepath.Base(dir), Store: st, Engine: eng, Memory: mem}, nil
 }
 

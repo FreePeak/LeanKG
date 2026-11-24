@@ -41,6 +41,8 @@ type ProjectRouter interface {
 	// AuthorizeAs applies the caller's project grant and visibility to a
 	// selector without opening the project, and returns its directory.
 	AuthorizeAs(ctx context.Context, selector string, visible func(dir string) bool) (string, error)
+	// Hosted reports whether every call must name its project (no default).
+	Hosted() bool
 }
 
 // Server wraps the go-sdk server over one core engine. When router is set,
@@ -140,6 +142,12 @@ func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core
 	// unanswerable without knowing which graph to search, so we refuse.
 	p, _ := args["project"].(string)
 	if p == "" {
+		// A hosted server never answers from a default project: every call names one.
+		if s.router.Hosted() {
+			return nil, noRelease, errs.NewError(errs.MissingParam,
+				"this server is hosted, so a tool call must name its project",
+				"add \"project\": \"<repo dir or name>\" to the tool arguments")
+		}
 		// A scoped server already serves the project the URL selected, and the
 		// routing layer checked that project against the caller's scope.
 		if s.scoped {

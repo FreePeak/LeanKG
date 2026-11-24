@@ -86,6 +86,12 @@ func resolveCaller(st auth.Store) func(*http.Request) (auth.AuthContext, error) 
 func (h *projectRouting) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	sel := r.URL.Query().Get("project")
 	if sel == "" {
+		if h.router.Hosted() {
+			httpx.WriteError(w, errs.NewError(errs.MissingParam,
+				"this server is hosted, so every request must name its project",
+				"add ?project=<repo dir or name> to the URL"))
+			return
+		}
 		// The fallback is defaultProjectGate: the caller's grant and org scope
 		// apply to the default's name too. The MCP listener's own gate covers
 		// its callers, which carry no grant in this context.
