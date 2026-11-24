@@ -616,6 +616,12 @@ afterSidecars:
 		Dir: dir, Name: filepath.Base(dir), Store: st, Engine: engine, Memory: mem,
 	})
 	defer router.Close()
+	if *hosted {
+		// The claims in the home store are the registrations that survive a restart.
+		if err := restoreClaimedProjects(ctx, st, router); err != nil {
+			return err
+		}
+	}
 	if extra := router.List(); len(extra) > 1 {
 		log.Printf("projects registered: %s", strings.Join(extra, ", "))
 	}

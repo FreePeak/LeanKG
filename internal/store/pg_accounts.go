@@ -263,6 +263,17 @@ func (s *PGStore) ResourceIDs(ctx context.Context, resourceType, orgID string) (
 	return pgScanStrings(rows)
 }
 
+// ClaimedResourceIDs lists each resource of resourceType that any org claimed, sorted.
+func (s *PGStore) ClaimedResourceIDs(ctx context.Context, resourceType string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT resource_id FROM resource_ownership
+		WHERE resource_type = $1 AND org_id IS NOT NULL ORDER BY resource_id`, resourceType)
+	if err != nil {
+		return nil, fmt.Errorf("store: claimed resource ids: %w", err)
+	}
+	defer rows.Close()
+	return pgScanStrings(rows)
+}
+
 // ResourceRelease removes every claim on the resource.
 func (s *PGStore) ResourceRelease(ctx context.Context, resourceType, resourceID string) error {
 	if _, err := s.pool.Exec(ctx, `DELETE FROM resource_ownership WHERE resource_type = $1 AND resource_id = $2`,

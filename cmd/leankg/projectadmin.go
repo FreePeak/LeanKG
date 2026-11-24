@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 	"os"
 
@@ -134,6 +136,23 @@ func (a projectAdmin) unregister(w http.ResponseWriter, r *http.Request, body pr
 // error is not reported: the caller already answers with the failure.
 func (a projectAdmin) rollbackClaim(ctx context.Context, dir string) {
 	_ = a.st.ResourceRelease(ctx, auth.ResourceProject, dir)
+}
+
+// restoreClaimedProjects re-registers every project the home store claims, so a
+// restarted hosted server routes them again without an admin re-registering each
+// one. The claims are the source of truth: DELETE releases a claim, so a deleted
+// project is not restored. It does nothing outside hosted mode.
+func restoreClaimedProjects(ctx context.Context, st auth.Store, router *projects.Router) error {
+	if !router.Hosted() {
+		return nil
+	}
+	claimed, err := st.ClaimedResourceIDs(ctx, auth.ResourceProject)
+	if err != nil {
+		return fmt.Errorf("list project claims: %w", err)
+	}
+	n := router.Restore(ctx, claimed)
+	log.Printf("hosted mode: restored %d of %d claimed project(s)", n, len(claimed))
+	return nil
 }
 
 // orgOwner is the owner label of an org-level project claim. It is not an

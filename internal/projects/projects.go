@@ -218,6 +218,52 @@ func (r *Router) Add(dir string) error {
 	return nil
 }
 
+// Restore registers the claimed project dirs of a hosted control plane, so a
+// restarted server routes them without an admin registering each one again. A
+// claim is restored only while its directory still exists and holds a store (an
+// indexed project). Any other claim is skipped and logged by project name, and
+// one bad claim never stops the rest. Restore does nothing outside hosted mode
+// and returns the number of projects it registered.
+func (r *Router) Restore(ctx context.Context, claimed []string) int {
+	if !r.cfg.Hosted {
+		return 0
+	}
+	seen := map[string]bool{}
+	restored := 0
+	for _, d := range claimed {
+		c := canonical(d)
+		if c == "" || seen[c] {
+			continue
+		}
+		seen[c] = true
+		if reason := r.restoreSkip(ctx, c); reason != "" {
+			r.cfg.Logf("hosted: not restoring project %s: %s", filepath.Base(c), reason)
+			continue
+		}
+		if err := r.Add(c); err != nil {
+			r.cfg.Logf("hosted: not restoring project %s: %v", filepath.Base(c), err)
+			continue
+		}
+		restored++
+	}
+	return restored
+}
+
+// restoreSkip reports why a claimed dir is not restored, or "" when it should be.
+func (r *Router) restoreSkip(ctx context.Context, dir string) string {
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return "directory no longer exists"
+	}
+	ok, err := store.Exists(ctx, storeDir(dir), r.cfg.engineName(), r.cfg.PGURL)
+	if err != nil {
+		return "store check failed"
+	}
+	if !ok {
+		return "not indexed"
+	}
+	return ""
+}
+
 // Remove unregisters dir. The project stops routing at once and its engine
 // and store close: now if no request holds it, else when the last request
 // releases it. Removing an unregistered project is a no-op; the serving
@@ -662,16 +708,12 @@ func closeProject(p *Project) error {
 // open builds one project's serving state (cmd serve's construction
 // sequence, parameterized on the project dir).
 func (cfg Config) open(ctx context.Context, dir string) (*Project, error) {
-	engineName := cfg.EngineName
-	if engineName == "" {
-		engineName = os.Getenv("LEANKG_DB_ENGINE")
-	}
+	engineName := cfg.engineName()
 	// Each routed project honors its own leankg.yaml anchor (Rust per-project
 	// db_path resolution): the store opens under the anchored project so the
 	// Postgres schema key matches what the project declares. cfg.PGURL stays
 	// process-wide — Rust had a single db tier from db_config_from_cwd.
-	dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
-	projectDir := filepath.Dir(dbDir)
+	projectDir := storeDir(dir)
 	// A READ must not rewrite the store it reads.
 	//
 	// Opening a routed project used to Migrate() it, so a single query
@@ -718,6 +760,21 @@ func (cfg Config) open(ctx context.Context, dir string) (*Project, error) {
 	}
 	eng := core.New(st, core.Options{Memory: mem, Embedder: cfg.Embedder, ProjectDir: dir, Langs: reg, Hosted: cfg.Hosted})
 	return &Project{Dir: dir, Name: filepath.Base(dir), Store: st, Engine: eng, Memory: mem}, nil
+}
+
+// engineName is the storage engine a routed project opens with: EngineName,
+// else LEANKG_DB_ENGINE.
+func (cfg Config) engineName() string {
+	if cfg.EngineName != "" {
+		return cfg.EngineName
+	}
+	return os.Getenv("LEANKG_DB_ENGINE")
+}
+
+// storeDir is the directory whose .leankg holds the project's store: the
+// leankg.yaml anchor when the project declares one, else dir itself.
+func storeDir(dir string) string {
+	return filepath.Dir(projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg")))
 }
 
 // notIndexedError is the refusal a routed project earns when it has no
