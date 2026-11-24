@@ -564,12 +564,21 @@ func (r *Router) OpenAs(ctx context.Context, selector string, visible func(dir s
 }
 
 // makeRoomLocked closes idle least-recently-used projects until one more can
-// open under the cap, and returns their dirs. Projects with a live lease are
-// never chosen; if none is idle the loop stops and the cap is exceeded. A
-// router with no cap (maxOpen 0) never evicts.
+// open under the cap, and returns their dirs.
 func (r *Router) makeRoomLocked() []string {
+	return r.trimLocked(r.maxOpen - 1)
+}
+
+// trimLocked closes idle least-recently-used projects while more than limit
+// routed projects are open, and returns their dirs. Projects with a live lease
+// are never chosen; if none is idle the loop stops and the count stays above
+// the limit. A router with no cap (maxOpen 0) never evicts.
+//
+// It runs on open (to make room for one more) and on release (when the leases
+// that held the count above the cap have ended), so the cap holds at rest.
+func (r *Router) trimLocked(limit int) []string {
 	var evicted []string
-	for r.maxOpen > 0 && r.openProjectsLocked() >= r.maxOpen {
+	for r.maxOpen > 0 && r.openProjectsLocked() > limit {
 		victim := r.idleLRULocked()
 		if victim == nil {
 			break
@@ -630,12 +639,16 @@ func (r *Router) release(p *Project) {
 	if closeNow {
 		p.retired = false
 	}
+	// The lease may have been the one that held the count over the cap: close
+	// idle projects down to it now, so the cap holds once requests drain.
+	evicted := r.trimLocked(r.maxOpen)
 	r.mu.Unlock()
 	if closeNow {
 		if err := closeProject(p); err != nil {
 			r.cfg.Logf("projects: close %s: %v", p.Dir, err)
 		}
 	}
+	r.notifyEvicted(evicted...)
 }
 
 // closeProject closes a project's engine and store.
