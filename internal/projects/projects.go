@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -72,7 +73,21 @@ type Project struct {
 	Memory *memory.Memory
 
 	isDefault bool
+	// refs counts the open leases (requests) using this project. A project
+	// with a live lease is never evicted, and a removed one closes when the
+	// last lease is released. used orders eviction (least recently used first).
+	refs    int
+	used    uint64
+	retired bool
 }
+
+// defaultMaxOpen is the cap on lazily-opened projects when neither
+// Config.MaxOpen nor LEANKG_HOSTED_MAX_OPEN_PROJECTS sets one.
+const defaultMaxOpen = 64
+
+// MaxOpenEnv names the environment variable that caps how many routed
+// projects stay open at once.
+const MaxOpenEnv = "LEANKG_HOSTED_MAX_OPEN_PROJECTS"
 
 // Config controls lazy per-project construction (mirrors `leankg serve`
 // flags so a routed project is built exactly like the default one).
@@ -87,6 +102,10 @@ type Config struct {
 	PGURL      string
 	Memory     bool
 	Embedder   embed.Provider
+	// MaxOpen caps how many routed projects stay open (0 = the env
+	// LEANKG_HOSTED_MAX_OPEN_PROJECTS, else 64). The default project is not
+	// counted: it is seeded, never evicted.
+	MaxOpen int
 	// Logf receives one line per lazily-opened project (may be nil).
 	Logf func(format string, args ...any)
 }
@@ -99,6 +118,12 @@ type Router struct {
 	mu      sync.Mutex
 	entries map[string]*Project // keyed by canonical dir
 	closed  bool
+	maxOpen int
+	tick    uint64
+	onEvict []func(dir string)
+	// open builds one project's serving state. NewRouter sets it to
+	// Config.open; tests substitute a fake store.
+	open func(ctx context.Context, dir string) (*Project, error)
 }
 
 // NewRouter builds the registry over defaultDir (the serving process's
@@ -112,6 +137,11 @@ func NewRouter(defaultDir string, cfg Config) *Router {
 		cfg:     cfg,
 		def:     canonical(defaultDir),
 		entries: map[string]*Project{},
+		maxOpen: cfg.MaxOpen,
+		open:    cfg.open,
+	}
+	if r.maxOpen <= 0 {
+		r.maxOpen = maxOpenFromEnv()
 	}
 	for _, d := range cfg.ExtraDirs {
 		c := canonical(d)
@@ -145,12 +175,82 @@ func (r *Router) SeedDefault(p *Project) {
 
 // List returns every registered project's canonical dir, default first.
 func (r *Router) List() []string {
-	out := append([]string{r.def}, r.dirs...)
-	return out
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string{r.def}, r.dirs...)
 }
 
 // Default is the serving process's own project directory.
 func (r *Router) Default() string { return r.def }
+
+// Add registers dir at runtime, so it routes like a LEANKG_PROJECT_DIRS
+// entry. The store is opened lazily on first use, so Add performs no I/O.
+// Adding a project that is already registered is a no-op.
+func (r *Router) Add(dir string) error {
+	c := canonical(dir)
+	if c == "" {
+		return errors.New("projects: add: empty project dir")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if c == r.def || contains(r.dirs, c) {
+		return nil
+	}
+	r.dirs = append(r.dirs, c)
+	sort.Strings(r.dirs)
+	return nil
+}
+
+// Remove unregisters dir. The project stops routing at once and its engine
+// and store close: now if no request holds it, else when the last request
+// releases it. Removing an unregistered project is a no-op; the serving
+// process's own project cannot be removed.
+func (r *Router) Remove(dir string) error {
+	c := canonical(dir)
+	r.mu.Lock()
+	if c == r.def {
+		r.mu.Unlock()
+		return fmt.Errorf("projects: %s is the serving process's own project and cannot be removed", c)
+	}
+	i := indexOf(r.dirs, c)
+	if i < 0 {
+		r.mu.Unlock()
+		return nil
+	}
+	r.dirs = append(r.dirs[:i], r.dirs[i+1:]...)
+	var err error
+	if p, ok := r.entries[c]; ok {
+		delete(r.entries, c)
+		err = r.closeLocked(p)
+	}
+	r.mu.Unlock()
+	r.notifyEvicted(c)
+	if err != nil {
+		return fmt.Errorf("projects: close %s: %w", c, err)
+	}
+	return nil
+}
+
+// OnEvict registers fn to be called with the canonical dir of every project
+// the router closes (LRU eviction or Remove), after the router's lock is
+// released. The HTTP layers use it to drop the handlers they built over a
+// project's engine.
+func (r *Router) OnEvict(fn func(dir string)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onEvict = append(r.onEvict, fn)
+}
+
+func (r *Router) notifyEvicted(dirs ...string) {
+	r.mu.Lock()
+	fns := append([]func(string){}, r.onEvict...)
+	r.mu.Unlock()
+	for _, d := range dirs {
+		for _, fn := range fns {
+			fn(d)
+		}
+	}
+}
 
 // MultiProject reports whether more than one project is registered, which is
 // what makes an omitted `project` argument ambiguous (see mcp's fail-closed
@@ -159,7 +259,26 @@ func (r *Router) Default() string { return r.def }
 func (r *Router) MultiProject() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return len(r.entries)+len(r.cfg.ExtraDirs) > 1
+	return len(r.dirs) > 0
+}
+
+// maxOpenFromEnv reads LEANKG_HOSTED_MAX_OPEN_PROJECTS: a positive integer,
+// else the default.
+func maxOpenFromEnv() int {
+	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv(MaxOpenEnv)))
+	if err != nil || n <= 0 {
+		return defaultMaxOpen
+	}
+	return n
+}
+
+func indexOf(dirs []string, d string) int {
+	for i, x := range dirs {
+		if x == d {
+			return i
+		}
+	}
+	return -1
 }
 
 // resolve maps a selector to a registered canonical dir:
@@ -296,14 +415,15 @@ func (r *Router) byName(name string) []string {
 	return hits
 }
 
-// EngineFor returns the project's engine, opening it on first use.
-// selector "" = default project.
-func (r *Router) EngineFor(ctx context.Context, selector string) (*core.Engine, error) {
-	p, err := r.Open(ctx, selector)
+// EngineFor returns the project's engine, opening it on first use, and the
+// lease that keeps it open: call release when the request is done with the
+// engine. selector "" = default project.
+func (r *Router) EngineFor(ctx context.Context, selector string) (*core.Engine, func(), error) {
+	p, release, err := r.Open(ctx, selector)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return p.Engine, nil
+	return p.Engine, release, nil
 }
 
 // Authorize resolves the selector and applies the caller's project grant
@@ -329,7 +449,9 @@ func (r *Router) Authorize(ctx context.Context, selector string) (string, error)
 
 // Open resolves the selector and lazily opens the project's store,
 // engine, and memory (built exactly like the serving process builds the
-// default: same engine selection, same language activation).
+// default: same engine selection, same language activation). It returns the
+// project and a lease: the project is not evicted until release is called.
+// release is idempotent.
 //
 // It never migrates the store: a routed project is served, and a read must
 // not rewrite the schema of the store it reads. A project with no store is
@@ -338,26 +460,122 @@ func (r *Router) Authorize(ctx context.Context, selector string) (string, error)
 // The caller's project grant (auth.AuthFrom on ctx) is checked here, before any
 // store is opened, so every selector path (MCP, REST, auto-config) shares one
 // check. A caller with no grant in ctx is unrestricted.
-func (r *Router) Open(ctx context.Context, selector string) (*Project, error) {
+//
+// Opening a project over the cap evicts the least recently used project with
+// no live lease. When every open project is in use the cap is exceeded
+// until one of them is released, rather than closing a store under a request.
+func (r *Router) Open(ctx context.Context, selector string) (*Project, func(), error) {
 	dir, err := r.Authorize(ctx, selector)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.closed {
-		return nil, fmt.Errorf("projects: router closed")
+		r.mu.Unlock()
+		return nil, nil, fmt.Errorf("projects: router closed")
 	}
-	if p, ok := r.entries[dir]; ok {
-		return p, nil
+	p, ok := r.entries[dir]
+	var evicted []string
+	if !ok {
+		evicted = r.makeRoomLocked()
+		p, err = r.open(ctx, dir)
+		if err != nil {
+			r.mu.Unlock()
+			r.notifyEvicted(evicted...)
+			return nil, nil, err
+		}
+		r.entries[dir] = p
+		r.cfg.Logf("project %s (%s) opened engine=%s", p.Name, p.Dir, p.Store.Engine())
 	}
-	p, err := r.cfg.open(ctx, dir)
-	if err != nil {
-		return nil, err
+	r.tick++
+	p.used = r.tick
+	p.refs++
+	r.mu.Unlock()
+	r.notifyEvicted(evicted...)
+	var once sync.Once
+	return p, func() { once.Do(func() { r.release(p) }) }, nil
+}
+
+// makeRoomLocked closes idle least-recently-used projects until one more can
+// open under the cap, and returns their dirs. Projects with a live lease are
+// never chosen; if none is idle the loop stops and the cap is exceeded.
+func (r *Router) makeRoomLocked() []string {
+	var evicted []string
+	for r.openProjectsLocked() >= r.maxOpen {
+		victim := r.idleLRULocked()
+		if victim == nil {
+			break
+		}
+		delete(r.entries, victim.Dir)
+		if err := r.closeLocked(victim); err != nil {
+			r.cfg.Logf("projects: evict %s: %v", victim.Dir, err)
+		}
+		evicted = append(evicted, victim.Dir)
 	}
-	r.entries[dir] = p
-	r.cfg.Logf("project %s (%s) opened engine=%s", p.Name, p.Dir, p.Store.Engine())
-	return p, nil
+	return evicted
+}
+
+// openProjectsLocked counts the open routed projects (the default project is
+// seeded and never counted).
+func (r *Router) openProjectsLocked() int {
+	n := 0
+	for _, p := range r.entries {
+		if !p.isDefault {
+			n++
+		}
+	}
+	return n
+}
+
+// idleLRULocked returns the least recently used routed project with no live
+// lease, or nil when every open project is in use.
+func (r *Router) idleLRULocked() *Project {
+	var victim *Project
+	for _, p := range r.entries {
+		if p.isDefault || p.refs > 0 {
+			continue
+		}
+		if victim == nil || p.used < victim.used {
+			victim = p
+		}
+	}
+	return victim
+}
+
+// closeLocked closes p now, or marks it retired when a lease still holds it
+// (release closes it then). The caller holds r.mu and has already removed p
+// from r.entries.
+func (r *Router) closeLocked(p *Project) error {
+	if p.refs > 0 {
+		p.retired = true
+		return nil
+	}
+	return closeProject(p)
+}
+
+// release drops one lease and closes the project if it was retired while the
+// lease was held.
+func (r *Router) release(p *Project) {
+	r.mu.Lock()
+	p.refs--
+	closeNow := p.refs == 0 && p.retired
+	if closeNow {
+		p.retired = false
+	}
+	r.mu.Unlock()
+	if closeNow {
+		if err := closeProject(p); err != nil {
+			r.cfg.Logf("projects: close %s: %v", p.Dir, err)
+		}
+	}
+}
+
+// closeProject closes a project's engine and store.
+func closeProject(p *Project) error {
+	if p.Engine != nil {
+		p.Engine.Close()
+	}
+	return p.Store.Close()
 }
 
 // open builds one project's serving state (cmd serve's construction

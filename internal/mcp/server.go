@@ -30,7 +30,7 @@ import (
 // (multi-project serving: LEANKG_PROJECT_DIRS). Implemented by
 // internal/projects; nil keeps the single-engine behavior.
 type ProjectRouter interface {
-	EngineFor(ctx context.Context, project string) (*core.Engine, error)
+	EngineFor(ctx context.Context, project string) (*core.Engine, func(), error)
 	// MultiProject reports whether more than one project is registered. With a
 	// single project the default engine is unambiguous, so an omitted
 	// `project` argument is not an error — a stdio spawn is one agent session
@@ -117,14 +117,14 @@ func WithProjectRequired(v bool) Option {
 
 // engineFor picks the engine for one call: args.project when a router is
 // configured, else the wrapped engine.
-func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core.Engine, error) {
+func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core.Engine, func(), error) {
 	if s.router == nil {
 		return s.grantedEngine(ctx, s.engine)
 	}
 	var args map[string]any
 	if req != nil && req.Params != nil && len(req.Params.Arguments) > 0 {
 		if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-			return nil, err
+			return nil, noRelease, err
 		}
 	}
 	// Fail closed: with several projects registered, an omitted `project` used
@@ -140,7 +140,7 @@ func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core
 			// an agent that never learned about `project` must keep working.
 			return s.grantedEngine(ctx, s.engine)
 		}
-		return nil, errs.NewError(errs.MissingParam,
+		return nil, noRelease, errs.NewError(errs.MissingParam,
 			"this server serves multiple projects (LEANKG_PROJECT_DIRS), so a tool call must name one",
 			"add \"project\": \"<repo dir or name>\" to the tool arguments, or from inside a repo run `leankg query …` against that project's own server")
 	}
@@ -151,23 +151,28 @@ func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core
 // grantedEngine refuses a caller whose grant does not cover the project eng
 // serves. A caller with no grant, or a grant that names no project, is served
 // as before. With a router the router decides, so a basename shared by two
-// registered projects is refused here too.
-func (s *Server) grantedEngine(ctx context.Context, eng *core.Engine) (*core.Engine, error) {
+// registered projects is refused here too. The wrapped engine is held for the
+// server's lifetime, so its lease is noRelease.
+func (s *Server) grantedEngine(ctx context.Context, eng *core.Engine) (*core.Engine, func(), error) {
 	grant, _ := auth.AuthFrom(ctx)
 	if !grant.ProjectRestricted() {
-		return eng, nil
+		return eng, noRelease, nil
 	}
 	if s.router != nil {
 		if _, err := s.router.Authorize(ctx, eng.ProjectDir()); err != nil {
-			return nil, auth.ProjectDenied("")
+			return nil, noRelease, auth.ProjectDenied("")
 		}
-		return eng, nil
+		return eng, noRelease, nil
 	}
 	if grant.ProjectAllowed(filepath.Base(eng.ProjectDir()), false) {
-		return eng, nil
+		return eng, noRelease, nil
 	}
-	return nil, auth.ProjectDenied("")
+	return nil, noRelease, auth.ProjectDenied("")
 }
+
+// noRelease is the lease of an engine the server holds for its own lifetime
+// (the wrapped engine), so there is nothing to release.
+func noRelease() {}
 
 // version is reported as the MCP serverInfo version. It must match the release
 // stamp in cmd/leankg/VERSION — release-please bumps both via their
@@ -580,10 +585,11 @@ func (s *Server) handleImport(ctx context.Context, req *mcp.CallToolRequest) (*m
 	if err := unmarshalArgs(req, &in); err != nil {
 		return nil, err
 	}
-	eng, err := s.engineFor(ctx, req)
+	eng, release, err := s.engineFor(ctx, req)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	out, err := eng.Import(ctx, in)
 	if err != nil {
 		s.finishCall(ctx, eng, req, started, in.Action, out, nil, budget.Stats{}, err)
@@ -604,10 +610,11 @@ func (s *Server) handleQuery(ctx context.Context, req *mcp.CallToolRequest) (*mc
 	if err != nil {
 		return nil, err
 	}
-	eng, err := s.engineFor(ctx, req)
+	eng, release, err := s.engineFor(ctx, req)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	ans, err := eng.QueryAnswer(ctx, in)
 	if err != nil {
 		s.finishCall(ctx, eng, req, started, in.Action, ans.Raw, nil, budget.Stats{}, err)
@@ -619,10 +626,11 @@ func (s *Server) handleQuery(ctx context.Context, req *mcp.CallToolRequest) (*mc
 
 func (s *Server) handleStatus(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	started := time.Now()
-	eng, err := s.engineFor(ctx, req)
+	eng, release, err := s.engineFor(ctx, req)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	out, err := eng.Status(ctx)
 	if err != nil {
 		s.finishCall(ctx, eng, req, started, "", out, nil, budget.Stats{}, err)

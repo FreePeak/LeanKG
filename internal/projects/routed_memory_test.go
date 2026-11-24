@@ -44,7 +44,7 @@ func TestRoutedMemoryOpenFailureRefusesTheProject(t *testing.T) {
 		EngineName: store.EngineSQLite,
 		Memory:     true,
 	})
-	if _, err := r.Open(context.Background(), dir); err == nil || !strings.Contains(err.Error(), "memory for") {
+	if _, _, err := r.Open(context.Background(), dir); err == nil || !strings.Contains(err.Error(), "memory for") {
 		t.Fatalf("Open with an unusable memory root: err = %v, want a memory error", err)
 	}
 	if n := len(r.entries); n != 0 {

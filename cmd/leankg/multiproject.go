@@ -36,13 +36,22 @@ type projectRouting struct {
 // routes outside its own gate (the MCP listener); a listener whose gate already
 // stored the caller in the request context (REST, the dashboard) passes nil.
 func routeByProject(router *projects.Router, identify func(*http.Request) (auth.AuthContext, error), fallback http.Handler, build func(*projects.Project) http.Handler) http.Handler {
-	return httpx.Guard(&projectRouting{
+	return httpx.Guard(newProjectRouting(router, identify, fallback, build))
+}
+
+// newProjectRouting builds the dispatcher and subscribes it to the router's
+// evictions, so a handler built over a closed project engine is dropped with
+// it.
+func newProjectRouting(router *projects.Router, identify func(*http.Request) (auth.AuthContext, error), fallback http.Handler, build func(*projects.Project) http.Handler) *projectRouting {
+	h := &projectRouting{
 		router:   router,
 		identify: identify,
 		fallback: defaultProjectGate(router, fallback),
 		build:    build,
 		cache:    map[string]http.Handler{},
-	})
+	}
+	router.OnEvict(h.forget)
+	return h
 }
 
 // defaultProjectGate serves next only to a caller whose grant covers the default
@@ -82,7 +91,7 @@ func (h *projectRouting) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		ctx = auth.WithAuth(ctx, caller)
 	}
-	p, err := h.router.Open(ctx, sel)
+	p, release, err := h.router.Open(ctx, sel)
 	if err != nil {
 		if httpx.CodeOf(err) == errs.PermissionDenied.Code {
 			httpx.WriteError(w, err)
@@ -92,7 +101,15 @@ func (h *projectRouting) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteMessage(w, http.StatusNotFound, err.Error())
 		return
 	}
+	defer release()
 	h.handlerFor(p).ServeHTTP(w, r.WithContext(ctx))
+}
+
+// forget drops the handler built for dir when the router closes its project.
+func (h *projectRouting) forget(dir string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.cache, dir)
 }
 
 // handlerFor builds (once) the transport handler for a project.

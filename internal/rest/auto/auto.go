@@ -55,7 +55,7 @@ func decodeJSON[T any](w http.ResponseWriter, r *http.Request, into *T) bool {
 // Router is the per-request project selector (internal/projects). It is an
 // interface so this package does not import the concrete router.
 type Router interface {
-	EngineFor(ctx context.Context, project string) (*core.Engine, error)
+	EngineFor(ctx context.Context, project string) (*core.Engine, func(), error)
 	MultiProject() bool
 }
 
@@ -145,11 +145,12 @@ func RegisterAutoConfig(h http.Handler, engine *core.Engine, opts ...Option) htt
 	mux.Handle("/", auth.Public(h)) // delegates; the REST or MCP mux declares its own roles
 	mux.Handle("POST /api/v1/mcp/auto-config", auth.Require(auth.Contributor, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		eng := engine
+		release := func() {}
 		// With a router wired, every selector goes through it, the empty one
 		// included, so the default project's grant is checked like any other.
 		// Without one we keep the single-engine behaviour a stdio spawn depends on.
 		if cfg.router != nil {
-			resolved, err := cfg.router.EngineFor(r.Context(), r.URL.Query().Get("project"))
+			resolved, rel, err := cfg.router.EngineFor(r.Context(), r.URL.Query().Get("project"))
 			if err != nil {
 				// Fail closed: an unknown selector never falls back to the
 				// default engine, and nothing is indexed.
@@ -160,17 +161,23 @@ func RegisterAutoConfig(h http.Handler, engine *core.Engine, opts ...Option) htt
 				httpx.WriteMessage(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			eng = resolved
+			eng, release = resolved, rel
 		}
-		handleAutoConfig(w, r, eng, cfg)
+		// The project lease passes to the index job when one starts, since the
+		// job outlives the request; otherwise the request releases it.
+		if !handleAutoConfig(w, r, eng, cfg, release) {
+			release()
+		}
 	})))
 	return mux
 }
 
-func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engine, cfg config) {
+// handleAutoConfig answers one auto-config request. release drops the
+// project lease; it reports whether an index job took that lease over.
+func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engine, cfg config, release func()) (jobHoldsLease bool) {
 	var req AutoConfigRequest
 	if !decodeJSON(w, r, &req) {
-		return
+		return false
 	}
 	if req.EmbedDebounceSecs == 0 {
 		req.EmbedDebounceSecs = 120
@@ -192,11 +199,15 @@ func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engin
 			"project": projectDir,
 			"fix":     "send the same ?project=<dir or name> on the request URL that you would send on a query, or run leankg index in that directory",
 		})
-		return
+		return false
 	}
 	// Jobs start only after the refusal above, so a refused request starts none.
 	if req.IndexEnabled {
-		cfg.run(r, func(ctx context.Context) { startAutoIndex(ctx, engine, projectDir) })
+		cfg.run(r, func(ctx context.Context) {
+			defer release()
+			startAutoIndex(ctx, engine, projectDir)
+		})
+		jobHoldsLease = true
 	}
 	if req.EmbedEnabled {
 		cfg.run(r, func(ctx context.Context) { startAutoEmbed(ctx, projectDir, req.EmbedDebounceSecs, cfg.embedStart) })
@@ -207,6 +218,7 @@ func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engin
 		"embed_debounce_seconds": req.EmbedDebounceSecs,
 		"project":                projectDir,
 	})
+	return jobHoldsLease
 }
 
 // startAutoIndex runs the index in a background goroutine (single-flight per

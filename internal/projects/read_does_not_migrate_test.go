@@ -69,7 +69,7 @@ func TestRoutedReadDoesNotMigrateTheStore(t *testing.T) {
 		Mode:       store.RW,
 		EngineName: store.EngineSQLite,
 	})
-	if _, err := r.Open(context.Background(), dir); err != nil {
+	if _, _, err := r.Open(context.Background(), dir); err != nil {
 		t.Fatalf("open the routed project: %v", err)
 	}
 	ro, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RO})
@@ -121,7 +121,7 @@ func TestRoutedProjectWithoutAStoreIsRefused(t *testing.T) {
 		Mode:       store.RW,
 		EngineName: store.EngineSQLite,
 	})
-	_, err := r.Open(context.Background(), dir)
+	_, _, err := r.Open(context.Background(), dir)
 	if err == nil {
 		t.Fatal("opening a project with no store must be refused")
 	}
