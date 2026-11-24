@@ -155,7 +155,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if yaml is None:
-        print("ERROR: PyYAML required", file=sys.stderr)
+        print("ERROR: PyYAML required (pip install pyyaml). If make's python3 lacks it, rerun with PYTHON=<python that has PyYAML>; see RUNNING.md section 1.", file=sys.stderr)
         return 2
 
     if args.selftest:

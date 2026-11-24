@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Run one arm (with or without) for one repo, N times, appending to a per-day
-# JSONL file. Called by the Makefile; safe to call directly too.
+# Run one arm for one repo, N times, appending to a per-day JSONL file.
+# Called by the Makefile; safe to call directly too.
 #
 # Usage: run_arm.sh <repo_slug> <arm> <N> <model>
-#   arm in {with, without}
+#   arm in {baseline, context-mode, leankg}
 #   model = claude model id (sonnet, opus, ...)
 #
 # Environment overrides (optional):
-#   LEANKG_BIN     absolute path to leankg binary
+#   LEANKG_BIN     absolute path to leankg binary (default: <repo root>/bin/leankg)
+#   CONTEXT_MODE_SERVER  absolute path to context-mode server.mjs (context-mode arm)
 #   CLAUDE_BIN     absolute path to claude CLI
 #   RESULTS_DIR    absolute path to the results root
 #   REPOS_DIR      absolute path to the cloned repos root
@@ -16,17 +17,17 @@
 set -euo pipefail
 
 SLUG="${1:?repo slug required}"
-ARM="${2:?arm required (with|without)}"
+ARM="${2:?arm required (baseline|context-mode|leankg)}"
 N="${3:?N required}"
 MODEL="${4:-}"              # optional: empty = use claude -p default
 
-if [[ "${ARM}" != "with" && "${ARM}" != "without" ]]; then
-  echo "ERROR: arm must be 'with' or 'without' (got '${ARM}')" >&2
+if [[ "${ARM}" != "baseline" && "${ARM}" != "context-mode" && "${ARM}" != "leankg" ]]; then
+  echo "ERROR: arm must be baseline, context-mode or leankg (got '${ARM}')" >&2
   exit 2
 fi
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-LEANKG_BIN="${LEANKG_BIN:-${HERE}/../../target/release/leankg}"
+LEANKG_BIN="${LEANKG_BIN:-${HERE}/../../bin/leankg}"
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude || true)}"
 RESULTS_DIR="${RESULTS_DIR:-${HERE}/results}"
 REPOS_DIR="${REPOS_DIR:-${HERE}/repos}"
@@ -40,7 +41,7 @@ if [[ -z "${CLAUDE_BIN}" ]]; then
   exit 2
 fi
 
-if [[ "${ARM}" == "with" && ! -x "${LEANKG_BIN}" ]]; then
+if [[ "${ARM}" == "leankg" && ! -x "${LEANKG_BIN}" ]]; then
   echo "ERROR: leankg binary not executable at ${LEANKG_BIN}" >&2
   exit 2
 fi
@@ -70,27 +71,31 @@ export PROMPT_SHA
 PROMPT_VERSION="$("${PYTHON:-python3}" "${HERE}/get_prompt.py" --repos "${HERE}/repos.yaml" --slug "${SLUG}" --version 2>/dev/null || echo "1")"
 export PROMPT_VERSION
 
-# Like-for-like gate: refuse to run when the cloned corpus drifted off the
-# pinned lock (setup wrote repos.lock.yaml). Missing lock = warn + proceed.
-if [[ -n "${REPO_SHA}" && -f "${HERE}/repos.lock.yaml" ]]; then
+# Like-for-like gate: fail closed unless the clone HEAD equals a resolved SHA in
+# repos.lock.yaml (written by `make lock`). A missing lock file, a missing entry
+# or an UNRESOLVED entry stops the run.
+LOCKED_SHA=""
+if [[ -f "${HERE}/repos.lock.yaml" ]]; then
   LOCKED_SHA="$(awk "/^${SLUG}:/{f=1;next} f&&/sha:/{print \$2;exit}" "${HERE}/repos.lock.yaml")"
-  if [[ -n "${LOCKED_SHA}" && "${REPO_SHA}" != "${LOCKED_SHA}" ]]; then
-    echo "ERROR: ${SLUG} HEAD ${REPO_SHA:0:10} != locked ${LOCKED_SHA:0:10} (FR-ZCP-08 like-for-like). Re-run: make setup" >&2
-    exit 3
-  fi
+fi
+if [[ ${#LOCKED_SHA} -ne 40 ]]; then
+  echo "ERROR: ${SLUG} has no resolved SHA in repos.lock.yaml (missing or UNRESOLVED). Run: make lock, then make setup" >&2
+  exit 3
+fi
+if [[ "${REPO_SHA}" != "${LOCKED_SHA}" ]]; then
+  echo "ERROR: ${SLUG} HEAD ${REPO_SHA:0:10} != locked ${LOCKED_SHA:0:10} (FR-ZCP-08 like-for-like). Re-run: make setup" >&2
+  exit 3
 fi
 
 echo "=== arm=${ARM} repo=${SLUG} N=${N} model=${MODEL:-default} sha=${REPO_SHA:0:10} ==="
 
 for i in $(seq 1 "${N}"); do
-  if [[ "${ARM}" == "with" ]]; then
+  if [[ "${ARM}" == "leankg" ]]; then
     rm -rf "${REPO_PATH}/.leankg"
     if [[ "${DRY_RUN}" == "1" ]]; then
-      echo "  [dry] would run: (cd ${REPO_PATH} && ${LEANKG_BIN} init && ${LEANKG_BIN} index . && ${LEANKG_BIN} embed --wait)" >&2
+      echo "  [dry] would run: (cd ${REPO_PATH} && ${LEANKG_BIN} index .)" >&2
     else
-      ( cd "${REPO_PATH}" && "${LEANKG_BIN}" init ) >/dev/null 2>&1
       ( cd "${REPO_PATH}" && "${LEANKG_BIN}" index . ) >/dev/null 2>&1
-      ( cd "${REPO_PATH}" && "${LEANKG_BIN}" embed --wait ) >/dev/null 2>&1
     fi
   fi
 

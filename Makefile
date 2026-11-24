@@ -16,8 +16,9 @@ help:
 	@echo "  live-test       Local live-test harness: real binary, temp fixtures, evidence in .live-evidence/ (LIVE_ARGS='--only 02')"
 	@echo "  clean           Remove Go build artifacts"
 	@echo "  install-go      Build-from-source installer (scripts/install-go.sh)"
+	@echo "  bench-cross-tool  Cross-tool 3-arm benchmark (benchmarks/cross_tool); dry run by default, CROSS_TARGET/CROSS_ARGS for others (RUNNING.md)"
 
-.PHONY: help go-build go-test go-bench go-vet go-ui-assets go-ui-dashboard go-ui-dashboard-check dual-engine scan-root-check live-test clean install-go go-build-tstree go-test-tstree
+.PHONY: help go-build go-test go-bench go-vet go-ui-assets go-ui-dashboard go-ui-dashboard-check dual-engine scan-root-check live-test clean install-go go-build-tstree go-test-tstree bench-cross-tool
 
 go-build:
 	CGO_ENABLED=0 go build -o bin/ ./cmd/leankg ./cmd/leankg-embed
@@ -102,6 +103,13 @@ scan-root-check:
 # these make-line variables reach run.sh as flags.
 live-test:
 	bash scripts/live/run.sh $(LIVE_ARGS) $(if $(LIVE_PG_URL),--pg-url '$(LIVE_PG_URL)') $(if $(LIVE_BASELINE_BIN),--baseline-bin '$(LIVE_BASELINE_BIN)') $(if $(LIVE_SEED_BIN),--seed-bin '$(LIVE_SEED_BIN)')
+
+# Cross-tool 3-arm benchmark. The default target is the dry run (no agents, no API);
+# real runs need CROSS_TARGET=<target> and CROSS_ARGS="MODEL=<pinned id> REPO=<slug> N=<n>"
+# plus the approvals in benchmarks/cross_tool/RUNNING.md.
+CROSS_TARGET ?= dry-run
+bench-cross-tool: go-build
+	$(MAKE) -C benchmarks/cross_tool $(CROSS_TARGET) $(CROSS_ARGS)
 
 clean:
 	rm -rf bin
