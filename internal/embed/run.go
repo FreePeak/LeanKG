@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/FreePeak/LeanKG/internal/store"
+	"github.com/FreePeak/LeanKG/internal/telemetry"
 )
 
 // ChunkerVersion versions the pipeline that turns a stored element into the
@@ -155,14 +156,15 @@ func writeCap(mode string, want store.ModelStamp, cur *store.ModelStamp, budget,
 	return recorded, "", nil
 }
 
-// planText is the text a live run sends for one element: documentText cut to
-// limit runes (the run's one write cap, writeCapFor), and whether it was cut.
-// Run embeds it and ExportNDJSON writes it, so an offsite embedder receives the
-// string a live run would. The provider prepends the document prefix on the
-// wire (openaiCompatible.Embed), so an export line is that prefix followed by
-// this text.
+// planText is the text a live run sends for one element: documentText with its
+// secrets masked (telemetry.Redact), cut to limit runes (the run's one write cap,
+// writeCapFor), and whether it was cut. Redaction runs before the cut so a
+// secret is never split at the boundary. Run embeds it and ExportNDJSON writes
+// it, so an offsite embedder receives the string a live run would. The provider
+// prepends the document prefix on the wire (openaiCompatible.Embed), so an
+// export line is that prefix followed by this text.
 func planText(limit int, e elementText) (text string, truncated bool) {
-	text = documentText(e)
+	text = telemetry.Redact(documentText(e))
 	if utf8.RuneCountInString(text) > limit {
 		return truncateRunes(text, limit), true
 	}
@@ -306,7 +308,8 @@ func Run(ctx context.Context, st Store, p Provider, mode string) (Report, error)
 	}
 
 	// Plan: dirty = elements whose content hash differs from embedding_state
-	// (incremental) or all elements (full).
+	// (incremental) or all elements (full). The hash is of the raw content; the
+	// redaction is deterministic, so an edited secret re-embeds once, never repeatedly.
 	elems, err := readElements(ctx, st)
 	if err != nil {
 		return stop(err)
