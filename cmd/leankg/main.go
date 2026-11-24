@@ -338,11 +338,13 @@ func rpcHandler(st auth.Store, router *projects.Router, engine *core.Engine, rec
 	// the default-project grant (a probe is not a project read) but inside the
 	// auth gate, so it still needs a token when the gate is on.
 	top := http.NewServeMux()
-	top.Handle("GET /health", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	top.Handle("GET /health", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	top.Handle("/", defaultProjectGate(router, mux))
+	})))
+	// The catch-all declares no floor of its own: the RPC mux's procedures
+	// declare their roles (internal/rpc/capture.go), behind defaultProjectGate.
+	top.Handle("/", auth.Public(defaultProjectGate(router, mux)))
 	return auth.MiddlewareWithStore(st, top)
 }
 
