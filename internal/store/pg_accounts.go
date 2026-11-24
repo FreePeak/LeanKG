@@ -8,6 +8,8 @@ package store
 import (
 	"context"
 	"fmt"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // AccountUpsert inserts or replaces an account keyed by ID.
@@ -235,4 +237,49 @@ func (s *PGStore) IsResourceOwner(ctx context.Context, resourceType, resourceID,
 		return false, fmt.Errorf("store: is resource owner: %w", err)
 	}
 	return n > 0, nil
+}
+
+// ResourceOrgs lists the org ids that claimed the resource, sorted.
+func (s *PGStore) ResourceOrgs(ctx context.Context, resourceType, resourceID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT org_id FROM resource_ownership
+		WHERE resource_type = $1 AND resource_id = $2 AND org_id IS NOT NULL ORDER BY org_id`,
+		resourceType, resourceID)
+	if err != nil {
+		return nil, fmt.Errorf("store: resource orgs: %w", err)
+	}
+	defer rows.Close()
+	return pgScanStrings(rows)
+}
+
+// ResourceIDs lists the resources of resourceType that orgID claimed, sorted.
+func (s *PGStore) ResourceIDs(ctx context.Context, resourceType, orgID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT resource_id FROM resource_ownership
+		WHERE resource_type = $1 AND org_id = $2 ORDER BY resource_id`,
+		resourceType, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("store: resource ids: %w", err)
+	}
+	defer rows.Close()
+	return pgScanStrings(rows)
+}
+
+// ResourceRelease removes every claim on the resource.
+func (s *PGStore) ResourceRelease(ctx context.Context, resourceType, resourceID string) error {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM resource_ownership WHERE resource_type = $1 AND resource_id = $2`,
+		resourceType, resourceID); err != nil {
+		return fmt.Errorf("store: resource release %s/%s: %w", resourceType, resourceID, err)
+	}
+	return nil
+}
+
+func pgScanStrings(rows pgx.Rows) ([]string, error) {
+	var out []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, fmt.Errorf("store: scan: %w", err)
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
