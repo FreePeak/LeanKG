@@ -67,7 +67,7 @@ func (g *GitSource) RemoteFingerprint(ctx context.Context) (string, error) {
 	remote, env := gitRemote(g.URL, g.Auth)
 	stdout, stderr, err := runGitEnv(ctx, "", env, "ls-remote", remote, g.RefName)
 	if err != nil {
-		return "", gitError("git ls-remote failed", stderr, err)
+		return "", gitError("git ls-remote failed", stderr, err, g.Auth)
 	}
 	fields := strings.Fields(stdout)
 	if len(fields) == 0 {
@@ -170,9 +170,9 @@ func CloneRepo(ctx context.Context, url, auth, dir, refName string, progress Pro
 		// Fallback: clone the default branch, then check the ref out.
 		// Rust reported only the fallback's stderr; keep the shallow failure
 		// in the progress stream so a real cause is still visible.
-		report(progress, "shallow clone failed ("+firstLine(stderr, err)+"), trying full clone + checkout...")
+		report(progress, "shallow clone failed ("+firstLine(stderr, err, auth)+"), trying full clone + checkout...")
 		if _, stderr2, err2 := runGitEnv(ctx, "", env, "clone", cloneURL, dir); err2 != nil {
-			return gitError("git clone fallback failed", stderr2, err2)
+			return gitError("git clone fallback failed", stderr2, err2, auth)
 		}
 	}
 	return FetchAndCheckout(ctx, dir, auth, refName, progress)
@@ -183,13 +183,13 @@ func CloneRepo(ctx context.Context, url, auth, dir, refName string, progress Pro
 // pull/merge/reset tail is non-fatal in Rust and stays non-fatal here.
 // Exported for the setup pipeline's existing-clone refresh.
 func FetchAndCheckout(ctx context.Context, repoDir, auth, refName string, progress ProgressReporter) error {
-	origin, err := scrubOriginURL(ctx, repoDir)
+	origin, err := scrubOriginURL(ctx, repoDir, auth)
 	if err != nil {
 		return err
 	}
 	_, env := gitRemote(origin, auth)
 	if _, stderr, err := runGitEnv(ctx, repoDir, env, "fetch", "--all", "--prune"); err != nil {
-		return gitError("git fetch failed", stderr, err)
+		return gitError("git fetch failed", stderr, err, auth)
 	}
 
 	report(progress, "git checkout "+refName+" ...")
@@ -198,7 +198,7 @@ func FetchAndCheckout(ctx context.Context, repoDir, auth, refName string, progre
 		report(progress, "trying remote ref "+remoteRef+" ...")
 		if _, remoteStderr, err2 := runGit(ctx, repoDir, "checkout", "-b", refName, remoteRef); err2 != nil {
 			return fmt.Errorf("git checkout %s failed: %s (tried %s: %s)",
-				refName, strings.TrimSpace(checkoutStderr), remoteRef, strings.TrimSpace(remoteStderr))
+				refName, redactCredential(strings.TrimSpace(checkoutStderr), auth), remoteRef, redactCredential(strings.TrimSpace(remoteStderr), auth))
 		}
 	}
 
@@ -209,7 +209,7 @@ func FetchAndCheckout(ctx context.Context, repoDir, auth, refName string, progre
 		report(progress, "pulled latest")
 		return nil
 	}
-	report(progress, "git pull skipped ("+firstLine(pullStderr, pullErr)+"), attempting fetch --unshallow + reset...")
+	report(progress, "git pull skipped ("+firstLine(pullStderr, pullErr, auth)+"), attempting fetch --unshallow + reset...")
 	if _, _, err := runGitEnv(ctx, repoDir, env, "fetch", "--unshallow"); err != nil {
 		report(progress, "fetch --unshallow failed; keeping the existing worktree")
 		return nil
@@ -237,14 +237,14 @@ func originURL(ctx context.Context, repoDir string) string {
 // scrubOriginURL rewrites an https origin that still carries userinfo (an older
 // build stored the token there) to the clean URL, and returns the origin URL to
 // fetch from. Other remotes, and a checkout with no origin, are left untouched.
-func scrubOriginURL(ctx context.Context, repoDir string) (string, error) {
+func scrubOriginURL(ctx context.Context, repoDir, auth string) (string, error) {
 	raw := originURL(ctx, repoDir)
 	clean := stripUserinfo(raw)
 	if clean == raw {
 		return raw, nil
 	}
 	if _, stderr, err := runGit(ctx, repoDir, "remote", "set-url", "origin", clean); err != nil {
-		return "", gitError("git remote set-url failed", stderr, err)
+		return "", gitError("git remote set-url failed", stderr, err, auth)
 	}
 	return clean, nil
 }
@@ -271,17 +271,17 @@ func archiveExtract(ctx context.Context, url, auth, refName, dest string, progre
 	cmd.Stderr = stderr
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return gitError("git archive --remote failed", "", err)
+		return gitError("git archive --remote failed", "", err, auth)
 	}
 	if err := cmd.Start(); err != nil {
-		return gitError("git archive --remote spawn failed", stderr.String(), err)
+		return gitError("git archive --remote spawn failed", stderr.String(), err, auth)
 	}
 	extractErr := extractTar(pipe, dest)
 	waitErr := cmd.Wait()
 	if waitErr != nil || extractErr != nil {
 		_ = os.RemoveAll(dest)
 		if waitErr != nil {
-			return gitError("git archive failed", stderr.String(), waitErr)
+			return gitError("git archive failed", stderr.String(), waitErr, auth)
 		}
 		return fmt.Errorf("tar extraction failed: %w", extractErr)
 	}
@@ -378,17 +378,19 @@ func gitTimeout() time.Duration {
 }
 
 // gitError renders the git diagnostic the way the Rust code did: the command
-// context plus git's stderr, or the exec failure when git produced none.
-func gitError(what, stderr string, err error) error {
-	msg := strings.TrimSpace(stderr)
+// context plus git's stderr, or the exec failure when git produced none. The
+// credential is masked, since git echoes what it was given.
+func gitError(what, stderr string, err error, auth string) error {
+	msg := redactCredential(strings.TrimSpace(stderr), auth)
 	if msg == "" {
 		return fmt.Errorf("%s: %w", what, err)
 	}
 	return fmt.Errorf("%s: %s", what, msg)
 }
 
-// firstLine condenses a git diagnostic for a progress line.
-func firstLine(stderr string, err error) string {
+// firstLine condenses a git diagnostic for a progress line, with the
+// credential masked.
+func firstLine(stderr string, err error, auth string) string {
 	msg := strings.TrimSpace(stderr)
 	if msg == "" && err != nil {
 		msg = err.Error()
@@ -399,5 +401,15 @@ func firstLine(stderr string, err error) string {
 	if msg == "" {
 		msg = "no output"
 	}
-	return msg
+	return redactCredential(msg, auth)
+}
+
+// redactCredential masks the token and its Basic header form in s. The Basic
+// form goes first, so a token that is part of it cannot leave a fragment behind.
+func redactCredential(s, auth string) string {
+	if auth == "" {
+		return s
+	}
+	s = strings.ReplaceAll(s, basicCredential(auth), "[REDACTED]")
+	return strings.ReplaceAll(s, auth, "[REDACTED]")
 }

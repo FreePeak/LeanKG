@@ -2,6 +2,7 @@ package sources
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -515,7 +516,7 @@ func TestScrubOriginURLRemovesStoredCredential(t *testing.T) {
 	gitOut(t, dir, "init", "-q")
 	gitOut(t, dir, "remote", "add", "origin", "https://oauth2:FAKETOKEN@example.invalid/x.git")
 
-	got, err := scrubOriginURL(context.Background(), dir)
+	got, err := scrubOriginURL(context.Background(), dir, "FAKETOKEN")
 	if err != nil {
 		t.Fatalf("scrubOriginURL: %v", err)
 	}
@@ -538,7 +539,7 @@ func TestScrubOriginURLLeavesOtherRemotesAlone(t *testing.T) {
 			gitOut(t, dir, "init", "-q")
 			gitOut(t, dir, "remote", "add", "origin", remote)
 
-			got, err := scrubOriginURL(context.Background(), dir)
+			got, err := scrubOriginURL(context.Background(), dir, "")
 			if err != nil {
 				t.Fatalf("scrubOriginURL: %v", err)
 			}
@@ -574,4 +575,46 @@ func TestFetchAndCheckoutCleansLegacyCheckoutBeforeFetching(t *testing.T) {
 		t.Fatalf("stored origin = %q, want %q", stored, remote)
 	}
 	assertCleanGitConfig(t, dest)
+}
+
+// Git echoes what it was given. Every diagnostic built from its stderr must
+// lose the token and its Basic form.
+func TestGitDiagnosticsRedactTheCredential(t *testing.T) {
+	stderr := "fatal: rejected Authorization: Basic " + fakeBasicB64 + " FAKETOKEN\n"
+	cause := errors.New("exit status 128")
+	for _, msg := range []string{
+		gitError("git fetch failed", stderr, cause, "FAKETOKEN").Error(),
+		firstLine(stderr, cause, "FAKETOKEN"),
+	} {
+		if strings.Contains(msg, "FAKETOKEN") || strings.Contains(msg, fakeBasicB64) {
+			t.Fatalf("diagnostic carries the credential: %q", msg)
+		}
+		if !strings.Contains(msg, "[REDACTED]") {
+			t.Fatalf("diagnostic was not redacted: %q", msg)
+		}
+	}
+}
+
+// With every git call failing and echoing the credential, the clone error and
+// every progress line stay free of the token and its Basic form.
+func TestCloneFailuresNeverLeakTheCredential(t *testing.T) {
+	fakeGit(t)
+	t.Setenv("FAKE_GIT_FAIL", "1")
+	t.Setenv("FAKE_GIT_SECRET", "FAKETOKEN")
+	progress := &recorder{}
+	dest := filepath.Join(t.TempDir(), "clone")
+
+	err := CloneRepo(context.Background(), "https://example.invalid/x.git", "FAKETOKEN", dest, "main", progress)
+	if err == nil {
+		t.Fatal("CloneRepo against a failing git succeeded")
+	}
+	all := append([]string{err.Error()}, progress.messages...)
+	for _, msg := range all {
+		if strings.Contains(msg, "FAKETOKEN") || strings.Contains(msg, fakeBasicB64) {
+			t.Fatalf("message carries the credential: %q", msg)
+		}
+	}
+	if !progress.contains("[REDACTED]") {
+		t.Fatalf("the shallow-clone failure was not reported; progress = %q", progress.messages)
+	}
 }
