@@ -506,3 +506,72 @@ func TestCloneRepoChecksOutTagRef(t *testing.T) {
 		t.Fatalf("tag worktree not checked out: %v", err)
 	}
 }
+
+// A checkout written by an older build stores the token in remote.origin.url.
+// scrubOriginURL rewrites it to the clean URL without touching the network.
+func TestScrubOriginURLRemovesStoredCredential(t *testing.T) {
+	hermeticGit(t)
+	dir := t.TempDir()
+	gitOut(t, dir, "init", "-q")
+	gitOut(t, dir, "remote", "add", "origin", "https://oauth2:FAKETOKEN@example.invalid/x.git")
+
+	got, err := scrubOriginURL(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("scrubOriginURL: %v", err)
+	}
+	const clean = "https://example.invalid/x.git"
+	if got != clean {
+		t.Fatalf("scrubOriginURL = %q, want %q", got, clean)
+	}
+	if stored := gitOut(t, dir, "config", "--get", "remote.origin.url"); stored != clean {
+		t.Fatalf("stored origin = %q, want %q", stored, clean)
+	}
+	assertCleanGitConfig(t, dir)
+}
+
+// Remotes without an https credential are not rewritten.
+func TestScrubOriginURLLeavesOtherRemotesAlone(t *testing.T) {
+	for _, remote := range []string{"ssh://git@example.invalid/x.git", "git@example.invalid:x.git", "file:///srv/git/x"} {
+		t.Run(remote, func(t *testing.T) {
+			hermeticGit(t)
+			dir := t.TempDir()
+			gitOut(t, dir, "init", "-q")
+			gitOut(t, dir, "remote", "add", "origin", remote)
+
+			got, err := scrubOriginURL(context.Background(), dir)
+			if err != nil {
+				t.Fatalf("scrubOriginURL: %v", err)
+			}
+			if got != remote || gitOut(t, dir, "config", "--get", "remote.origin.url") != remote {
+				t.Fatalf("scrubOriginURL(%q) = %q, want the remote unchanged", remote, got)
+			}
+		})
+	}
+}
+
+// An existing checkout whose origin still holds the credential is cleaned
+// before its fetch, so the fetch uses the clean remote and the token leaves
+// .git/config.
+func TestFetchAndCheckoutCleansLegacyCheckoutBeforeFetching(t *testing.T) {
+	hermeticGit(t)
+	origin := newOriginRepo(t)
+	const remote = "https://example.invalid/repo.git"
+	routeHTTPSTo(t, remote, origin)
+	dest := filepath.Join(t.TempDir(), "clone")
+	if err := CloneRepo(context.Background(), remote, "FAKETOKEN", dest, "main", &recorder{}); err != nil {
+		t.Fatalf("CloneRepo: %v", err)
+	}
+	gitOut(t, dest, "remote", "set-url", "origin", "https://oauth2:FAKETOKEN@example.invalid/repo.git")
+
+	commitFile(t, origin, "second.go", "package fixture\n")
+	if err := FetchAndCheckout(context.Background(), dest, "FAKETOKEN", "main", &recorder{}); err != nil {
+		t.Fatalf("FetchAndCheckout on a legacy checkout: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "second.go")); err != nil {
+		t.Fatalf("the fetched commit did not land: %v", err)
+	}
+	if stored := gitOut(t, dest, "config", "--get", "remote.origin.url"); stored != remote {
+		t.Fatalf("stored origin = %q, want %q", stored, remote)
+	}
+	assertCleanGitConfig(t, dest)
+}

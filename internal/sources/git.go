@@ -183,7 +183,11 @@ func CloneRepo(ctx context.Context, url, auth, dir, refName string, progress Pro
 // pull/merge/reset tail is non-fatal in Rust and stays non-fatal here.
 // Exported for the setup pipeline's existing-clone refresh.
 func FetchAndCheckout(ctx context.Context, repoDir, auth, refName string, progress ProgressReporter) error {
-	_, env := gitRemote(originURL(ctx, repoDir), auth)
+	origin, err := scrubOriginURL(ctx, repoDir)
+	if err != nil {
+		return err
+	}
+	_, env := gitRemote(origin, auth)
 	if _, stderr, err := runGitEnv(ctx, repoDir, env, "fetch", "--all", "--prune"); err != nil {
 		return gitError("git fetch failed", stderr, err)
 	}
@@ -228,6 +232,21 @@ func originURL(ctx context.Context, repoDir string) string {
 		return ""
 	}
 	return strings.TrimSpace(out)
+}
+
+// scrubOriginURL rewrites an https origin that still carries userinfo (an older
+// build stored the token there) to the clean URL, and returns the origin URL to
+// fetch from. Other remotes, and a checkout with no origin, are left untouched.
+func scrubOriginURL(ctx context.Context, repoDir string) (string, error) {
+	raw := originURL(ctx, repoDir)
+	clean := stripUserinfo(raw)
+	if clean == raw {
+		return raw, nil
+	}
+	if _, stderr, err := runGit(ctx, repoDir, "remote", "set-url", "origin", clean); err != nil {
+		return "", gitError("git remote set-url failed", stderr, err)
+	}
+	return clean, nil
 }
 
 // archiveExtract streams `git archive --remote <url> <ref> --format=tar` into
