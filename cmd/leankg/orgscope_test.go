@@ -40,7 +40,10 @@ func newOrgFixture(t *testing.T) orgFixture {
 	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "")
 	t.Setenv("LEANKG_TOKEN_VIEWER", "")
 
-	defaultDir, alpha, beta := t.TempDir(), t.TempDir(), t.TempDir()
+	// Named directories (not bare temp numbers) so the selector matrix can
+	// exercise letter case and percent-encoded letters.
+	root := t.TempDir()
+	defaultDir, alpha, beta := filepath.Join(root, "default-repo"), filepath.Join(root, "alpha-repo"), filepath.Join(root, "beta-repo")
 	seedProjectDir(t, defaultDir, "DefaultSym")
 	seedProjectDir(t, alpha, "AlphaSym")
 	seedProjectDir(t, beta, "BetaSym", "BetaSym2")
@@ -80,8 +83,11 @@ func newOrgFixture(t *testing.T) orgFixture {
 
 // restHandler is the REST listener as serve mounts it: the bearer gate, then
 // the project routing.
-func (f orgFixture) restHandler() http.Handler {
-	return auth.MiddlewareWithStore(f.home, routeByProject(f.router, f.home, nil, rest.Handler(f.defaultEng, nil),
+func (f orgFixture) restHandler() http.Handler { return f.restHandlerOver(f.router) }
+
+// restHandlerOver is restHandler over the given router.
+func (f orgFixture) restHandlerOver(router *projects.Router) http.Handler {
+	return auth.MiddlewareWithStore(f.home, routeByProject(router, f.home, nil, rest.Handler(f.defaultEng, nil),
 		func(p *projects.Project) http.Handler { return rest.Handler(p.Engine, p.Memory) }))
 }
 
