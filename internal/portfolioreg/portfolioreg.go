@@ -641,14 +641,19 @@ type Child func(ctx context.Context, p store.ProjectRecord, q Query) (map[string
 
 // ChildResult is one registered project's standing in a portfolio answer.
 type ChildResult struct {
-	Project   string           `json:"project"`
-	Dir       string           `json:"dir"`
-	Status    string           `json:"status"` // ok | error | not_hot | not_indexed
-	Freshness string           `json:"freshness,omitempty"`
-	Rung      string           `json:"rung,omitempty"`
-	Hits      []map[string]any `json:"hits,omitempty"`
-	Error     string           `json:"error,omitempty"`
-	Reason    string           `json:"reason,omitempty"`
+	Project   string `json:"project"`
+	Dir       string `json:"dir"`
+	Status    string `json:"status"` // ok | error | not_hot | not_indexed
+	Freshness string `json:"freshness,omitempty"`
+	Rung      string `json:"rung,omitempty"`
+	// RungReason and Scope are the child's retrieval reason and population.
+	// Reason is already the not_hot / not_indexed explanation, so the answer's
+	// reason is named apart from it.
+	RungReason string           `json:"rung_reason,omitempty"`
+	Scope      string           `json:"scope,omitempty"`
+	Hits       []map[string]any `json:"hits,omitempty"`
+	Error      string           `json:"error,omitempty"`
+	Reason     string           `json:"reason,omitempty"`
 }
 
 // Report is a portfolio fan-out answer: per-project standing (never silently
@@ -735,7 +740,8 @@ func FanOut(ctx context.Context, o Options, q Query, hot *HotSet, child Child) (
 			rep.Failed++
 		default:
 			cr.Status = "ok"
-			cr.Freshness, cr.Rung = envelopeString(resp, "freshness"), envelopeRung(resp)
+			cr.Freshness = envelopeString(resp, "freshness")
+			cr.Rung, cr.RungReason, cr.Scope = envelopeRetrieval(resp)
 			cr.Hits = envelopeHits(resp)
 			for _, h := range cr.Hits {
 				h["project"] = p.Name
@@ -808,9 +814,11 @@ func envelopeString(resp map[string]any, key string) string {
 	return s
 }
 
-// envelopeRung lifts retrieval{rung,reason}.rung out of a child envelope.
-func envelopeRung(resp map[string]any) string {
+// envelopeRetrieval lifts rung, reason and scope out of a child's retrieval.
+func envelopeRetrieval(resp map[string]any) (rung, reason, scope string) {
 	r, _ := resp["retrieval"].(map[string]any)
-	s, _ := r["rung"].(string)
-	return s
+	rung, _ = r["rung"].(string)
+	reason, _ = r["reason"].(string)
+	scope, _ = r["scope"].(string)
+	return rung, reason, scope
 }

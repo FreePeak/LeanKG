@@ -17,5 +17,12 @@
       "subject": "first"
     }
   ],
-  "path": "main.go"
+  "freshness": "fresh",
+  "indexed_at": "<AT>",
+  "path": "main.go",
+  "retrieval": {
+    "reason": "git history of main.go",
+    "rung": "git",
+    "scope": "all"
+  }
 }

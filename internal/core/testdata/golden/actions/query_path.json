@@ -2,11 +2,17 @@
   "action": "path",
   "depth": 2,
   "freshness": "possibly_stale",
+  "indexed_at": "<AT>",
   "limit": 10,
   "path": [
     "src/alpha.go::Alpha",
     "src/beta.go::Beta"
   ],
   "query": "src/alpha.go::Alpha",
-  "reachable": true
+  "reachable": true,
+  "retrieval": {
+    "reason": "path from seed src/alpha.go::Alpha",
+    "rung": "graph",
+    "scope": "all"
+  }
 }

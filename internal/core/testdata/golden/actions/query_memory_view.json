@@ -1,5 +1,12 @@
 {
   "command": "view",
   "content": "# Project Memory\n\n- Golden fixture corpus pins the L0-L3 ladder.",
-  "path": "MEMORY.md"
+  "freshness": "possibly_stale",
+  "indexed_at": "<AT>",
+  "path": "MEMORY.md",
+  "retrieval": {
+    "reason": "agent memory view",
+    "rung": "memory",
+    "scope": "all"
+  }
 }

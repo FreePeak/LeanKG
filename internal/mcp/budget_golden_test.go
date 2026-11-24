@@ -106,6 +106,53 @@ func TestBudgetNeverDropsPrimaryPayload(t *testing.T) {
 	}
 }
 
+// TestBudgetKeepsGraphProvenance pins a graph verb answer through the budget
+// every transport applies at the action's table cap: the rung that answered
+// (graph), its reason and the freshness survive, so the envelope an agent
+// reads still says where the answer came from. The cap is not forced low on
+// purpose: a squeeze that exhausts the top-level keys drops retrieval.reason
+// (internal/budget/tokens.go, shrinkObject), and no test pins that case yet.
+func TestBudgetKeepsGraphProvenance(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertElements(context.Background(), []store.Element{
+		{QualifiedName: "src/alpha.go::Alpha", ElementType: "function", Name: "Alpha", FilePath: "src/alpha.go", Language: "go"},
+		{QualifiedName: "src/beta.go::Beta", ElementType: "function", Name: "Beta", FilePath: "src/beta.go", Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertRelationships(context.Background(), []store.Relationship{
+		{Source: "src/alpha.go::Alpha", Target: "src/beta.go::Beta", RelType: "calls", Confidence: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e := core.New(st, core.Options{ProjectDir: dir})
+	out, err := e.Query(context.Background(), core.QueryRequest{Action: "callees", Query: "src/alpha.go::Alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shaped, _ := core.EnforceBudget(out, "callees", 0)
+	raw, _ := json.Marshal(shaped)
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		t.Fatalf("not an object: %s", raw)
+	}
+	r, _ := obj["retrieval"].(map[string]any)
+	if r["rung"] != "graph" || r["reason"] != "callees from seed src/alpha.go::Alpha" {
+		t.Fatalf("retrieval after budget = %v; want graph / callees from seed src/alpha.go::Alpha", r)
+	}
+	if obj["freshness"] == nil {
+		t.Fatalf("freshness dropped by the budget: keys=%v", keys(obj))
+	}
+}
+
 func keys(m map[string]any) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

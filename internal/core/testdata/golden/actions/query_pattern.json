@@ -1,4 +1,5 @@
 {
+  "freshness": "possibly_stale",
   "hits": [
     {
       "Col": 1,
@@ -7,6 +8,7 @@
       "Text": "func Alpha() int {"
     }
   ],
+  "indexed_at": "<AT>",
   "query": "",
   "retrieval": {
     "reason": "structural pattern match (go)",

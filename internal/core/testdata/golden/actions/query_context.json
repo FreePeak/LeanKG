@@ -12,11 +12,17 @@
   },
   "freshness": "possibly_stale",
   "incoming": {},
+  "indexed_at": "<AT>",
   "limit": 10,
   "outgoing": {
     "calls": [
       "src/beta.go::Beta"
     ]
   },
-  "query": "src/alpha.go::Alpha"
+  "query": "src/alpha.go::Alpha",
+  "retrieval": {
+    "reason": "context from seed src/alpha.go::Alpha",
+    "rung": "graph",
+    "scope": "all"
+  }
 }

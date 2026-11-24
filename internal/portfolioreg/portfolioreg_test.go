@@ -129,6 +129,42 @@ func TestRegisterListAndForget(t *testing.T) {
 	}
 }
 
+// TestPortfolioChildCarriesProvenance: each child's own answer says which rung
+// served it, why, over which population, and how fresh the index was. The
+// child reason is kept apart from ChildResult.Reason, which explains not_hot
+// and not_indexed standings.
+func TestPortfolioChildCarriesProvenance(t *testing.T) {
+	dir := t.TempDir()
+	newProject(t, dir, "Alpha")
+	o := Options{DBPath: filepath.Join(t.TempDir(), "portfolio.db")}
+	ctx := context.Background()
+	if _, err := Register(ctx, o, dir, "alpha", 1, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	child := func(context.Context, store.ProjectRecord, Query) (map[string]any, error) {
+		return map[string]any{
+			"hits":      []any{map[string]any{"name": "Alpha"}},
+			"freshness": "possibly_stale",
+			"retrieval": map[string]any{"rung": "graph", "reason": "callers from seed Alpha", "scope": "code"},
+		}, nil
+	}
+	rep, err := FanOut(ctx, o, Query{Text: "Alpha", Limit: 5}, NewHotSet(0), child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Projects) != 1 {
+		t.Fatalf("projects = %+v; want the one registered child", rep.Projects)
+	}
+	c := rep.Projects[0]
+	if c.Rung != "graph" || c.RungReason != "callers from seed Alpha" || c.Scope != "code" || c.Freshness != "possibly_stale" {
+		t.Fatalf("child provenance = rung %q reason %q scope %q freshness %q; want graph / callers from seed Alpha / code / possibly_stale",
+			c.Rung, c.RungReason, c.Scope, c.Freshness)
+	}
+	if c.Reason != "" {
+		t.Fatalf("child Reason = %q; an ok child has no standing reason", c.Reason)
+	}
+}
+
 func TestPortfolioFanOutMergesAndAttributes(t *testing.T) {
 	dirA, dirB := t.TempDir(), t.TempDir()
 	newProject(t, dirA, "Alpha")

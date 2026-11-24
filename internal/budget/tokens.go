@@ -311,7 +311,7 @@ func objectBytes(obj map[string]any) int {
 // envelopeKeys carry an answer's identity and provenance; shrinking may
 // shorten them but never removes them.
 var envelopeKeys = map[string]bool{
-	"query": true, "retrieval": true, "freshness": true, "guidance": true,
+	"query": true, "retrieval": true, "freshness": true, "indexed_at": true, "head_sync": true, "guidance": true,
 	"action": true, "resolved_query": true, "resolved_to": true, "reachable": true,
 	"command": true, "path": true, "mode": true, "limit": true, "count": true,
 	"tool": true, "cmd": true, "service": true, "env": true, "id": true,

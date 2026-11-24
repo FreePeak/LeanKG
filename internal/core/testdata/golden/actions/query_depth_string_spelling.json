@@ -22,6 +22,12 @@
       "qn": "src/alpha.go::Alpha"
     }
   ],
+  "indexed_at": "<AT>",
   "limit": 10,
-  "query": "src/beta.go::Beta"
+  "query": "src/beta.go::Beta",
+  "retrieval": {
+    "reason": "impact from seed src/beta.go::Beta",
+    "rung": "graph",
+    "scope": "all"
+  }
 }
