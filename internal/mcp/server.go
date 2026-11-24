@@ -454,7 +454,7 @@ func (s *Server) registerTools() {
 	s.srv.AddTool(&mcp.Tool{
 		Name: core.ToolQuery,
 		Description: "Query LeanKG. Empty action routes: L1 exact → L2 fuzzy → L3 semantic. " +
-			"Every answer has access{role,via,restricted,project,withheld}. Index-backed answers add retrieval{rung,reason} (L0-L3, ast-grep, lsp, graph, memory, git), freshness, indexed_at, head_sync. Ontology, session, prd, incidents, env_conflicts, service_context, compress, languages and portfolio answers have no retrieval. " +
+			"Every answer about your code says which rung it came from, how fresh it is, and whether you are allowed to see it (access{role,via,restricted,project,withheld}). Index-backed answers add retrieval{rung,reason} (L0-L3, ast-grep, lsp, graph, memory, git), freshness, indexed_at, head_sync. Ontology, session, prd, incidents, env_conflicts, service_context, compress, languages and portfolio answers have no retrieval. " +
 			"action=memory searches agent memory (args.command=view with args.path reads one file, =snapshot the MEMORY.md/USER.md core); " +
 			"action=exact|fuzzy|semantic pins a rung; graph verbs (impact/path/callers/callees/context/explain) and session/ontology reads are also available. " +
 			"Leave action empty/search for semantic questions; legacy tool name 'get' is superseded. " + toolGuidance,

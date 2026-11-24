@@ -5,7 +5,7 @@
 <h1 align="center">LeanKG</h1>
 
 <p align="center">
-  <strong>Every answer says which rung it came from, how fresh it is, and whether you are allowed to see it.</strong><br>
+  <strong>Every answer about your code says which rung it came from, how fresh it is, and whether you are allowed to see it.</strong><br>
   A self-hosted code knowledge graph for AI coding agents, for engineering organizations whose agents must answer from the real codebase under their own access rules.
 </p>
 
@@ -43,7 +43,7 @@
 
 ## Why LeanKG
 
-- **Provenance on every answer.** A `query` answer names the retrieval rung it came from (`retrieval.rung`, `retrieval.reason`) and how fresh the index is: `freshness` (`cold`, `fresh` or `possibly_stale`), `indexed_at`, and `head_sync` on a git-indexed store. A consumer can tell an exact match from a fallback and a current index from a stale one. The catalog, session and utility actions carry no retrieval, and a portfolio fan-out has none at the top level (each child answer has its own); see [the tool contract](docs/mcp-tool-contract.md).
+- **Provenance on every answer about your code.** A `query` answer names the retrieval rung it came from (`retrieval.rung`, `retrieval.reason`) and how fresh the index is: `freshness` (`cold`, `fresh` or `possibly_stale`), `indexed_at`, and `head_sync` on a git-indexed store. A consumer can tell an exact match from a fallback and a current index from a stale one. The catalog, session and utility actions carry no retrieval, and a portfolio fan-out has none at the top level (each child answer has its own); see [the tool contract](docs/mcp-tool-contract.md).
 - **Per-project access.** A bearer token can be limited to named projects with `project:<name>` scopes, and the grant is checked on MCP, REST, auto-config, the dashboard API, RPC and portfolio reads. Every answer's `access` block states the role and project the caller was served as. Viewer, Contributor and Admin roles are declared per HTTP route, and a non-loopback bind is refused without a token.
 - **Several repositories, one server.** `LEANKG_PROJECT_DIRS` registers several repositories in one process. Each request selects its project, and a portfolio query skips the projects the caller cannot see.
 - **Deployment control.** One CGO-free binary and a container image. SQLite needs no database server. PostgreSQL with pgvector is the opt-in for shared, server-scale deployments.
@@ -237,7 +237,7 @@ Client wiring is one command per client: `leankg install --target <client>` (or 
 
 ## Performance
 
-**Archived, not re-run.** The A/B table below was measured on the archived Rust-era vector-engine gate and has not been re-run against the Go engine. The cold time-to-first-value row is a Go CI budget measurement and is kept as recorded. For the current cross-tool benchmark, see [`benchmarks/cross_tool`](benchmarks/cross_tool): pinned commit SHAs, a with-LeanKG and a without-LeanKG arm, and judge-blind answer-quality scoring. Results are pending; no run has been committed, so no new figure is stated here.
+**Archived, not re-run.** The A/B table below was measured on the archived Rust-era vector-engine gate and has not been re-run against the Go engine. The cold time-to-first-value row is a Go CI budget measurement and is kept as recorded. For the current cross-tool benchmark, see [`benchmarks/cross_tool`](benchmarks/cross_tool): three arms (baseline, context-mode and leankg), commit SHAs pinned in `repos.lock.yaml` and `tools.lock.yaml`, a dry-run gate that `make bench-cross-tool` runs by default, a three-arm report that keeps the losing rows, and judge-blind answer-quality scoring. No real run has been made and no results are checked in. A real run needs a pinned model id, Node 24.15 or newer and a context-mode install, and it spends API budget (see [RUNNING.md](benchmarks/cross_tool/RUNNING.md)). No performance figure is stated here.
 
 | Metric | Result | Source |
 | ------ | ------ | ------ |
