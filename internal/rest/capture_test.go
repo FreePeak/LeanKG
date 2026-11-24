@@ -164,14 +164,17 @@ func TestCaptureBytesIdentical(t *testing.T) {
 		{method: "DELETE", path: "/v1/default/banks/hb/documents/d1"},
 		{method: "POST", path: "/v1/default/banks/hb/memories/recall", body: `{"query":"vectors","tags_match":"bogus"}`},
 	}
-	// Recall rows carry generated ids and wall-clock timestamps; mask them so
-	// only the observable content is compared.
+	// Recall rows carry generated ids and wall-clock timestamps, and answers
+	// carry the watermark time (indexed_at); mask them so only the observable
+	// content is compared.
 	volatileID := regexp.MustCompile(`"(id|mentioned_at)":"[^"]*"`)
+	volatileIndexedAt := regexp.MustCompile(`"indexed_at":\d+`)
 	run := func(h http.Handler) []byte {
 		var out bytes.Buffer
 		for _, s := range seq {
 			status, ct, body := do(h, s)
 			body = volatileID.ReplaceAll(body, []byte(`"$1":"-"`))
+			body = volatileIndexedAt.ReplaceAll(body, []byte(`"indexed_at":0`))
 			out.WriteString(strings.Join([]string{s.method, s.path, http.StatusText(status), ct, string(body)}, "|"))
 			out.WriteByte('\n')
 		}
