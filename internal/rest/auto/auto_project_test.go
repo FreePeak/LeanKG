@@ -22,15 +22,15 @@ type fakeRouter struct {
 	err     error
 }
 
-func (f *fakeRouter) EngineFor(_ context.Context, project string) (*core.Engine, error) {
+func (f *fakeRouter) EngineFor(_ context.Context, project string) (*core.Engine, func(), error) {
 	if f.err != nil {
-		return nil, f.err
+		return nil, nil, f.err
 	}
 	e, ok := f.engines[project]
 	if !ok {
-		return nil, errors.New("unknown project " + project)
+		return nil, nil, errors.New("unknown project " + project)
 	}
-	return e, nil
+	return e, func() {}, nil
 }
 
 func (f *fakeRouter) MultiProject() bool { return f.multi }

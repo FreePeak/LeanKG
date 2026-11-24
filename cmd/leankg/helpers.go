@@ -20,6 +20,8 @@ import (
 	"github.com/FreePeak/LeanKG/internal/cliargs"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/embed"
+	"github.com/FreePeak/LeanKG/internal/errs"
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/portfolioreg"
@@ -48,9 +50,28 @@ func httpMux(mcp http.Handler) http.Handler {
 // stay open to an anonymous handshake while the gate is on.
 func gateAutoConfig(st store.Backend, mcp, autoConfig http.Handler) http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("/api/v1/mcp/auto-config", auth.Public(auth.MiddlewareWithStore(st, autoConfig)))
+	mux.Handle("/api/v1/mcp/auto-config", auth.Public(auth.MiddlewareWithStore(st, refuseOrgScoped(st, autoConfig))))
 	mux.Handle("/", auth.Public(mcp))
 	return mux
+}
+
+// refuseOrgScoped answers 403 to a caller whose token carries an org. The
+// auto-config route picks its project without the org scope, so an org-keyed
+// token must not reach it; the project's own routes are scoped instead.
+func refuseOrgScoped(st auth.Store, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		scope, err := auth.RequestScope(r.Context(), st, r)
+		if err != nil {
+			httpx.WriteError(w, errs.NewError(errs.Unauthorized, errs.Unauthorized.Cause, ""))
+			return
+		}
+		if scope != nil {
+			httpx.WriteError(w, errs.NewError(errs.PermissionDenied,
+				"auto-config is not available to an org-scoped token", ""))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // shutdownTimeout bounds how long a listener may drain in-flight requests once

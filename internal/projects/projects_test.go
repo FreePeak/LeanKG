@@ -122,7 +122,7 @@ func TestLazyOpenSeedAndClose(t *testing.T) {
 	defEngine := core.New(st, core.Options{ProjectDir: defaultDir})
 	r.SeedDefault(&Project{Dir: defaultDir, Name: "primary", Store: st, Engine: defEngine})
 
-	got, err := r.EngineFor(ctx, "")
+	got, _, err := r.EngineFor(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,11 +152,11 @@ func TestLazyOpenSeedAndClose(t *testing.T) {
 	if _, ok := r.entries[canonical(dirA)]; ok {
 		t.Fatal("the extra project must not be opened before first use")
 	}
-	first, err := r.EngineFor(ctx, "alpha")
+	first, _, err := r.EngineFor(ctx, "alpha")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := r.EngineFor(ctx, dirA)
+	second, _, err := r.EngineFor(ctx, dirA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestLazyOpenSeedAndClose(t *testing.T) {
 	if err := r.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Open(ctx, "alpha"); err == nil || !strings.Contains(err.Error(), "closed") {
+	if _, _, err := r.Open(ctx, "alpha"); err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Fatalf("Open after Close = %v, want closed error", err)
 	}
 	// Close must not have closed the seeded (externally owned) store.

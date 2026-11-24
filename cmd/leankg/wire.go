@@ -110,6 +110,7 @@ func cmdConnect(ctx context.Context, args []string) error {
 	httpMode := fs.Bool("http", false, "write a remote (HTTP URL) entry instead of stdio")
 	url := fs.String("url", "", "remote MCP URL (with --http; default http://localhost:9699/mcp)")
 	project := fs.String("project", "", "explicit project path escape hatch (stdio only)")
+	tokenEnv := fs.String("token-env", "", "remote entry only: reference this env var (letters, digits, underscore) as the bearer; the token value is never written")
 	positional, err := parseInterspersed("connect", fs, args, 1)
 	if err != nil {
 		return err
@@ -132,6 +133,7 @@ func cmdConnect(ctx context.Context, args []string) error {
 		cfg.Mode = "stdio"
 		cfg.Project = *project
 	}
+	cfg.TokenEnv = *tokenEnv
 	if err := WriteClient(home, positional[0], cfg); err != nil {
 		return err
 	}

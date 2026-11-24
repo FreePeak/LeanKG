@@ -79,9 +79,11 @@ func TestProjectGrantNoSelectorMCP(t *testing.T) {
 func TestProjectGrantNoCallerContext(t *testing.T) {
 	r := newGrantRig(t)
 	for _, sel := range []string{"", "alpha", "beta"} {
-		if _, err := r.router.EngineFor(context.Background(), sel); err != nil {
+		_, release, err := r.router.EngineFor(context.Background(), sel)
+		if err != nil {
 			t.Fatalf("no-caller EngineFor(%q) = %v, want an engine", sel, err)
 		}
+		release()
 	}
 }
 

@@ -31,14 +31,14 @@ func TestScopedServerDoesNotReAskForProject(t *testing.T) {
 	s.SetProjectScoped(true)
 
 	// No project argument at all: the handler is already scoped, so it answers.
-	if _, err := s.engineFor(context.Background(), nil); err != nil {
+	if _, _, err := s.engineFor(context.Background(), nil); err != nil {
 		t.Fatalf("a scoped handler re-asked for the project: %v", err)
 	}
 	// An explicit project argument still wins over the scoped default.
 	req := &mcp.CallToolRequest{}
 	req.Params = &mcp.CallToolParamsRaw{Name: "query"}
 	req.Params.Arguments = []byte(`{"project":"be-zlx"}`)
-	if _, err := s.engineFor(context.Background(), req); err == nil || !containsStr(err.Error(), "fakeRouter") {
+	if _, _, err := s.engineFor(context.Background(), req); err == nil || !containsStr(err.Error(), "fakeRouter") {
 		t.Fatalf("an explicit project must still be routed; err = %v", err)
 	}
 }

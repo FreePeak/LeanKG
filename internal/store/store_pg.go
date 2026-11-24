@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -50,6 +52,9 @@ func openPG(ctx context.Context, pgURL, projectDir string, mode Mode) (Backend, 
 	cfg, err := pgxpool.ParseConfig(pgURL)
 	if err != nil {
 		return nil, fmt.Errorf("store: parse pg dsn: %w", err)
+	}
+	for _, p := range configurePGPool(cfg, os.Getenv) {
+		log.Printf("store: %s", p)
 	}
 	schema, err := pgSchemaForDir(projectDir)
 	if err != nil {

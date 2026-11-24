@@ -66,7 +66,7 @@ func TestMultiProjectCallWithoutProjectIsRefused(t *testing.T) {
 	srv, _ := newProjectServerForTest(t, WithProjectRequired(true))
 	srv.SetProjectRouter(fakeRouter{multi: true})
 
-	if _, err := srv.engineFor(context.Background(), nil); err == nil {
+	if _, _, err := srv.engineFor(context.Background(), nil); err == nil {
 		t.Fatal("a call with no project resolved an engine; under a router it must fail closed")
 	} else if !strings.Contains(err.Error(), "project") {
 		t.Fatalf("err = %v; it must name the missing project argument", err)

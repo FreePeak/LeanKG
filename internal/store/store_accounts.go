@@ -339,3 +339,48 @@ func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
 
 // nowEpoch is the epoch-seconds clock for legacy auth timestamps.
 func nowEpoch() int64 { return time.Now().Unix() }
+
+// ResourceOrgs lists the org ids that claimed the resource, sorted.
+func (s *Store) ResourceOrgs(ctx context.Context, resourceType, resourceID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT org_id FROM resource_ownership
+		WHERE resource_type = ? AND resource_id = ? AND org_id IS NOT NULL ORDER BY org_id`,
+		resourceType, resourceID)
+	if err != nil {
+		return nil, fmt.Errorf("store: resource orgs: %w", err)
+	}
+	defer rows.Close()
+	return scanStrings(rows)
+}
+
+// ResourceIDs lists the resources of resourceType that orgID claimed, sorted.
+func (s *Store) ResourceIDs(ctx context.Context, resourceType, orgID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT resource_id FROM resource_ownership
+		WHERE resource_type = ? AND org_id = ? ORDER BY resource_id`,
+		resourceType, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("store: resource ids: %w", err)
+	}
+	defer rows.Close()
+	return scanStrings(rows)
+}
+
+// ResourceRelease removes every claim on the resource.
+func (s *Store) ResourceRelease(ctx context.Context, resourceType, resourceID string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM resource_ownership WHERE resource_type = ? AND resource_id = ?`,
+		resourceType, resourceID); err != nil {
+		return fmt.Errorf("store: resource release %s/%s: %w", resourceType, resourceID, err)
+	}
+	return nil
+}
+
+func scanStrings(rows *sql.Rows) ([]string, error) {
+	var out []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, fmt.Errorf("store: scan: %w", err)
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}

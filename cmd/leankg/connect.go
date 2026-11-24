@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -45,15 +46,43 @@ func Clients() []string {
 	return []string{ClientClaudeCode, ClientCursor, ClientCodex, ClientGemini, ClientOpencode, ClientOmp, ClientXdev}
 }
 
+// tokenEnvPattern is the only shape --token-env accepts: a bare variable name.
+var tokenEnvPattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
+// authHeaderSyntax is each client's documented env-reference form for the
+// Authorization header of a remote entry; %s is the variable name. The client
+// expands it at launch, so the token value never lands in the config file.
+// Codex is not here: it takes bearer_token_env_var instead (see codexSectionLines).
+var authHeaderSyntax = map[string]string{
+	ClientClaudeCode: "Bearer ${%s}",
+	ClientCursor:     "Bearer ${env:%s}",
+	ClientOpencode:   "Bearer {env:%s}",
+}
+
+// supportsTokenEnv reports whether client has a verified env-reference form.
+func supportsTokenEnv(client string) bool {
+	_, ok := authHeaderSyntax[client]
+	return ok || client == ClientCodex
+}
+
 // Config describes the leankg entry written into a client config.
 type Config struct {
-	Mode    string // "stdio" (spawn Exe) or "http" (remote URL)
-	Exe     string // stdio executable path; "" falls back to bare "leankg" (PATH)
-	URL     string // remote MCP endpoint URL (bare); required in http mode
-	Project string // optional --project escape hatch; stdio only, ignored for http
+	Mode     string // "stdio" (spawn Exe) or "http" (remote URL)
+	Exe      string // stdio executable path; "" falls back to bare "leankg" (PATH)
+	URL      string // remote MCP endpoint URL (bare); required in http mode
+	Project  string // optional --project escape hatch; stdio only, ignored for http
+	TokenEnv string // optional env var name the remote entry reads its bearer from; http only
 }
 
 func (c Config) validate() error {
+	if c.TokenEnv != "" {
+		if c.Mode != "http" {
+			return errors.New("--token-env applies to remote (--http) entries only")
+		}
+		if !tokenEnvPattern.MatchString(c.TokenEnv) {
+			return fmt.Errorf("--token-env %q: want letters, digits and underscore only", c.TokenEnv)
+		}
+	}
 	switch c.Mode {
 	case "stdio":
 		return nil
@@ -132,6 +161,9 @@ func WriteClient(homeDir, client string, cfg Config) error {
 	if err := cfg.validate(); err != nil {
 		return err
 	}
+	if cfg.TokenEnv != "" && !supportsTokenEnv(client) {
+		return fmt.Errorf("--token-env: %s has no documented env-reference header syntax; write it without --token-env", client)
+	}
 	path, err := clientConfigPath(homeDir, client)
 	if err != nil {
 		return err
@@ -151,14 +183,19 @@ func WriteClient(homeDir, client string, cfg Config) error {
 // explicit project path is the escape hatch and the only flag source).
 func jsonEntry(client string, cfg Config) map[string]any {
 	if cfg.Mode == "http" {
+		var entry map[string]any
 		switch client {
 		case ClientOpencode:
-			return map[string]any{"type": "remote", "url": cfg.mergedURL(), "enabled": true}
+			entry = map[string]any{"type": "remote", "url": cfg.mergedURL(), "enabled": true}
 		case ClientOmp:
-			return map[string]any{"type": "http", "url": cfg.mergedURL(), "enabled": true}
+			entry = map[string]any{"type": "http", "url": cfg.mergedURL(), "enabled": true}
 		default: // claude-code, cursor, gemini
-			return map[string]any{"type": "http", "url": cfg.mergedURL()}
+			entry = map[string]any{"type": "http", "url": cfg.mergedURL()}
 		}
+		if cfg.TokenEnv != "" {
+			entry["headers"] = map[string]any{"Authorization": fmt.Sprintf(authHeaderSyntax[client], cfg.TokenEnv)}
+		}
+		return entry
 	}
 	exe := cfg.Exe
 	if exe == "" {
@@ -321,7 +358,11 @@ func writeCodexTOML(path string, cfg Config) error {
 // Codex takes the full spawn command as a single TOML string array.
 func codexSectionLines(cfg Config) []string {
 	if cfg.Mode == "http" {
-		return []string{"url = " + strconv.Quote(cfg.mergedURL())}
+		lines := []string{"url = " + strconv.Quote(cfg.mergedURL())}
+		if cfg.TokenEnv != "" {
+			lines = append(lines, "bearer_token_env_var = "+strconv.Quote(cfg.TokenEnv))
+		}
+		return lines
 	}
 	// Codex spawns the full command array: exe first, then args.
 	// Empty Exe falls back to bare "leankg" (PATH), matching jsonEntry.

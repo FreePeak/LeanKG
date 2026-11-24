@@ -850,30 +850,20 @@ func checkPoolEnv(ctx context.Context, _ Probes, env Env) Finding {
 	var details, hints []string
 
 	if env.Pool.PoolSize == nil {
-		details = append(details, "pool size: default 5")
+		details = append(details, fmt.Sprintf("pool size: default %d", store.DefaultPGPoolSize))
 	} else {
 		raw := *env.Pool.PoolSize
-		trimmed := strings.TrimSpace(raw)
-		var v int64
-		if trimmed == "" || !isAllDigits(trimmed) {
+		if v, ok := store.ParsePoolSetting(raw); !ok {
 			status = status.worst(StatusFail)
 			details = append(details, fmt.Sprintf("invalid LEANKG_PG_POOL_SIZE=%q", raw))
 			hints = append(hints, fmt.Sprintf("Set LEANKG_PG_POOL_SIZE to an integer between 1 and %d.", poolSizeMax))
+		} else if v > poolSizeMax {
+			status = status.worst(StatusWarn)
+			details = append(details, fmt.Sprintf("pool size %d exceeds %d", v, poolSizeMax))
+			hints = append(hints, fmt.Sprintf("Keep LEANKG_PG_POOL_SIZE within 1..=%d; oversubscribing "+
+				"connections can exhaust Postgres max_connections.", poolSizeMax))
 		} else {
-			fmt.Sscanf(trimmed, "%d", &v)
-			switch {
-			case v == 0:
-				status = status.worst(StatusFail)
-				details = append(details, fmt.Sprintf("invalid LEANKG_PG_POOL_SIZE=%q", raw))
-				hints = append(hints, fmt.Sprintf("Set LEANKG_PG_POOL_SIZE to an integer between 1 and %d.", poolSizeMax))
-			case v > poolSizeMax:
-				status = status.worst(StatusWarn)
-				details = append(details, fmt.Sprintf("pool size %d exceeds %d", v, poolSizeMax))
-				hints = append(hints, fmt.Sprintf("Keep LEANKG_PG_POOL_SIZE within 1..=%d; oversubscribing "+
-					"connections can exhaust Postgres max_connections.", poolSizeMax))
-			default:
-				details = append(details, fmt.Sprintf("pool size %d", v))
-			}
+			details = append(details, fmt.Sprintf("pool size %d", v))
 		}
 	}
 
@@ -881,43 +871,21 @@ func checkPoolEnv(ctx context.Context, _ Probes, env Env) Finding {
 		details = append(details, "pool wait: default 10000 ms")
 	} else {
 		raw := *env.Pool.PoolWaitMS
-		trimmed := strings.TrimSpace(raw)
-		var v int64
-		if trimmed == "" || !isAllDigits(trimmed) {
+		if v, ok := store.ParsePoolSetting(raw); !ok {
 			status = status.worst(StatusFail)
 			details = append(details, fmt.Sprintf("invalid LEANKG_PG_POOL_WAIT_MS=%q", raw))
 			hints = append(hints, fmt.Sprintf("Set LEANKG_PG_POOL_WAIT_MS to an integer between 1 and %d (milliseconds).", poolWaitMaxMS))
+		} else if v > poolWaitMaxMS {
+			status = status.worst(StatusWarn)
+			details = append(details, fmt.Sprintf("pool wait %d ms exceeds %d ms", v, poolWaitMaxMS))
+			hints = append(hints, fmt.Sprintf("Waits beyond %d ms hide pool starvation instead of failing fast; "+
+				"lower it or raise the pool size.", poolWaitMaxMS))
 		} else {
-			fmt.Sscanf(trimmed, "%d", &v)
-			switch {
-			case v <= 0:
-				status = status.worst(StatusFail)
-				details = append(details, fmt.Sprintf("invalid LEANKG_PG_POOL_WAIT_MS=%q", raw))
-				hints = append(hints, fmt.Sprintf("Set LEANKG_PG_POOL_WAIT_MS to an integer between 1 and %d (milliseconds).", poolWaitMaxMS))
-			case v > poolWaitMaxMS:
-				status = status.worst(StatusWarn)
-				details = append(details, fmt.Sprintf("pool wait %d ms exceeds %d ms", v, poolWaitMaxMS))
-				hints = append(hints, fmt.Sprintf("Waits beyond %d ms hide pool starvation instead of failing fast; "+
-					"lower it or raise the pool size.", poolWaitMaxMS))
-			default:
-				details = append(details, fmt.Sprintf("pool wait %d ms", v))
-			}
+			details = append(details, fmt.Sprintf("pool wait %d ms", v))
 		}
 	}
 
 	return Finding{check, status, strings.Join(details, "; "), strings.Join(hints, " ")}
-}
-
-func isAllDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 // checkOrphanedRelationships: edges whose endpoints no longer exist.

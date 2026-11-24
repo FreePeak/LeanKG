@@ -470,7 +470,7 @@ func TestLegacyToolNamesResolve(t *testing.T) {
 func TestMissingProjectFailsClosedUnderARouter(t *testing.T) {
 	s := newServerForTest(t)
 	s.SetProjectRouter(fakeRouter{multi: true})
-	if _, err := s.engineFor(context.Background(), nil); err == nil {
+	if _, _, err := s.engineFor(context.Background(), nil); err == nil {
 		t.Fatal("a call with no project resolved an engine; under a router it must fail closed")
 	} else if !strings.Contains(err.Error(), "project") {
 		t.Fatalf("err = %v; it must name the missing project argument", err)
@@ -479,14 +479,14 @@ func TestMissingProjectFailsClosedUnderARouter(t *testing.T) {
 	// keeps working — a stdio spawn is one agent session over one project.
 	one := newServerForTest(t)
 	one.SetProjectRouter(fakeRouter{multi: false})
-	if _, err := one.engineFor(context.Background(), nil); err != nil {
+	if _, _, err := one.engineFor(context.Background(), nil); err != nil {
 		t.Fatalf("with one project registered an omitted project must still resolve: %v", err)
 	}
 	// With the argument present the router is the one that resolves it.
 	req := &mcp.CallToolRequest{}
 	req.Params = &mcp.CallToolParamsRaw{Name: "query"}
 	req.Params.Arguments = []byte(`{"project":"be-zlx"}`)
-	if _, err := s.engineFor(context.Background(), req); err == nil || !strings.Contains(err.Error(), "fakeRouter") {
+	if _, _, err := s.engineFor(context.Background(), req); err == nil || !strings.Contains(err.Error(), "fakeRouter") {
 		t.Fatalf("with a project named the router must be consulted; err = %v", err)
 	}
 }
@@ -494,13 +494,15 @@ func TestMissingProjectFailsClosedUnderARouter(t *testing.T) {
 // fakeRouter proves it was consulted: the default engine must not answer instead.
 type fakeRouter struct{ multi bool }
 
-func (fakeRouter) EngineFor(context.Context, string) (*core.Engine, error) {
-	return nil, fmt.Errorf("fakeRouter: consulted")
+func (fakeRouter) Hosted() bool { return false }
+
+func (fakeRouter) EngineAs(context.Context, string, func(string) bool) (*core.Engine, func(), error) {
+	return nil, func() {}, fmt.Errorf("fakeRouter: consulted")
 }
 
 func (f fakeRouter) MultiProject() bool { return f.multi }
 
-func (fakeRouter) Authorize(context.Context, string) (string, error) {
+func (fakeRouter) AuthorizeAs(context.Context, string, func(string) bool) (string, error) {
 	return "", fmt.Errorf("fakeRouter: consulted")
 }
 

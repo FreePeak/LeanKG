@@ -247,6 +247,13 @@ type Identity interface {
 	OrgMembers(ctx context.Context, orgID string) ([]OrgMember, error)
 	ResourceClaim(ctx context.Context, resourceType, resourceID, ownerAccountID, orgID string) error
 	IsResourceOwner(ctx context.Context, resourceType, resourceID, accountID string) (bool, error)
+	// ResourceOrgs lists the org ids that claimed the resource (its org_id values).
+	ResourceOrgs(ctx context.Context, resourceType, resourceID string) ([]string, error)
+	// ResourceIDs lists the resources of resourceType that orgID claimed. It is
+	// the org-keyed visibility of a project: a token with an org sees only these.
+	ResourceIDs(ctx context.Context, resourceType, orgID string) ([]string, error)
+	// ResourceRelease removes every claim on the resource.
+	ResourceRelease(ctx context.Context, resourceType, resourceID string) error
 }
 
 // Knowledge is the org/ops knowledge store (Rust db::mod.rs incidents /
