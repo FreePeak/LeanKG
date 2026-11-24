@@ -49,6 +49,7 @@ RUN_IDX="${4:?run_idx required}"
 MODEL="${5:-}"              # optional: if empty, claude -p uses its default
 MCP_CONFIG_PATH="${6:?mcp_config_path required}"
 OUTPUT_PATH="${7:?output_path required}"
+PYTHON="${PYTHON:-python3}"
 
 # Claude Code 2.1+ strips ToolSearch under --bare, which makes MCP tools
 # undiscoverable to the agent. The MCP arms (leankg, context-mode) need their
@@ -120,8 +121,8 @@ PROMPT_VERSION="${PROMPT_VERSION:-1}"
 # ARRAY of message events with a final `{"type":"result", ...}` element. The
 # CLI version has changed shape several times; we try several strategies and
 # fall back to zeros on any failure so the run is still recorded.
-if [[ -s "${RUN_JSON}" ]] && command -v python3 >/dev/null 2>&1; then
-  PARSED=$(python3 - "${RUN_JSON}" <<'PY'
+if [[ -s "${RUN_JSON}" ]] && command -v "${PYTHON}" >/dev/null 2>&1; then
+  PARSED=$("${PYTHON}" - "${RUN_JSON}" <<'PY'
 import json, sys, re, pathlib
 
 path = pathlib.Path(sys.argv[1])
@@ -367,7 +368,7 @@ else
 fi
 
 # Emit the JSON line. Use python for safe quoting.
-python3 - "${REPO_PATH}" "${ARM}" "${RUN_IDX}" "${MODEL}" "${PROMPT_CHARS}" \
+"${PYTHON}" - "${REPO_PATH}" "${ARM}" "${RUN_IDX}" "${MODEL}" "${PROMPT_CHARS}" \
   "${EXIT_CODE}" "${DURATION_S}" "${TOTAL_COST}" "${INPUT_TOKENS}" \
   "${OUTPUT_TOKENS}" "${CACHE_READ_TOKENS}" "${TOOL_CALLS}" "${FILE_READS}" \
   "${NUM_TURNS}" "${STOP_REASON}" "${RESULT_CHARS}" \

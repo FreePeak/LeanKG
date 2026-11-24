@@ -208,8 +208,10 @@ def fmt_bytes(value: float | None) -> str:
 
 
 def fmt_reduction(arm_bytes: float | None, baseline_bytes: float | None) -> str:
-    """Bytes-in-context reduction vs baseline (context-mode method: tokens = bytes / 4,
-    so the byte ratio is also the token ratio)."""
+    """Reduction in tool-result bytes returned to the model, relative to the baseline arm.
+
+    Not directly comparable to context-mode's bytes-in-context figure: raw tool-output
+    bytes before any compaction are not recorded for the context-mode arm."""
     if arm_bytes is None or not baseline_bytes:
         return "N/A"
     return f"{(1 - arm_bytes / baseline_bytes) * 100:.0f}%"
@@ -415,7 +417,7 @@ def build_report(
     for arm in arms:
         head += [f"{arm}: N", f"{arm}: tool calls", f"{arm}: time", f"{arm}: tokens", f"{arm}: tool_result bytes"]
         if arm in non_base:
-            head.append(f"{arm}: bytes in context reduction")
+            head.append(f"{arm}: tool-result bytes reduction")
     lines.append("| " + " | ".join(head) + " |")
     lines.append(table_rule(len(head)))
     for row in rows:
@@ -543,8 +545,8 @@ def build_report(
             f"{mark(c['tool_smoke'])} |"
         )
     lines.append("")
-    lines.append("Leakage guard: WITHOUT-arm runs with any attached MCP server are")
-    lines.append("dropped at parse time (`mcp_leaked_into_without_arm`), so a")
+    lines.append("Leakage guard: baseline-arm runs with any attached MCP server are")
+    lines.append("dropped at parse time (`mcp_leaked_into_baseline_arm`), so a")
     lines.append("contaminated baseline can never reach the medians.")
 
     lines.append("")
@@ -554,8 +556,9 @@ def build_report(
     lines.append("- Each arm = `claude -p <prompt>` headless, same question per repo, median of N runs.")
     lines.append("- `--mcp-config <file> --strict-mcp-config` loads only the file's MCP servers; nothing else.")
     lines.append("- `--bare` disables CLAUDE.md auto-discovery, hooks, LSP, plugins, and attribution so the run is hermetic.")
-    lines.append("- Repos cloned with `git clone --depth 1` and pinned to the tag in `repos.yaml`.")
-    lines.append("- LeanKG index is rebuilt (`leankg init && leankg index`) before every WITH-arm run to keep runs deterministic.")
+    lines.append("- Repos are fetched at depth 1 at the commit SHA locked in `repos.lock.yaml` (`make lock`); `run_arm.sh` refuses to run unless the clone HEAD matches the lock.")
+    lines.append("- LeanKG index is rebuilt (`rm -rf .leankg`, then `leankg index .`, in `run_arm.sh`) before every leankg-arm trial to keep runs deterministic.")
+    lines.append("- `tool-result bytes reduction` = 1 - arm / baseline on median `tool_result_bytes` (bytes returned to the model only). Raw tool-output bytes before any compaction are not recorded for the context-mode arm, so this is not directly comparable to context-mode's own bytes-in-context figure.")
     lines.append("- Each run records `actual_model`, `mcp_servers`, and `mcp_tool_count` from the session init event so model routing / MCP attachment can be audited after the fact.")
     lines.append("")
     lines.append("## Caveats")
@@ -629,7 +632,7 @@ def build_selftest_tree(root: Path) -> None:
                 {
                     "run_idx": 5, "mcp_servers": ["leankg"],
                     "valid": False,
-                    "invalid_reason": "mcp_leaked_into_without_arm",
+                    "invalid_reason": "mcp_leaked_into_baseline_arm",
                 }
             )
             rows.append(leaked)
@@ -723,7 +726,8 @@ def selftest() -> int:
         assert checks["prompt_sha_uniform"] is True, checks
         assert "| gin | j1 | 5.0 | 3.0 | +2.0 |" in md, "judge j1 row missing"
         assert "| gin | j2 | 5.0 | 3.0 | +2.0 |" in md, "judge j2 row missing (blended?)"
-        assert "mcp_leaked_into_without_arm" in md, "leak drop not surfaced"
+        assert "mcp_leaked_into_baseline_arm" in md, "leak drop not surfaced"
+        assert "dropped at parse time (`mcp_leaked_into_baseline_arm`)" in md, "leakage guard text names the wrong reason"
         print("aggregate selftest: OK (leak drop, trials gate, tool smoke, pinning, judge segmentation)")
 
         # Three arms, no legacy with/without: arms come from the rows.
@@ -736,6 +740,8 @@ def selftest() -> int:
             header = next((l for l in md3.splitlines() if l.startswith("| Codebase | Language |")), "")
             pos = [header.find(f"{arm}:") for arm in ("baseline", "context-mode", "leankg")]
             assert all(p >= 0 for p in pos) and pos == sorted(pos), header
+            assert "context-mode: tool-result bytes reduction" in header, header
+            assert "bytes in context" not in md3, "old column name still in report"
             assert "| **gin** | Go | 4 | 10 | 50s | 1,100 | 40,000 B | 4 | 6 | 40s | 900 | 20,000 B | 50% | 4 | 4 | 55s | 800 | 30,000 B | 25% |" in md3, md3
             assert "| gin | j1 | 3.0 | 4.0 | 2.0 | +1.0 | -1.0 |" in md3, "quality row wrong"
             assert "| Metric | context-mode vs baseline | leankg vs baseline |" in md3, "averages header wrong"

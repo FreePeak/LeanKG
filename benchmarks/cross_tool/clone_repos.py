@@ -123,6 +123,17 @@ def _write_repos_yaml(path: Path, url: str, ref: str) -> None:
     path.write_text(f"repos:\n  - slug: demo\n    url: {url}\n    ref: {ref}\n", encoding="utf-8")
 
 
+def _run_setup(repos_yaml: Path, target: Path) -> tuple[int, str]:
+    """Run setup (no --lock-only) and return (exit code, stderr text)."""
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        rc = main(["--repos", str(repos_yaml), "--target", str(target)])
+    return rc, buf.getvalue()
+
+
 def selftest() -> int:
     """Offline: a local bare repo as origin; the lock pins the first commit while the branch tip is the second."""
     import tempfile
@@ -172,7 +183,23 @@ def selftest() -> int:
         rc = main(["--repos", str(repos_yaml), "--target", str(case3 / "repos"), "--lock-only"])
         assert rc == 0 and (case3 / "repos.lock.yaml").read_bytes() == lock_before, "--lock-only changed the lock"
 
-    print("clone_repos selftest: OK (locked sha checkout, unreachable sha fails, lock-only byte-identical)")
+        # Case 4: repo has no lock entry; setup must fail closed, name the repo, and clone nothing.
+        case4 = root / "unlocked"
+        case4.mkdir()
+        write_lock(case4 / "repos.lock.yaml", {})
+        rc, err = _run_setup(repos_yaml, case4 / "repos")
+        assert rc != 0 and not (case4 / "repos" / "demo").exists(), "setup cloned a repo with no lock entry"
+        assert "demo" in err and "make lock" in err, f"missing-lock error unclear: {err!r}"
+
+        # Case 5: lock entry is UNRESOLVED; setup must fail closed the same way.
+        case5 = root / "unresolved"
+        case5.mkdir()
+        write_lock(case5 / "repos.lock.yaml", {"demo": {"url": url, "ref": "main", "sha": "UNRESOLVED", "error": "could not resolve main"}})
+        rc, err = _run_setup(repos_yaml, case5 / "repos")
+        assert rc != 0 and not (case5 / "repos" / "demo").exists(), "setup cloned a repo with an UNRESOLVED lock entry"
+        assert "demo" in err and "make lock" in err, f"unresolved error unclear: {err!r}"
+
+    print("clone_repos selftest: OK (locked sha checkout, unreachable sha fails, lock-only byte-identical, unlocked and unresolved fail closed)")
     return 0
 
 
@@ -202,20 +229,19 @@ def main(argv: list[str] | None = None) -> int:
         write_lock(lock_path, lock)
         return 1 if unresolved else 0
 
-    # FR-ZCP-08: setup checks out the locked SHA. The lock is never rewritten here;
-    # only --lock-only does that. A repo with no lock entry is cloned at its ref's tip.
+    # FR-ZCP-08: setup checks out the locked SHA and fails closed without one. The
+    # lock is never rewritten here; only --lock-only does that.
     locked = load_locked_shas(lock_path)
     failures: list[tuple[str, str]] = []
     for entry in repos:
         slug = entry["slug"]
         url = entry["url"]
         target = args.target / slug
+        if slug not in locked:
+            failures.append((slug, f"no resolved SHA in {lock_path.name} (missing or UNRESOLVED); run: make lock"))
+            continue
         try:
-            sha = locked.get(slug)
-            if sha is None:
-                sha = resolve_sha(url, entry["ref"])
-                print(f"  [warn] {slug} has no lock entry; using {entry['ref']} at {sha[:10]} (run: make lock)")
-            git_clone_shallow(url, target, sha)
+            git_clone_shallow(url, target, locked[slug])
         except (subprocess.CalledProcessError, RuntimeError) as exc:
             failures.append((slug, str(exc)))
             # Clean up partial clone so a retry is possible
