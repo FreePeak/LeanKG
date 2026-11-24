@@ -44,7 +44,7 @@
 ## Why LeanKG
 
 - **Provenance on every code-graph answer.** A `query` answer names the retrieval rung it came from (`retrieval.rung`, `retrieval.reason`) and how fresh the index is: `freshness` (`cold`, `fresh` or `possibly_stale`), `indexed_at`, and `head_sync` on a git-indexed store. A consumer can tell an exact match from a fallback and a current index from a stale one. The ontology, session, prd, incidents, env_conflicts, service_context, compress and languages actions carry no retrieval, and a portfolio fan-out has none at the top level (each child answer has its own); see [the tool contract](docs/mcp-tool-contract.md).
-- **Per-project access.** A bearer token can be limited to named projects with `project:<name>` scopes, and the grant is checked on MCP, REST, auto-config, the dashboard API, RPC and portfolio reads. Every answer's `access` block states the role and project the caller was served as. Viewer, Contributor and Admin roles are declared per HTTP route, and a non-loopback bind is refused without a token.
+- **Per-project access.** A bearer token can be limited to named projects with `project:<name>` scopes, and the grant is checked on MCP, REST, auto-config, the dashboard API, RPC and portfolio reads. Every query answer's `access` block states the role and project the caller was served as. Viewer, Contributor and Admin roles are declared per HTTP route, and a non-loopback bind is refused without a token.
 - **Several repositories, one server.** `LEANKG_PROJECT_DIRS` registers several repositories in one process. Each request selects its project, and a portfolio query skips the projects the caller cannot see.
 - **Deployment control.** One CGO-free binary and a container image. SQLite needs no database server. PostgreSQL with pgvector is the opt-in for shared, server-scale deployments.
 - **Lower agent cost.** Agents ask for a targeted subgraph (callers, dependents, impact, tests, docs) instead of running grep-and-read loops over whole files. The archived A/B figures are in [Performance](#performance); they have not been re-run on the Go engine.
@@ -86,7 +86,7 @@ Source: the public README of [context-mode](https://github.com/mksglu/context-mo
 | ---------- | ------ | ------------ |
 | Provenance per answer | Every answer carries `access`. Index-backed answers carry `retrieval{rung,reason}`, naming the rung (L0-L3, ast-grep, lsp, graph, memory, git) | Search hits show the source file and heading |
 | Per-answer freshness | `freshness` (`cold`, `fresh`, `possibly_stale`), `indexed_at` and `head_sync` (`match`, `stale`, `unknown`) on index-backed answers | Not documented for indexed content |
-| Role/ACL on reads | Viewer, Contributor and Admin roles per route; `project:<name>` grants on every routed surface | Not documented. The README mentions a PreToolUse deny list, not read roles |
+| Role/ACL on reads | Viewer, Contributor and Admin roles per route; `project:<name>` grants enforced on the routed surfaces; RPC has no grant check of its own and refuses a token that lacks the default project | Not documented. The README mentions a PreToolUse deny list, not read roles |
 | Multi-project from one server | `LEANKG_PROJECT_DIRS` serves several repositories from one process; each request selects one | One `context.db` per project under `~/.context-mode`; serving several projects from one server is not documented |
 | Measured answer quality | No quality figure published yet; the judge-blind run in [`benchmarks/cross_tool`](benchmarks/cross_tool) is pending | Not documented. It reports bytes-based reduction (`ctx_bytes` against `raw_bytes`) |
 
@@ -345,7 +345,7 @@ docker run --rm -p 8080:10000 -e PORT=10000 leankg   # dashboard and its /api on
 - **The unit of scope is a repository.** A portfolio root (tens of thousands of nested files) is not a project; register its child repositories one at a time.
 - **With no token configured, `--ui` binds an unauthenticated data API** (query, read and import routes). Bind it to loopback or front it with a proxy. The public demo container serves it `--read-only` against a disposable baked graph. Its `/api/file` reader needs a Viewer token when the gate is on, and answers 403 on a non-loopback bind when the gate is off.
 - **Dashboard API and the auth gate.** With the gate on, the dashboard shell loads but its `/api/` calls return 401, because the bundled UI sends no `Authorization` header.
-- **Project-scoped tokens and RPC.** A token scoped to a project other than the default gets no RPC access. The check fails closed with 403. `/health` on that listener still answers 200 to any valid token.
+- **Project-scoped tokens and RPC.** A token scoped to a project other than the default gets no RPC access. The check fails closed with 403. The RPC listener's `/health` still answers 200 to any valid token, while REST `/health` returns 403 for a restricted token that lacks the default project.
 
 ## Troubleshooting
 
