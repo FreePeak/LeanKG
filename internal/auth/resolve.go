@@ -50,6 +50,9 @@ const (
 	// ViaLocal means no caller reached the engine at all (stdio, the CLI): the
 	// answer names no request identity, so it is an unrestricted local admin.
 	ViaLocal = "local"
+	// ViaAnonymous means an HTTP caller sent no Authorization header while the
+	// gate is on. It holds no grant, so it reaches no project.
+	ViaAnonymous = "anonymous"
 )
 
 // Target identifies the resource an authorization decision is about. The zero
@@ -100,12 +103,19 @@ func (c AuthContext) ScopeAllowed(scope string) bool {
 // with no project: scope is unrestricted for projects, whatever its other
 // scopes are.
 func (c AuthContext) ProjectRestricted() bool {
+	return c.Via == ViaAnonymous || len(c.ProjectScopes()) > 0
+}
+
+// ProjectScopes returns the caller's project: scopes, the part of its grant a
+// token minted by this caller may carry. Nil for an unrestricted caller.
+func (c AuthContext) ProjectScopes() []string {
+	var out []string
 	for _, s := range c.Scopes {
 		if strings.HasPrefix(s, projectScopePrefix) {
-			return true
+			out = append(out, s)
 		}
 	}
-	return false
+	return out
 }
 
 // ProjectAllowed reports whether the token may reach the registered project
@@ -114,12 +124,13 @@ func (c AuthContext) ProjectRestricted() bool {
 // a grant by name cannot tell those directories apart, so the name matches no
 // grant. An unrestricted token reaches every project; a restricted one reaches
 // only the names its project: scopes grant, by the same exact match as
-// ScopeAllowed.
+// ScopeAllowed. An anonymous caller has no grant, so it reaches none (its empty
+// scope list must not read as unrestricted).
 func (c AuthContext) ProjectAllowed(name string, shared bool) bool {
 	if !c.ProjectRestricted() {
 		return true
 	}
-	return !shared && c.ScopeAllowed(projectScopePrefix+name)
+	return c.Via != ViaAnonymous && !shared && c.ScopeAllowed(projectScopePrefix+name)
 }
 
 // ProjectDenied is the refusal for a project the caller's grant does not cover.

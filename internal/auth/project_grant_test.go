@@ -1,6 +1,10 @@
 package auth
 
-import "testing"
+import (
+	"context"
+	"net/http/httptest"
+	"testing"
+)
 
 // TestProjectAllowed pins the project grant. A token that names projects with
 // project:<name> scopes reaches only those projects. A token that names none,
@@ -48,5 +52,34 @@ func TestProjectAllowedSharedName(t *testing.T) {
 	}
 	if !(AuthContext{}).ProjectAllowed("alpha", true) {
 		t.Fatal("an unrestricted caller reaches a shared basename")
+	}
+}
+
+// TestAnonymousProjectDenied pins fix S2: an anonymous HTTP caller (no
+// Authorization header) with the gate on reaches no project. With the gate off
+// the same request is the open local admin and reaches every project, and a
+// context with no caller at all stays unrestricted.
+func TestAnonymousProjectDenied(t *testing.T) {
+	clearTokenEnv(t)
+	st := openAuthStore(t)
+	if _, _, err := Mint(context.Background(), st, MintRequest{Name: "live", Role: "viewer"}); err != nil {
+		t.Fatal(err)
+	}
+	ac, anonymous, err := AuthOrAnonymous(st, httptest.NewRequest("GET", "/mcp", nil))
+	if err != nil || !anonymous {
+		t.Fatalf("gate on, no header: anonymous=%v err=%v; want anonymous", anonymous, err)
+	}
+	for _, name := range []string{"alpha", "beta"} {
+		if ac.ProjectAllowed(name, false) {
+			t.Fatalf("anonymous caller reaches %q; want denied", name)
+		}
+	}
+
+	ac, anonymous, err = AuthOrAnonymous(openAuthStore(t), httptest.NewRequest("GET", "/mcp", nil))
+	if err != nil || anonymous || !ac.ProjectAllowed("alpha", false) {
+		t.Fatalf("gate off: anonymous=%v err=%v allowed=%v; want open and allowed", anonymous, err, ac.ProjectAllowed("alpha", false))
+	}
+	if !(AuthContext{}).ProjectAllowed("alpha", false) {
+		t.Fatal("a context with no caller must reach every project")
 	}
 }

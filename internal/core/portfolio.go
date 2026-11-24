@@ -19,6 +19,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -64,6 +65,11 @@ func (e *Engine) portfolioQuery(ctx context.Context, req QueryRequest, a portfol
 	cmd, alias := subCommandKey(a.Command, a.Cmd)
 	if cmd == PortfolioSummaryAction {
 		registered, err := portfolioreg.Projects(ctx, opts)
+		if errors.Is(err, portfolioreg.ErrNoRegistry) && grant.ProjectRestricted() {
+			// The error text names the registry path, which a restricted caller
+			// must not see. It gets the empty manifest the fan-out answers instead.
+			registered, err = nil, nil
+		}
 		if err != nil {
 			return nil, err
 		}
