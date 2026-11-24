@@ -47,6 +47,9 @@ const (
 	ViaEnv = "env"
 	// ViaOpen means no token was configured anywhere (local default).
 	ViaOpen = "open"
+	// ViaLocal means no caller reached the engine at all (stdio, the CLI): the
+	// answer names no request identity, so it is an unrestricted local admin.
+	ViaLocal = "local"
 )
 
 // Target identifies the resource an authorization decision is about. The zero

@@ -1,4 +1,9 @@
 {
+  "access": {
+    "restricted": false,
+    "role": "admin",
+    "via": "local"
+  },
   "action": "portfolio",
   "children": [],
   "guidance": "No projects in the portfolio registry: `leankg register-project <dir> --name <n>` (or `leankg index`, which registers on completion).",

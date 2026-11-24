@@ -312,7 +312,7 @@ func objectBytes(obj map[string]any) int {
 // shorten them but never removes them.
 var envelopeKeys = map[string]bool{
 	"query": true, "retrieval": true, "freshness": true, "indexed_at": true, "head_sync": true, "guidance": true,
-	"action": true, "resolved_query": true, "resolved_to": true, "reachable": true,
+	"access": true, "action": true, "resolved_query": true, "resolved_to": true, "reachable": true,
 	"command": true, "path": true, "mode": true, "limit": true, "count": true,
 	"tool": true, "cmd": true, "service": true, "env": true, "id": true,
 	"session_id": true, "node_id": true, "bank": true, "banks": true,

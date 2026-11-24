@@ -1,4 +1,10 @@
 {
+  "access": {
+    "project": "proj",
+    "restricted": false,
+    "role": "admin",
+    "via": "local"
+  },
   "count": 0,
   "deprecated": "args.cmd is deprecated; send args.command",
   "feature_id": "alpha",

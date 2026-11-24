@@ -1,4 +1,10 @@
 {
+  "access": {
+    "project": "proj",
+    "restricted": false,
+    "role": "admin",
+    "via": "local"
+  },
   "command": "view",
   "content": "# Project Memory\n\n- Golden fixture corpus pins the L0-L3 ladder.",
   "freshness": "possibly_stale",

@@ -1,4 +1,9 @@
 {
+  "access": {
+    "restricted": false,
+    "role": "admin",
+    "via": "local"
+  },
   "freshness": "cold",
   "guidance": "Index a repository first: leankg import <dir> or tool import {action:\"repo\", path:...}",
   "hits": [],

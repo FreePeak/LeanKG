@@ -1,4 +1,9 @@
 {
+  "access": {
+    "restricted": false,
+    "role": "admin",
+    "via": "local"
+  },
   "action": "portfolio",
   "cmd": "summary",
   "count": 0,
