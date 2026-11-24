@@ -125,11 +125,15 @@ func Routes(st Store) http.Handler {
 			}
 			ttl = time.Duration(secs) * time.Second
 		}
+		// A project-restricted caller mints only restricted tokens: the new token
+		// carries the caller's project: scopes and nothing the body asks for, so it
+		// can never widen the grant.
 		secret, row, err := Mint(r.Context(), st, MintRequest{
 			Name:      req.Name,
 			Role:      role,
 			AccountID: req.AccountID,
 			OrgID:     req.OrgID,
+			Scopes:    ctx.ProjectScopes(),
 			TTL:       ttl,
 		})
 		if err != nil {
@@ -178,6 +182,12 @@ func Routes(st Store) http.Handler {
 		// any bearer could revoke any token id.
 		ctx, ok := caller(st, w, r)
 		if !ok {
+			return
+		}
+		// A project-restricted caller reaches only its own token. Any other id
+		// answers like an unknown one, so the answer cannot show that it exists.
+		if ctx.ProjectRestricted() && req.TokenID != ctx.TokenID {
+			writeOK(w, false)
 			return
 		}
 		rows, err := st.TokenList(r.Context())
@@ -317,6 +327,12 @@ func requireAccount(st Store, w http.ResponseWriter, r *http.Request) (AuthConte
 	if !ok {
 		return AuthContext{}, false
 	}
+	// Account and org changes (and their member lists) reach other accounts'
+	// standing, so a project-restricted token is kept out of them entirely.
+	if ctx.ProjectRestricted() {
+		httpx.WriteMessage(w, http.StatusForbidden, "account and org endpoints are not available to a project-restricted token")
+		return AuthContext{}, false
+	}
 	if ctx.AccountID == "" {
 		httpx.WriteMessage(w, http.StatusBadRequest, "account-scoped endpoint requires an account access token")
 		return AuthContext{}, false
@@ -344,7 +360,11 @@ type tokenSummary struct {
 // own tokens (Rust list_tokens(ctx.client_id)). A process-level caller (an env
 // token, or a DB token with no account) has no account to filter by, so it sees
 // the full list only when it is an admin; below admin it sees nothing (#586).
+// A project-restricted caller sees only its own token.
 func tokenVisibleTo(ctx AuthContext, t store.Token) bool {
+	if ctx.ProjectRestricted() {
+		return t.ID == ctx.TokenID
+	}
 	if ctx.AccountID == "" {
 		return ctx.CanAdmin()
 	}

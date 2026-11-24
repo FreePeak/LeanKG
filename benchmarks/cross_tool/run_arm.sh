@@ -71,14 +71,20 @@ export PROMPT_SHA
 PROMPT_VERSION="$("${PYTHON:-python3}" "${HERE}/get_prompt.py" --repos "${HERE}/repos.yaml" --slug "${SLUG}" --version 2>/dev/null || echo "1")"
 export PROMPT_VERSION
 
-# Like-for-like gate: refuse to run when the cloned corpus drifted off the
-# pinned lock (setup wrote repos.lock.yaml). Missing lock = warn + proceed.
-if [[ -n "${REPO_SHA}" && -f "${HERE}/repos.lock.yaml" ]]; then
+# Like-for-like gate: fail closed unless the clone HEAD equals a resolved SHA in
+# repos.lock.yaml (written by `make lock`). A missing lock file, a missing entry
+# or an UNRESOLVED entry stops the run.
+LOCKED_SHA=""
+if [[ -f "${HERE}/repos.lock.yaml" ]]; then
   LOCKED_SHA="$(awk "/^${SLUG}:/{f=1;next} f&&/sha:/{print \$2;exit}" "${HERE}/repos.lock.yaml")"
-  if [[ -n "${LOCKED_SHA}" && "${REPO_SHA}" != "${LOCKED_SHA}" ]]; then
-    echo "ERROR: ${SLUG} HEAD ${REPO_SHA:0:10} != locked ${LOCKED_SHA:0:10} (FR-ZCP-08 like-for-like). Re-run: make setup" >&2
-    exit 3
-  fi
+fi
+if [[ ${#LOCKED_SHA} -ne 40 ]]; then
+  echo "ERROR: ${SLUG} has no resolved SHA in repos.lock.yaml (missing or UNRESOLVED). Run: make lock, then make setup" >&2
+  exit 3
+fi
+if [[ "${REPO_SHA}" != "${LOCKED_SHA}" ]]; then
+  echo "ERROR: ${SLUG} HEAD ${REPO_SHA:0:10} != locked ${LOCKED_SHA:0:10} (FR-ZCP-08 like-for-like). Re-run: make setup" >&2
+  exit 3
 fi
 
 echo "=== arm=${ARM} repo=${SLUG} N=${N} model=${MODEL:-default} sha=${REPO_SHA:0:10} ==="

@@ -128,7 +128,8 @@ func RoleOrAnonymous(st Store, r *http.Request) (role Role, anonymous bool, err 
 }
 
 // AuthOrAnonymous is RoleOrAnonymous with the caller's whole identity: the role
-// and the token's project grant. The anonymous and open cases carry no grant.
+// and the token's project grant. The open case carries no grant (unrestricted);
+// the anonymous case carries no grant and is denied every project.
 func AuthOrAnonymous(st Store, r *http.Request) (ac AuthContext, anonymous bool, err error) {
 	if r.Header.Get("Authorization") != "" {
 		resolved, err := Resolve(st, r)
@@ -136,7 +137,7 @@ func AuthOrAnonymous(st Store, r *http.Request) (ac AuthContext, anonymous bool,
 	}
 	gated, gateErr := GateEnabled(r.Context(), st)
 	if gateErr != nil || gated {
-		return AuthContext{Role: Viewer}, true, nil
+		return AuthContext{Role: Viewer, Via: ViaAnonymous}, true, nil
 	}
 	return AuthContext{Role: Admin, Via: ViaOpen}, false, nil
 }

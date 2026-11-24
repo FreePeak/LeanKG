@@ -12,9 +12,10 @@ codebases, under three arms:
 
 Numbers are comparable in method to `colbymchenry/codegraph`'s published 7-repo
 suite (re-validated 2026-07-21, Opus 4.8); the questions come from that suite.
-The byte metric follows context-mode's own method (raw tool-output bytes vs
-bytes delivered to the model, tokens = bytes / 4), and answer quality is scored
-judge-blind.
+The byte metric is the reduction in tool-result bytes returned to the model,
+relative to the baseline arm. It is not context-mode's bytes-in-context figure:
+raw tool-output bytes before any compaction are not recorded for the
+context-mode arm. Answer quality is scored judge-blind.
 
 Status: setup and dry run only. A real run needs user approval and a filled-in
 `tools.lock.yaml`; see [RUNNING.md](RUNNING.md).
@@ -27,8 +28,8 @@ Status: setup and dry run only. A real run needs user approval and a filled-in
 | Wall-clock time | `time` around the `claude -p` call (`duration_s`) |
 | File reads | `file_read_count` from the envelope |
 | Input / output / cache-read tokens | `usage.input_tokens`, `usage.output_tokens`, `usage.cache_read_input_tokens` |
-| Bytes delivered to the model | `tool_result_bytes`: sum of `tool_result` content in the transcript; tokens estimated as bytes / 4 |
-| Bytes the raw output would have put in context | not recorded yet; see RUNNING.md (needs per-arm instrumentation) |
+| Tool-result bytes returned to the model | `tool_result_bytes`: sum of `tool_result` content in the transcript; no token estimate is computed |
+| Raw tool-output bytes before compaction | not recorded for any arm; see RUNNING.md (needs per-arm instrumentation) |
 | Cost | `total_cost_usd` |
 | Exit reason | `stop_reason`, `exit_code` |
 | Answer quality | `score.py`, judge-blind 0-6 rubric (`make score`) |
@@ -36,7 +37,7 @@ Status: setup and dry run only. A real run needs user approval and a filled-in
 The aggregator (`aggregate.py`) reports the **median** of N trials per arm per
 repo, matching codegraph's methodology. IQR is shown in an appendix. The
 aggregator takes its arms from the rows (one column group per arm, with
-bytes-in-context reduction vs baseline and a losing-rows section); see RUNNING.md.
+`tool-result bytes reduction` vs baseline and a losing-rows section); see RUNNING.md.
 
 ## Layout
 

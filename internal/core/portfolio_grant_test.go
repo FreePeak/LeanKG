@@ -164,3 +164,31 @@ func TestPortfolioRestrictedOmitsRegistry(t *testing.T) {
 		t.Fatalf("unrestricted answer must keep the registry field; got keys %v", open)
 	}
 }
+
+// TestPortfolioRestrictedNoRegistryHidesPath pins fix S1: with no registry file,
+// a restricted caller's T0 manifest answers an empty summary with no error and
+// no registry path. An unrestricted caller keeps the error that names the path.
+func TestPortfolioRestrictedNoRegistryHidesPath(t *testing.T) {
+	regDB := filepath.Join(t.TempDir(), "absent", "portfolio.db")
+	t.Setenv(portfolioreg.DBPathEnv, regDB)
+	e, _ := newEngine(t)
+	ctx := context.Background()
+	summary := QueryRequest{Action: "portfolio", Args: map[string]any{"cmd": PortfolioSummaryAction}}
+
+	granted := auth.WithAuth(ctx, auth.AuthContext{Role: auth.Viewer, Via: auth.ViaToken, Scopes: []string{"project:alpha"}})
+	out, err := e.Query(granted, summary)
+	if err != nil {
+		t.Fatalf("restricted manifest with no registry must answer empty, got error: %v", err)
+	}
+	body, _ := json.Marshal(out)
+	if strings.Contains(string(body), regDB) || strings.Contains(string(body), filepath.Dir(regDB)) {
+		t.Fatalf("restricted answer names the registry path: %s", body)
+	}
+	if out["count"] != 0 {
+		t.Fatalf("restricted manifest count = %v, want 0", out["count"])
+	}
+
+	if _, err := e.Query(ctx, summary); err == nil || !strings.Contains(err.Error(), regDB) {
+		t.Fatalf("unrestricted manifest with no registry must keep the path-naming error, got %v", err)
+	}
+}

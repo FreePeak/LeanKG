@@ -106,7 +106,7 @@ Approve each of these before a real run:
 4. **Global install on the host**: `npm i -g context-mode@2.2.2`, and node >= 24.15.0.
 5. **`leankg index` embed step**: `leankg index .` also embeds unless `--no-embed`. If a remote embedding provider is configured, that step costs money on every `leankg` trial. Choose `--no-embed` or confirm the provider.
 6. **Confound acceptance**: the `leankg` and `context-mode` arms run without `--bare`, so the user's global CLAUDE.md, hooks and plugins load into those arms and not into `baseline` (`run_one.sh`, `BARE_FLAG`). Accept this, or run with a clean profile first.
-7. **Raw-output bytes** for the context-mode byte metric. Only `tool_result_bytes` (delivered) is recorded. The raw side (what the raw tool output would have put in context) needs per-arm instrumentation. Decide whether to build it or report delivered bytes only.
+7. **Raw-output bytes**. Only `tool_result_bytes` (bytes returned to the model) is recorded, for every arm. Raw tool-output bytes before any compaction are not recorded for the context-mode arm, so the `tool-result bytes reduction` column is not directly comparable to context-mode's own bytes-in-context figure. Decide whether to build the raw side (needs per-arm instrumentation) or report returned bytes only.
 8. **Judge model** for `score.py` (`--model`, empty = CLI default).
 9. **Disk and network** for `make setup` (7 clones; vscode is large).
 
