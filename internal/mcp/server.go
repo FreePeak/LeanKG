@@ -30,15 +30,17 @@ import (
 // (multi-project serving: LEANKG_PROJECT_DIRS). Implemented by
 // internal/projects; nil keeps the single-engine behavior.
 type ProjectRouter interface {
-	EngineFor(ctx context.Context, project string) (*core.Engine, func(), error)
+	// EngineAs picks the project's engine for a caller limited to the projects
+	// visible admits (nil admits every project).
+	EngineAs(ctx context.Context, project string, visible func(dir string) bool) (*core.Engine, func(), error)
 	// MultiProject reports whether more than one project is registered. With a
 	// single project the default engine is unambiguous, so an omitted
 	// `project` argument is not an error — a stdio spawn is one agent session
 	// over one project and must keep working.
 	MultiProject() bool
-	// Authorize applies the caller's project grant to a selector without opening
-	// the project, and returns its directory.
-	Authorize(ctx context.Context, selector string) (string, error)
+	// AuthorizeAs applies the caller's project grant and visibility to a
+	// selector without opening the project, and returns its directory.
+	AuthorizeAs(ctx context.Context, selector string, visible func(dir string) bool) (string, error)
 }
 
 // Server wraps the go-sdk server over one core engine. When router is set,
@@ -116,7 +118,9 @@ func WithProjectRequired(v bool) Option {
 }
 
 // engineFor picks the engine for one call: args.project when a router is
-// configured, else the wrapped engine.
+// configured, else the wrapped engine. A caller limited to some projects (an
+// org-keyed token) is resolved through the router with its visibility, so a
+// project it may not see is refused exactly like an unknown one.
 func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core.Engine, func(), error) {
 	if s.router == nil {
 		return s.grantedEngine(ctx, s.engine)
@@ -127,6 +131,7 @@ func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core
 			return nil, noRelease, err
 		}
 	}
+	visible := visibleOf(ctx)
 	// Fail closed: with several projects registered, an omitted `project` used
 	// to fall back to the serve process's cwd engine, so a question about
 	// another project got a confident answer built from the WRONG graph
@@ -135,7 +140,17 @@ func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core
 	// unanswerable without knowing which graph to search, so we refuse.
 	p, _ := args["project"].(string)
 	if p == "" {
-		if s.scoped || !s.router.MultiProject() {
+		// A scoped server already serves the project the URL selected, and the
+		// routing layer checked that project against the caller's scope.
+		if s.scoped {
+			return s.grantedEngine(ctx, s.engine)
+		}
+		// An org-scoped caller is answered from the default project only when
+		// its org may see it.
+		if visible != nil {
+			return s.router.EngineAs(ctx, "", visible)
+		}
+		if !s.router.MultiProject() {
 			// One project registered: the wrapped engine is the only answer, and
 			// an agent that never learned about `project` must keep working.
 			return s.grantedEngine(ctx, s.engine)
@@ -144,22 +159,22 @@ func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core
 			"this server serves multiple projects (LEANKG_PROJECT_DIRS), so a tool call must name one",
 			"add \"project\": \"<repo dir or name>\" to the tool arguments, or from inside a repo run `leankg query …` against that project's own server")
 	}
-	// The router applies the caller's project grant before it opens anything.
-	return s.router.EngineFor(ctx, p)
+	return s.router.EngineAs(ctx, p, visible)
 }
 
-// grantedEngine refuses a caller whose grant does not cover the project eng
-// serves. A caller with no grant, or a grant that names no project, is served
-// as before. With a router the router decides, so a basename shared by two
+// grantedEngine refuses a caller whose grant or org scope does not cover the
+// project eng serves. A caller with no grant and no org scope is served as
+// before. With a router the router decides, so a basename shared by two
 // registered projects is refused here too. The wrapped engine is held for the
 // server's lifetime, so its lease is noRelease.
 func (s *Server) grantedEngine(ctx context.Context, eng *core.Engine) (*core.Engine, func(), error) {
 	grant, _ := auth.AuthFrom(ctx)
-	if !grant.ProjectRestricted() {
+	visible := visibleOf(ctx)
+	if !grant.ProjectRestricted() && visible == nil {
 		return eng, noRelease, nil
 	}
 	if s.router != nil {
-		if _, err := s.router.Authorize(ctx, eng.ProjectDir()); err != nil {
+		if _, err := s.router.AuthorizeAs(ctx, eng.ProjectDir(), visible); err != nil {
 			return nil, noRelease, auth.ProjectDenied("")
 		}
 		return eng, noRelease, nil
@@ -320,7 +335,12 @@ func (s *Server) HTTPHandler() http.Handler {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
-		ctx := withCaller(r.Context(), caller{ac: ac, anonymous: anonymous})
+		visible, err := auth.ProjectScope(r.Context(), s.authStore, ac)
+		if err != nil {
+			http.Error(w, `{"error":"project scope unavailable"}`, http.StatusInternalServerError)
+			return
+		}
+		ctx := withCaller(r.Context(), caller{ac: ac, anonymous: anonymous, visible: visible})
 		if s.recorder().Level() != telemetry.Off {
 			ctx = telemetry.WithIdentity(ctx, identityFromHeaders(r), telemetry.TransportHTTP)
 		}
@@ -330,14 +350,16 @@ func (s *Server) HTTPHandler() http.Handler {
 
 type ctxKey int
 
-// caller is who an HTTP request resolved to: its identity (role and project
-// grant) and whether it is the anonymous principal. anonymous is set when the
-// gate is on and the request carried no Authorization header. A context without
-// a caller (stdio, which is inherently local) is Admin with no grant, and not
-// anonymous.
+// caller is who an HTTP request resolved to: its identity (role, project grant
+// and org, carried in ac) and whether it is the anonymous principal. anonymous is
+// set when the gate is on and the request carried no Authorization header. visible
+// limits the projects the caller may be served (nil admits all). A context
+// without a caller (stdio, which is inherently local) is Admin with no grant, not
+// anonymous, and unscoped.
 type caller struct {
 	ac        auth.AuthContext
 	anonymous bool
+	visible   func(dir string) bool
 }
 
 const callerKey ctxKey = 0
@@ -346,6 +368,15 @@ const callerKey ctxKey = 0
 // portfolio fan-out, which apply the project grant.
 func withCaller(ctx context.Context, c caller) context.Context {
 	return context.WithValue(auth.WithAuth(ctx, c.ac), callerKey, c)
+}
+
+// visibleOf returns the project visibility of the caller in ctx (nil for an
+// unscoped caller, including stdio).
+func visibleOf(ctx context.Context) func(dir string) bool {
+	if c, ok := ctx.Value(callerKey).(caller); ok {
+		return c.visible
+	}
+	return nil
 }
 
 // roleOf returns the caller role (Admin when ungated, which is the local

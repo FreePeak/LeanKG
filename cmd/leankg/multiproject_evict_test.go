@@ -22,7 +22,7 @@ func TestRouterEvictionDropsTheBuiltHandler(t *testing.T) {
 	key := router.List()[1]
 
 	builds := 0
-	h := newProjectRouting(router, nil, http.NotFoundHandler(), func(*projects.Project) http.Handler {
+	h := newProjectRouting(router, nil, nil, http.NotFoundHandler(), func(*projects.Project) http.Handler {
 		builds++
 		return http.NotFoundHandler()
 	})

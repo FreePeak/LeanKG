@@ -290,15 +290,32 @@ func indexOf(dirs []string, d string) int {
 //
 // Everything else errors (FR-ZCP-02): no silent default fallback.
 func (r *Router) resolve(selector string) (string, error) {
+	return r.resolveVisible(selector, nil)
+}
+
+// resolveVisible is resolve over the projects a caller may see: visible admits
+// a canonical dir, and nil admits every project. A project the caller may not
+// see is refused exactly as an unknown one is: the same error, naming only the
+// projects the caller can see. Names are matched among the visible projects
+// only, so a hidden project can neither answer nor make a name ambiguous.
+func (r *Router) resolveVisible(selector string, visible func(dir string) bool) (string, error) {
+	admit := func(dir string) bool { return visible == nil || visible(dir) }
+	unknown := func() error { return r.unknownProjectError(selector, r.admitted(admit)) }
 	if selector == "" {
+		if !admit(r.def) {
+			return "", unknown()
+		}
 		return r.def, nil
 	}
 	sel := canonical(selector)
 	if sel == "" {
-		return "", r.unknownProjectError(selector)
+		return "", unknown()
 	}
 	if contains(r.List(), sel) {
-		return sel, nil
+		if admit(sel) {
+			return sel, nil
+		}
+		return "", unknown()
 	}
 	// The ancestor walk is for PATHS only (Rust find_leankg_for_path
 	// parity): the selector may be a file or subdirectory of a registered
@@ -317,18 +334,21 @@ func (r *Router) resolve(selector string) (string, error) {
 	if isPathSelector(selector) {
 		for dir := sel; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
 			if contains(r.List(), dir) {
-				return dir, nil
+				if admit(dir) {
+					return dir, nil
+				}
+				return "", unknown()
 			}
 		}
 	}
 	// A bare name (or a path that is inside no project) matches by
 	// basename. Several matches are ambiguous — the error names them.
-	matches := r.byName(filepath.Base(sel))
+	matches := r.byName(filepath.Base(sel), admit)
 	switch len(matches) {
 	case 1:
 		return matches[0], nil
 	case 0:
-		return "", r.unknownProjectError(selector)
+		return "", unknown()
 	default:
 		return "", r.ambiguousProjectError(selector, matches)
 	}
@@ -362,8 +382,7 @@ const maxKnownProjectsInError = 10
 // The list is truncated with a count of the remainder rather than dropped:
 // "which projects exist?" is a real question, and the answer must not be a
 // 30 KB string.
-func (r *Router) unknownProjectError(selector string) error {
-	known := r.List()
+func (r *Router) unknownProjectError(selector string, known []string) error {
 	shown, more := known, 0
 	if len(shown) > maxKnownProjectsInError {
 		more = len(shown) - maxKnownProjectsInError
@@ -403,23 +422,40 @@ func (r *Router) ambiguousProjectError(selector string, matches []string) error 
 	return errors.New(msg + " — pass the absolute path instead")
 }
 
-// byName returns every registered project whose basename is name. More than
+// byName returns every admitted project whose basename is name. More than
 // one is ambiguous; the caller decides what to do about it.
-func (r *Router) byName(name string) []string {
+func (r *Router) byName(name string, admit func(dir string) bool) []string {
 	var hits []string
 	for _, d := range r.List() {
-		if filepath.Base(d) == name {
+		if filepath.Base(d) == name && admit(d) {
 			hits = append(hits, d)
 		}
 	}
 	return hits
 }
 
+// admitted returns the registered projects that admit accepts, default first.
+func (r *Router) admitted(admit func(dir string) bool) []string {
+	var out []string
+	for _, d := range r.List() {
+		if admit(d) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 // EngineFor returns the project's engine, opening it on first use, and the
 // lease that keeps it open: call release when the request is done with the
 // engine. selector "" = default project.
 func (r *Router) EngineFor(ctx context.Context, selector string) (*core.Engine, func(), error) {
-	p, release, err := r.Open(ctx, selector)
+	return r.EngineAs(ctx, selector, nil)
+}
+
+// EngineAs is EngineFor for a caller limited to the projects visible admits
+// (see resolveVisible); nil admits every project.
+func (r *Router) EngineAs(ctx context.Context, selector string, visible func(dir string) bool) (*core.Engine, func(), error) {
+	p, release, err := r.OpenAs(ctx, selector, visible)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -430,8 +466,14 @@ func (r *Router) EngineFor(ctx context.Context, selector string) (*core.Engine, 
 // (auth.AuthFrom on ctx) without opening anything. It returns the project's
 // directory. A caller with no grant is unrestricted.
 func (r *Router) Authorize(ctx context.Context, selector string) (string, error) {
+	return r.AuthorizeAs(ctx, selector, nil)
+}
+
+// AuthorizeAs is Authorize for a caller limited to the projects visible admits
+// (see resolveVisible); nil admits every project.
+func (r *Router) AuthorizeAs(ctx context.Context, selector string, visible func(dir string) bool) (string, error) {
 	grant, _ := auth.AuthFrom(ctx)
-	dir, err := r.resolve(selector)
+	dir, err := r.resolveVisible(selector, visible)
 	if err != nil {
 		if grant.ProjectRestricted() {
 			// A restricted caller learns nothing from a failed selector: the same
@@ -441,7 +483,9 @@ func (r *Router) Authorize(ctx context.Context, selector string) (string, error)
 		return "", err
 	}
 	name := filepath.Base(dir)
-	if !grant.ProjectAllowed(name, len(r.byName(name)) > 1) {
+	// A basename shared with any registered project, visible or not, is shared.
+	shared := len(r.byName(name, func(string) bool { return true })) > 1
+	if !grant.ProjectAllowed(name, shared) {
 		return "", auth.ProjectDenied(selector)
 	}
 	return dir, nil
@@ -465,7 +509,13 @@ func (r *Router) Authorize(ctx context.Context, selector string) (string, error)
 // no live lease. When every open project is in use the cap is exceeded
 // until one of them is released, rather than closing a store under a request.
 func (r *Router) Open(ctx context.Context, selector string) (*Project, func(), error) {
-	dir, err := r.Authorize(ctx, selector)
+	return r.OpenAs(ctx, selector, nil)
+}
+
+// OpenAs is Open for a caller limited to the projects visible admits (see
+// resolveVisible); nil admits every project.
+func (r *Router) OpenAs(ctx context.Context, selector string, visible func(dir string) bool) (*Project, func(), error) {
+	dir, err := r.AuthorizeAs(ctx, selector, visible)
 	if err != nil {
 		return nil, nil, err
 	}

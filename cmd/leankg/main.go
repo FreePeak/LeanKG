@@ -344,7 +344,7 @@ func rpcHandler(st auth.Store, router *projects.Router, engine *core.Engine, rec
 	})))
 	// The catch-all declares no floor of its own: the RPC mux's procedures
 	// declare their roles (internal/rpc/capture.go), behind defaultProjectGate.
-	top.Handle("/", auth.Public(defaultProjectGate(router, mux)))
+	top.Handle("/", auth.Public(defaultProjectGate(router, st, mux)))
 	return auth.MiddlewareWithStore(st, top)
 }
 
@@ -364,7 +364,7 @@ func dashboardHandler(st auth.Store, addr string, router *projects.Router, engin
 		}
 		return router.Authorize(ctx, path)
 	}
-	dash := routeByProject(router, nil,
+	dash := routeByProject(router, st, nil,
 		web.APIHandler(engine, mem, web.WithProjectSwitcher(switcher)),
 		func(p *projects.Project) http.Handler {
 			return web.APIHandler(p.Engine, p.Memory, web.WithProjectDir(p.Dir), web.WithProjectSwitcher(switcher))
@@ -698,7 +698,7 @@ afterSidecars:
 		mcpSrv.SetRecorder(rec) // plan v4.15 DS-04/DS-05: HTTP capture and headers
 		registerMCPSink(mcpSrv)
 		h := httpMux(mcpSrv.HTTPHandler())
-		h = routeByProject(router, resolveCaller(st), h, func(p *projects.Project) http.Handler {
+		h = routeByProject(router, st, resolveCaller(st), h, func(p *projects.Project) http.Handler {
 			pSrv := newScopedMCPServer(p.Engine, router)
 			pSrv.SetAuthStore(st)
 			pSrv.SetRecorder(rec)
@@ -721,7 +721,7 @@ afterSidecars:
 		}
 		// Routing sits INSIDE the auth boundary: token gating applies
 		// before a selector is resolved or its name echoed back.
-		h := routeByProject(router, nil, rest.Handler(engine, mem, restOpts...), func(p *projects.Project) http.Handler {
+		h := routeByProject(router, st, nil, rest.Handler(engine, mem, restOpts...), func(p *projects.Project) http.Handler {
 			return rest.Handler(p.Engine, p.Memory, restOpts...)
 		})
 		h = restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router), restauto.WithJobs(jobs),

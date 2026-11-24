@@ -494,13 +494,13 @@ func TestMissingProjectFailsClosedUnderARouter(t *testing.T) {
 // fakeRouter proves it was consulted: the default engine must not answer instead.
 type fakeRouter struct{ multi bool }
 
-func (fakeRouter) EngineFor(context.Context, string) (*core.Engine, func(), error) {
+func (fakeRouter) EngineAs(context.Context, string, func(string) bool) (*core.Engine, func(), error) {
 	return nil, func() {}, fmt.Errorf("fakeRouter: consulted")
 }
 
 func (f fakeRouter) MultiProject() bool { return f.multi }
 
-func (fakeRouter) Authorize(context.Context, string) (string, error) {
+func (fakeRouter) AuthorizeAs(context.Context, string, func(string) bool) (string, error) {
 	return "", fmt.Errorf("fakeRouter: consulted")
 }
 

@@ -82,7 +82,7 @@ func (r grantRig) mcpHandler() http.Handler {
 	srv := leankgmcp.New(engineOver(r.t, r.gamma), leankgmcp.WithProjectRequired(true))
 	srv.SetProjectRouter(r.router)
 	srv.SetAuthStore(r.st)
-	return routeByProject(r.router, resolveCaller(r.st), srv.HTTPHandler(), func(p *projects.Project) http.Handler {
+	return routeByProject(r.router, r.st, resolveCaller(r.st), srv.HTTPHandler(), func(p *projects.Project) http.Handler {
 		pSrv := newScopedMCPServer(p.Engine, r.router)
 		pSrv.SetAuthStore(r.st)
 		return pSrv.HTTPHandler()
@@ -92,7 +92,7 @@ func (r grantRig) mcpHandler() http.Handler {
 // restHandler mounts the REST listener the way serve does: the auth gate
 // outside the ?project= routing.
 func (r grantRig) restHandler() http.Handler {
-	h := routeByProject(r.router, nil, rest.Handler(engineOver(r.t, r.gamma), nil), func(p *projects.Project) http.Handler {
+	h := routeByProject(r.router, r.st, nil, rest.Handler(engineOver(r.t, r.gamma), nil), func(p *projects.Project) http.Handler {
 		return rest.Handler(p.Engine, p.Memory)
 	})
 	return auth.MiddlewareWithStore(r.st, h)
