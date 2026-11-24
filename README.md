@@ -5,7 +5,7 @@
 <h1 align="center">LeanKG</h1>
 
 <p align="center">
-  <strong>Every answer about your code says which rung it came from, how fresh it is, and whether you are allowed to see it.</strong><br>
+  <strong>Every code-graph answer says which rung it came from, how fresh it is, and whether you are allowed to see it.</strong><br>
   A self-hosted code knowledge graph for AI coding agents, for engineering organizations whose agents must answer from the real codebase under their own access rules.
 </p>
 
@@ -43,13 +43,13 @@
 
 ## Why LeanKG
 
-- **Provenance on every answer about your code.** A `query` answer names the retrieval rung it came from (`retrieval.rung`, `retrieval.reason`) and how fresh the index is: `freshness` (`cold`, `fresh` or `possibly_stale`), `indexed_at`, and `head_sync` on a git-indexed store. A consumer can tell an exact match from a fallback and a current index from a stale one. The catalog, session and utility actions carry no retrieval, and a portfolio fan-out has none at the top level (each child answer has its own); see [the tool contract](docs/mcp-tool-contract.md).
+- **Provenance on every code-graph answer.** A `query` answer names the retrieval rung it came from (`retrieval.rung`, `retrieval.reason`) and how fresh the index is: `freshness` (`cold`, `fresh` or `possibly_stale`), `indexed_at`, and `head_sync` on a git-indexed store. A consumer can tell an exact match from a fallback and a current index from a stale one. The ontology, session, prd, incidents, env_conflicts, service_context, compress and languages actions carry no retrieval, and a portfolio fan-out has none at the top level (each child answer has its own); see [the tool contract](docs/mcp-tool-contract.md).
 - **Per-project access.** A bearer token can be limited to named projects with `project:<name>` scopes, and the grant is checked on MCP, REST, auto-config, the dashboard API, RPC and portfolio reads. Every answer's `access` block states the role and project the caller was served as. Viewer, Contributor and Admin roles are declared per HTTP route, and a non-loopback bind is refused without a token.
 - **Several repositories, one server.** `LEANKG_PROJECT_DIRS` registers several repositories in one process. Each request selects its project, and a portfolio query skips the projects the caller cannot see.
 - **Deployment control.** One CGO-free binary and a container image. SQLite needs no database server. PostgreSQL with pgvector is the opt-in for shared, server-scale deployments.
 - **Lower agent cost.** Agents ask for a targeted subgraph (callers, dependents, impact, tests, docs) instead of running grep-and-read loops over whole files. The archived A/B figures are in [Performance](#performance); they have not been re-run on the Go engine.
 
-A real `query` answer, trimmed to the provenance keys. It is the output of `leankg query -action exact Greet` on a three-function Go fixture indexed in a git repository, run through the CLI, which calls the same engine as the MCP tool. `hits` is omitted. `indexed_at` is a unix time and differs on each index run.
+A real `query` answer, trimmed to the provenance keys (hits, query and limit omitted). It is the output of `leankg query -action exact Greet` on a three-function Go fixture indexed in a git repository, run through the CLI, which calls the same engine as the MCP tool. `indexed_at` is a unix time and differs on each index run.
 
 ```json
 {
@@ -343,7 +343,7 @@ docker run --rm -p 8080:10000 -e PORT=10000 leankg   # dashboard and its /api on
 - **Call edges are resolved by name within a directory.** There is no import or type resolution, so a same-name call in the same directory resolves, and cross-package dispatch is best-effort. The upgrade path is tree-sitter symbol tables. See [`internal/index/relations.go`](internal/index/relations.go#L30-L39).
 - **Heuristic guards** in the indexer: files of 1 MiB or more are skipped as vendored or minified bundles ([`internal/index/index.go`](internal/index/index.go#L104)); call targets shorter than 4 characters are dropped as noise, and outgoing calls are capped per element (40) and per file (500) ([`internal/index/relations.go`](internal/index/relations.go#L51-L53)).
 - **The unit of scope is a repository.** A portfolio root (tens of thousands of nested files) is not a project; register its child repositories one at a time.
-- **`--ui` binds an unauthenticated data API** (query, read and import routes). Bind it to loopback or front it with a proxy. The public demo container serves it `--read-only` against a disposable baked graph. Its `/api/file` reader needs a Viewer token when the gate is on, and answers 403 on a non-loopback bind when the gate is off.
+- **With no token configured, `--ui` binds an unauthenticated data API** (query, read and import routes). Bind it to loopback or front it with a proxy. The public demo container serves it `--read-only` against a disposable baked graph. Its `/api/file` reader needs a Viewer token when the gate is on, and answers 403 on a non-loopback bind when the gate is off.
 - **Dashboard API and the auth gate.** With the gate on, the dashboard shell loads but its `/api/` calls return 401, because the bundled UI sends no `Authorization` header.
 - **Project-scoped tokens and RPC.** A token scoped to a project other than the default gets no RPC access. The check fails closed with 403. `/health` on that listener still answers 200 to any valid token.
 

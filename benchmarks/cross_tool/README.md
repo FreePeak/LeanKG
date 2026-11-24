@@ -95,7 +95,7 @@ generated report):
 ```bash
 # after the arms:
 make score     # judge-blind quality scoring (needs claude CLI)
-make report    # medians + variance + quality + rigor checklist (pending: 3-arm support)
+make report    # medians + variance + quality + rigor checklist
 ```
 
 ## Methodology notes
