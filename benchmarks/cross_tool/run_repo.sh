@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Run BOTH arms (with + without) for one repo, N runs each. Designed to be
-# invoked by one subagent per repo so the 7 benchmark repos can run in
+# Run all three arms (baseline, context-mode, leankg) for one repo, N runs each.
+# Designed to be invoked once per repo so the 7 benchmark repos can run in
 # parallel. Each invocation writes to a per-day JSONL under
 # results/runs/<DATE>/<slug>/<arm>/runs.jsonl.
 #
@@ -10,7 +10,8 @@
 #   model  = claude model id, empty = use claude -p default
 #
 # Environment overrides:
-#   LEANKG_BIN    absolute path to leankg binary (default: ../../target/release/leankg)
+#   LEANKG_BIN    absolute path to leankg binary (default: <repo root>/bin/leankg)
+#   CONTEXT_MODE_SERVER  absolute path to context-mode server.mjs (context-mode arm)
 #   CLAUDE_BIN    absolute path to claude CLI (default: command -v claude)
 #   RESULTS_DIR   absolute path to the results root
 #   REPOS_DIR     absolute path to the cloned repos root
@@ -27,12 +28,12 @@ if [[ ! -d "${BENCH_DIR:-}" ]]; then
   BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
 fi
 
-# Default to the worktree's release build if the caller didn't specify one.
+# Default to the repo's Go build (make go-build) if the caller didn't specify one.
 if [[ -z "${LEANKG_BIN:-}" ]]; then
-  # 1) Honor explicit override; 2) prefer the worktree's release binary; 3) PATH
-  WORKTREE_LEANKG="${BENCH_DIR}/../../target/release/leankg"
-  if [[ -x "${WORKTREE_LEANKG}" ]]; then
-    LEANKG_BIN="${WORKTREE_LEANKG}"
+  # 1) Honor explicit override; 2) prefer the repo-root bin/leankg; 3) PATH
+  REPO_LEANKG="${BENCH_DIR}/../../bin/leankg"
+  if [[ -x "${REPO_LEANKG}" ]]; then
+    LEANKG_BIN="${REPO_LEANKG}"
   else
     LEANKG_BIN="$(command -v leankg || true)"
   fi
@@ -61,8 +62,9 @@ fi
 
 echo "=== repo=${SLUG} N=${N} model=${MODEL:-default} leankg=${LEANKG_BIN} ==="
 
-# Run both arms sequentially inside this single repo (each subagent owns its repo).
-"${BENCH_DIR}/run_arm.sh" "${SLUG}" with    "${N}" "${MODEL}"
-"${BENCH_DIR}/run_arm.sh" "${SLUG}" without "${N}" "${MODEL}"
+# Run the three arms sequentially inside this single repo.
+for ARM in baseline context-mode leankg; do
+  "${BENCH_DIR}/run_arm.sh" "${SLUG}" "${ARM}" "${N}" "${MODEL}"
+done
 
 echo "=== repo=${SLUG} done ==="
