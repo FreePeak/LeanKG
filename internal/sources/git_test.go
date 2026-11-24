@@ -215,20 +215,207 @@ func TestGitSourceMaterializeEphemeralFallsBackToAClone(t *testing.T) {
 	}
 }
 
-func TestInjectAuthOnlyTouchesHTTPS(t *testing.T) {
-	tests := []struct {
-		url, auth, want string
-	}{
-		{"https://github.com/user/repo.git", "ghp_token123", "https://oauth2:ghp_token123@github.com/user/repo.git"},
-		{"https://github.com/user/repo.git", "", "https://github.com/user/repo.git"},
-		{"ssh://git@github.com/user/repo.git", "token", "ssh://git@github.com/user/repo.git"},
-		{"git@github.com:user/repo.git", "token", "git@github.com:user/repo.git"},
+// fakeBasicB64 is base64("oauth2:FAKETOKEN"), the value the Basic header carries.
+const fakeBasicB64 = "b2F1dGgyOkZBS0VUT0tFTg=="
+
+// envValues returns the last value of each KEY=VALUE pair, as exec applies them.
+func envValues(env []string) map[string]string {
+	out := map[string]string{}
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		out[k] = v
 	}
-	for _, tc := range tests {
-		if got := injectAuth(tc.url, tc.auth); got != tc.want {
-			t.Errorf("injectAuth(%q, %q) = %q, want %q", tc.url, tc.auth, got, tc.want)
+	return out
+}
+
+func TestGitRemoteCarriesTheTokenOutOfBand(t *testing.T) {
+	const clean = "https://example.invalid/group/repo.git"
+	for _, in := range []string{clean, "https://oauth2:FAKETOKEN@example.invalid/group/repo.git"} {
+		url, env := gitRemote(in, "FAKETOKEN")
+		if url != clean {
+			t.Errorf("gitRemote(%q) url = %q, want the clean %q", in, url, clean)
+		}
+		want := map[string]string{
+			"GIT_CONFIG_COUNT":    "1",
+			"GIT_CONFIG_KEY_0":    "http.https://example.invalid/.extraheader",
+			"GIT_CONFIG_VALUE_0":  "Authorization: Basic " + fakeBasicB64,
+			"GIT_TERMINAL_PROMPT": "0",
+		}
+		got := envValues(env)
+		for k, v := range want {
+			if got[k] != v {
+				t.Errorf("gitRemote(%q) env %s = %q, want %q", in, k, got[k], v)
+			}
 		}
 	}
+}
+
+func TestGitRemotePassesThroughWithoutACredential(t *testing.T) {
+	tests := []struct{ name, url, token string }{
+		{"empty token", "https://example.invalid/x.git", ""},
+		{"ssh", "ssh://git@example.invalid/x.git", "FAKETOKEN"},
+		{"scp-like", "git@example.invalid:x.git", "FAKETOKEN"},
+		{"file", "file:///srv/git/x", "FAKETOKEN"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			url, env := gitRemote(tc.url, tc.token)
+			if url != tc.url || env != nil {
+				t.Fatalf("gitRemote(%q, %q) = (%q, %d env vars), want the URL unchanged and no env", tc.url, tc.token, url, len(env))
+			}
+		})
+	}
+}
+
+// fakeGit puts a git stub first on PATH. Every call appends its argv and the
+// credential environment to a log, so a test sees what the real command line
+// and environment would carry, with no network. FAKE_GIT_ORIGIN is what
+// `git config --get remote.origin.url` prints; FAKE_GIT_FAIL makes every call
+// fail and echo FAKE_GIT_SECRET the way a careless git diagnostic would.
+func fakeGit(t *testing.T) string {
+	t.Helper()
+	bin := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "git.log")
+	script := `#!/bin/sh
+for last; do :; done
+{
+  printf 'argv'
+  for a in "$@"; do printf ' [%s]' "$a"; done
+  printf ' | env count=%s key=%s value=%s prompt=%s\n' "$GIT_CONFIG_COUNT" "$GIT_CONFIG_KEY_0" "$GIT_CONFIG_VALUE_0" "$GIT_TERMINAL_PROMPT"
+} >>"$FAKE_GIT_LOG"
+if [ -n "$FAKE_GIT_FAIL" ]; then
+  echo "fatal: rejected $GIT_CONFIG_VALUE_0 $FAKE_GIT_SECRET" >&2
+  exit 128
+fi
+case "$1" in
+  config) echo "$FAKE_GIT_ORIGIN" ;;
+  clone) mkdir -p "$last" ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_GIT_LOG", logPath)
+	t.Setenv("FAKE_GIT_ORIGIN", "")
+	t.Setenv("FAKE_GIT_FAIL", "")
+	t.Setenv("FAKE_GIT_SECRET", "")
+	return logPath
+}
+
+// TestCredentialStaysOutOfArgvAndURL drives every network call through the
+// fake git: the clone, the ls-remote, and the archive. None may carry the token
+// or its Basic form in argv, and each must carry the header in its environment.
+func TestCredentialStaysOutOfArgvAndURL(t *testing.T) {
+	logPath := fakeGit(t)
+	const clean = "https://example.invalid/group/repo.git"
+	t.Setenv("FAKE_GIT_ORIGIN", clean)
+	src := &GitSource{URL: clean, Auth: "FAKETOKEN", RefName: "main"}
+
+	if _, err := src.SyncToLocal(context.Background(), t.TempDir(), &recorder{}); err != nil {
+		t.Fatalf("SyncToLocal: %v", err)
+	}
+	if _, err := src.RemoteFingerprint(context.Background()); err != nil {
+		t.Fatalf("RemoteFingerprint: %v", err)
+	}
+	if _, err := src.MaterializeEphemeral(context.Background(), t.TempDir(), &recorder{}); err != nil {
+		t.Fatalf("MaterializeEphemeral: %v", err)
+	}
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, call := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		argv, env, _ := strings.Cut(call, " | env ")
+		if strings.Contains(argv, "FAKETOKEN") || strings.Contains(argv, fakeBasicB64) {
+			t.Errorf("argv carries the credential: %s", argv)
+		}
+		for _, verb := range []string{"clone", "ls-remote", "archive", "fetch"} {
+			if !strings.HasPrefix(argv, "argv [") || !strings.Contains(argv, "["+verb+"]") {
+				continue
+			}
+			seen[verb] = true
+			if verb != "fetch" && !strings.Contains(argv, "["+clean+"]") {
+				t.Errorf("%s argv does not name the clean URL: %s", verb, argv)
+			}
+			want := "count=1 key=http.https://example.invalid/.extraheader value=Authorization: Basic " + fakeBasicB64 + " prompt=0"
+			if env != want {
+				t.Errorf("%s env = %q, want %q", verb, env, want)
+			}
+		}
+	}
+	for _, verb := range []string{"clone", "ls-remote", "archive", "fetch"} {
+		if !seen[verb] {
+			t.Errorf("no %s call reached the fake git; the check is vacuous", verb)
+		}
+	}
+}
+
+// routeHTTPSTo points git's https transport for remote at a local repository,
+// so the credential path runs against real git with no network. The remote
+// URL that git stores stays the https one.
+func routeHTTPSTo(t *testing.T, remote, localDir string) {
+	t.Helper()
+	cfg := filepath.Join(t.TempDir(), "gitconfig")
+	body := "[url \"file://" + localDir + "\"]\n\tinsteadOf = " + remote + "\n"
+	if err := os.WriteFile(cfg, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", cfg)
+}
+
+// assertCleanGitConfig fails when .git/config carries the token, its Basic
+// form, or any userinfo, and returns the file for the evidence log.
+func assertCleanGitConfig(t *testing.T, dir string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, ".git", "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"FAKETOKEN", fakeBasicB64, "oauth2:", "@example.invalid"} {
+		if strings.Contains(string(raw), secret) {
+			t.Fatalf(".git/config carries %q:\n%s", secret, raw)
+		}
+	}
+	return string(raw)
+}
+
+// The clone and the fetch run real git against a local repository reached
+// through an https insteadOf rewrite. The stored remote must stay clean.
+func TestCloneAndFetchLeaveNoCredentialInGitConfig(t *testing.T) {
+	hermeticGit(t)
+	origin := newOriginRepo(t)
+	const remote = "https://example.invalid/repo.git"
+	routeHTTPSTo(t, remote, origin)
+	dest := filepath.Join(t.TempDir(), "clone")
+
+	if err := CloneRepo(context.Background(), remote, "FAKETOKEN", dest, "main", &recorder{}); err != nil {
+		t.Fatalf("CloneRepo: %v", err)
+	}
+	t.Logf(".git/config after clone:\n%s", assertCleanGitConfig(t, dest))
+
+	// The environment must make real git see the header under the host scope.
+	_, env := gitRemote(remote, "FAKETOKEN")
+	cmd := exec.Command("git", "config", "--get", "http.https://example.invalid/.extraheader")
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git config --get under the credential env: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "Authorization: Basic "+fakeBasicB64 {
+		t.Fatalf("extraheader = %q", got)
+	}
+
+	commitFile(t, origin, "second.go", "package fixture\n")
+	if err := FetchAndCheckout(context.Background(), dest, "FAKETOKEN", "main", &recorder{}); err != nil {
+		t.Fatalf("FetchAndCheckout: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "second.go")); err != nil {
+		t.Fatalf("the fetched commit did not land: %v", err)
+	}
+	assertCleanGitConfig(t, dest)
 }
 
 func TestSyncedCloneIsIndexableAndHidesGit(t *testing.T) {
@@ -272,7 +459,7 @@ func TestCloneRepoIntoCallerDirectory(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "clone-target")
 	progress := &recorder{}
 
-	if err := CloneRepo(context.Background(), origin, dest, "main", progress); err != nil {
+	if err := CloneRepo(context.Background(), origin, "", dest, "main", progress); err != nil {
 		t.Fatalf("CloneRepo: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dest, ".git")); err != nil {
@@ -289,12 +476,12 @@ func TestFetchAndCheckoutAdvancesExistingClone(t *testing.T) {
 	hermeticGit(t)
 	origin := newOriginRepo(t)
 	dest := filepath.Join(t.TempDir(), "clone-target")
-	if err := CloneRepo(context.Background(), origin, dest, "main", &recorder{}); err != nil {
+	if err := CloneRepo(context.Background(), origin, "", dest, "main", &recorder{}); err != nil {
 		t.Fatalf("CloneRepo: %v", err)
 	}
 
 	commitFile(t, origin, "second.go", "package fixture\n")
-	if err := FetchAndCheckout(context.Background(), dest, "main", &recorder{}); err != nil {
+	if err := FetchAndCheckout(context.Background(), dest, "", "main", &recorder{}); err != nil {
 		t.Fatalf("FetchAndCheckout: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dest, "second.go")); err != nil {
@@ -312,7 +499,7 @@ func TestCloneRepoChecksOutTagRef(t *testing.T) {
 	gitOut(t, origin, "tag", "v1.0.0")
 	dest := filepath.Join(t.TempDir(), "tag-clone")
 
-	if err := CloneRepo(context.Background(), origin, dest, "v1.0.0", &recorder{}); err != nil {
+	if err := CloneRepo(context.Background(), origin, "", dest, "v1.0.0", &recorder{}); err != nil {
 		t.Fatalf("CloneRepo(tag): %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dest, "code.go")); err != nil {

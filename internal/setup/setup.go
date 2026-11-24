@@ -177,7 +177,7 @@ func CloneRepos(ctx context.Context, specs []RepoSpec, logf func(string, ...any)
 			continue
 		}
 		if pathExists(filepath.Join(spec.Dest, ".git")) {
-			if err := sources.FetchAndCheckout(ctx, spec.Dest, refName, reportFunc(logf)); err != nil {
+			if err := sources.FetchAndCheckout(ctx, spec.Dest, token, refName, reportFunc(logf)); err != nil {
 				return nil, fmt.Errorf("fetch %s: %w", spec.Dest, err)
 			}
 			dirs = append(dirs, spec.Dest)
@@ -190,27 +190,12 @@ func CloneRepos(ctx context.Context, specs []RepoSpec, logf func(string, ...any)
 			return nil, err
 		}
 		logf("Cloning %s -> %s (ref=%s)", spec.URL, spec.Dest, refName)
-		if err := sources.CloneRepo(ctx, withToken(spec.URL, token), spec.Dest, refName, reportFunc(logf)); err != nil {
+		if err := sources.CloneRepo(ctx, spec.URL, token, spec.Dest, refName, reportFunc(logf)); err != nil {
 			return nil, fmt.Errorf("git clone failed for %s: %w", spec.URL, err)
 		}
 		dirs = append(dirs, spec.Dest)
 	}
 	return dirs, nil
-}
-
-// withToken injects the credential the way Rust did (`oauth2:<token>@host`)
-// into an https clone URL. Any other transport — notably the file:// URLs
-// tests and local mirrors use — is passed through untouched (Rust's
-// `replace("https://", ...)` was a no-op there too, and prefixing a token
-// onto a non-https URL corrupts it).
-func withToken(url, token string) string {
-	if token == "" {
-		return url
-	}
-	if rest, ok := strings.CutPrefix(url, "https://"); ok {
-		return "https://oauth2:" + token + "@" + rest
-	}
-	return url
 }
 
 func reportFunc(logf func(string, ...any)) sources.ProgressReporter {

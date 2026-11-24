@@ -18,10 +18,9 @@
 //     stagingPath re-checks that the result is a direct child).
 //   - Clones are shallow (`--depth 1`) and ref-pinned, ref defaulting to
 //     "main"; the ref is an argv element too.
-//   - A token is injected only into https URLs, as `oauth2:<token>@host`
-//     (Rust maybe_inject_auth). That is the Rust credential policy, so the
-//     token also lands in the clone's .git/config remote URL: keep the staging
-//     tree inside the project root and out of version control.
+//   - A token is sent only to https URLs, as a Basic Authorization header in
+//     the git child's environment (GIT_CONFIG_* scoped to the host). The
+//     remote URL stays clean, so the token never reaches argv or .git/config.
 //   - Schemes Rust refused stay refused: s3 (SigV4), sftp (ssh2) and gdrive
 //     (OAuth) fail with ErrUnsupportedScheme and the Rust message text.
 //   - Remote-controlled paths are validated at the trust boundary: tar entries
