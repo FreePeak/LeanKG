@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,10 +14,17 @@ import (
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
+// provenanceRungs is the closed retrieval.rung vocabulary: the ladder rungs,
+// ast-grep and lsp, and the graph, memory and git reads that stampProvenance names.
+var provenanceRungs = map[string]bool{
+	"L0": true, "L1": true, "L2": true, "L3": true,
+	"ast-grep": true, "lsp": true, "graph": true, "memory": true, "git": true,
+}
+
 // provenanceExempt lists query actions the per-answer contract does not apply
 // to, with the reason. Each one is an explicit skip in the test output.
 var provenanceExempt = map[string]string{
-	"lsp": "needs a language server on the host; the golden pins the refusal, and the env-gated vocabulary test covers the positive path",
+	"lsp": "a positive answer needs a language server on the host: lspQuery sets retrieval.rung=lsp only after one answers, and without one the query errors, so the golden pins the refusal and no answer reaches this check",
 	"portfolio": "a fan-out has no single rung: each child answer carries its own retrieval and freshness " +
 		"(TestPortfolioChildCarriesProvenance in internal/portfolioreg)",
 }
@@ -90,8 +98,8 @@ func TestQueryAnswersCarryProvenance(t *testing.T) {
 				t.Skip("known gap: " + why)
 			}
 			r, _ := out["retrieval"].(map[string]any)
-			if rung, _ := r["rung"].(string); rung == "" {
-				t.Errorf("retrieval.rung missing: retrieval=%v", out["retrieval"])
+			if rung, _ := r["rung"].(string); !provenanceRungs[rung] {
+				t.Errorf("retrieval.rung = %q (retrieval=%v); want one of the closed vocabulary", rung, out["retrieval"])
 			}
 			state, _ := out["freshness"].(string)
 			switch state {
@@ -137,6 +145,25 @@ func TestStampProvenanceKeepsLadderRung(t *testing.T) {
 	}
 	if bare["freshness"] != store.FreshnessCold {
 		t.Fatalf("bare answer freshness = %v; want cold on an empty store", bare["freshness"])
+	}
+}
+
+// TestStampProvenanceDegradesOnCountError: a store that cannot count its
+// elements still answers a memory, git, lsp or pattern read. The answer keeps
+// its rung and is labelled possibly_stale, the label store.Freshness gives an
+// index it cannot read.
+func TestStampProvenanceDegradesOnCountError(t *testing.T) {
+	e, _ := newEngine(t)
+	e.st = elementCountFails{Backend: e.st, cause: errors.New("count unreadable")}
+	out, err := e.stampProvenance(context.Background(), map[string]any{}, "memory", "agent memory search")
+	if err != nil {
+		t.Fatalf("a count error failed the answer: %v", err)
+	}
+	if out["freshness"] != store.FreshnessPossiblyStale {
+		t.Fatalf("freshness = %v; want %s", out["freshness"], store.FreshnessPossiblyStale)
+	}
+	if r := out["retrieval"].(map[string]any); r["rung"] != "memory" {
+		t.Fatalf("retrieval = %v; want the given rung kept", r)
 	}
 }
 
