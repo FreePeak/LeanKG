@@ -238,3 +238,69 @@ func TestReaderDoesNotStoreContext(t *testing.T) {
 		}
 	}
 }
+
+// twoCommitRepo builds a repository with two commits on main and returns its
+// root with the ids of the first and the second commit.
+func twoCommitRepo(t *testing.T) (root, first, second string) {
+	t.Helper()
+	gittest.SkipWithoutGit(t)
+	root = t.TempDir()
+	gittest.Git(t, root, "init", "-q")
+	gittest.WriteFile(t, root, "a.go", "package a\n")
+	gittest.Git(t, root, "add", ".")
+	gittest.Git(t, root, "commit", "-q", "-m", "one")
+	first = gittest.Git(t, root, "rev-parse", "HEAD")
+	gittest.WriteFile(t, root, "b.go", "package b\n")
+	gittest.Git(t, root, "add", ".")
+	gittest.Git(t, root, "commit", "-q", "-m", "two")
+	second = gittest.Git(t, root, "rev-parse", "HEAD")
+	return root, first, second
+}
+
+// TestHeadCommitReadsTheRefWithoutGit: the head id of a branch is read from the
+// repository files, so the common answer does not run a git subprocess. With no
+// git binary on PATH the read still succeeds.
+func TestHeadCommitReadsTheRefWithoutGit(t *testing.T) {
+	root, _, second := twoCommitRepo(t)
+	t.Setenv("PATH", "")
+	got, ok, err := HeadCommit(context.Background(), root)
+	if err != nil || !ok || got != second {
+		t.Fatalf("HeadCommit with no git on PATH = %q, %v, %v; want %q, true, nil", got, ok, err, second)
+	}
+}
+
+// TestHeadCommitMatchesGitAcrossLayouts: the file read agrees with
+// `git rev-parse HEAD` for a branch, a detached HEAD, packed refs, a linked
+// worktree (whose branch lives in the common dir) and an unborn HEAD.
+func TestHeadCommitMatchesGitAcrossLayouts(t *testing.T) {
+	ctx := context.Background()
+	root, first, second := twoCommitRepo(t)
+	check := func(name, dir, want string) {
+		t.Helper()
+		got, ok, err := HeadCommit(ctx, dir)
+		if err != nil || !ok || got != want {
+			t.Fatalf("%s: HeadCommit = %q, %v, %v; want %q, true, nil", name, got, ok, err, want)
+		}
+	}
+	check("branch", root, second)
+
+	gittest.Git(t, root, "checkout", "-q", "--detach", first)
+	check("detached", root, first)
+
+	gittest.Git(t, root, "checkout", "-q", "main")
+	gittest.Git(t, root, "pack-refs", "--all")
+	check("packed ref", root, second)
+
+	wt := filepath.Join(t.TempDir(), "wt")
+	gittest.Git(t, root, "worktree", "add", "-q", "-b", "side", wt, first)
+	check("linked worktree", wt, first)
+
+	unborn := t.TempDir()
+	gittest.Git(t, unborn, "init", "-q")
+	if got, ok, err := HeadCommit(ctx, unborn); err != nil || ok {
+		t.Fatalf("unborn: HeadCommit = %q, %v, %v; want no head and no error", got, ok, err)
+	}
+
+	t.Setenv("GIT_DIR", filepath.Join(root, ".git"))
+	check("GIT_DIR set", root, second)
+}

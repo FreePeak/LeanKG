@@ -100,6 +100,9 @@ func HeadBlobs(ctx context.Context, root string) (blobs []Blob, ok bool, err err
 // status request, and three subprocesses per request is a price nobody
 // notices until the fleet answers a hundred statuses a minute.
 func HeadCommit(ctx context.Context, root string) (string, bool, error) {
+	if id, ok := readHeadRef(root); ok {
+		return id, true, nil
+	}
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	out, stderr, err := runGit(ctx, root, "rev-parse", "--verify", "HEAD")
@@ -114,6 +117,92 @@ func HeadCommit(ctx context.Context, root string) (string, bool, error) {
 		return "", false, gitErr("git rev-parse HEAD failed", stderr, err)
 	}
 	return strings.TrimSpace(string(out)), true, nil
+}
+
+// readHeadRef resolves HEAD from the repository files, so the common answer
+// costs a few small reads instead of a git subprocess. It covers a branch (a
+// loose ref or packed-refs, in a linked worktree too, where the branch lives in
+// the common dir) and a detached HEAD. ok is false for anything it does not
+// resolve with certainty: an unborn branch, reftable storage, a symbolic ref
+// outside refs/heads, a root that is not a repository top level, or GIT_DIR.
+// The caller then asks git, which decides.
+func readHeadRef(root string) (string, bool) {
+	if os.Getenv("GIT_DIR") != "" {
+		return "", false
+	}
+	gitDir := filepath.Join(root, ".git")
+	if info, err := os.Stat(gitDir); err == nil && !info.IsDir() {
+		target, ok := readPath(gitDir, root)
+		if !ok {
+			return "", false
+		}
+		gitDir = target
+	}
+	head, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+	if err != nil {
+		return "", false
+	}
+	line := strings.TrimSpace(string(head))
+	if isObjectID(line) {
+		return line, true
+	}
+	ref, ok := strings.CutPrefix(line, "ref: ")
+	if !ok || !strings.HasPrefix(ref, "refs/heads/") {
+		return "", false
+	}
+	common := gitDir
+	if target, ok := readPath(filepath.Join(gitDir, "commondir"), gitDir); ok {
+		common = target
+	}
+	if b, err := os.ReadFile(filepath.Join(common, ref)); err == nil {
+		id := strings.TrimSpace(string(b))
+		return id, isObjectID(id)
+	}
+	return packedRef(filepath.Join(common, "packed-refs"), ref)
+}
+
+// readPath reads a file that names a directory: a linked worktree's ".git" file
+// ("gitdir: <path>") or the "commondir" file. A relative path is taken from base.
+func readPath(file, base string) (string, bool) {
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return "", false
+	}
+	target, _ := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir: ")
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(base, target)
+	}
+	return target, true
+}
+
+// packedRef looks up ref in a packed-refs file ("<id> SP <ref>" lines; "#" and
+// "^" lines are comments and peeled tags).
+func packedRef(file, ref string) (string, bool) {
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return "", false
+	}
+	for line := range strings.SplitSeq(string(b), "\n") {
+		id, name, found := strings.Cut(line, " ")
+		if found && name == ref && isObjectID(id) {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+// isObjectID reports whether s is a full SHA-1 or SHA-256 object id in lower
+// hex, the form `git rev-parse` prints.
+func isObjectID(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // HeadSnapshot returns the commit id HEAD points at together with THAT
