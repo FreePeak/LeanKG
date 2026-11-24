@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.37.1](https://github.com/FreePeak/LeanKG/compare/v0.37.0...v0.37.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* **hosted:** build routed handlers per project instance ([e10e942](https://github.com/FreePeak/LeanKG/commit/e10e942c515bf8300574baa64209216bd7bf2f2d))
+* **hosted:** restore claimed projects into the router at startup ([b12c508](https://github.com/FreePeak/LeanKG/commit/b12c5087ff1d5a1d8298ebce1350aebfd6c51688))
+* **hosted:** restore registrations at startup and hold the open-project cap ([53645ae](https://github.com/FreePeak/LeanKG/commit/53645aeccd14371374277b895c0b4d2bbfb399b1))
+* **hosted:** typed refusal for graph writes on routed projects ([94d1fcf](https://github.com/FreePeak/LeanKG/commit/94d1fcf735588b425fafe17ab9f91c905915021f))
+* **projects:** hold the open-project cap when leases are released ([cba4260](https://github.com/FreePeak/LeanKG/commit/cba426013896dcde518c5df9a1a89ff44889d54b))
+
 ## [0.37.0](https://github.com/FreePeak/LeanKG/compare/v0.36.0...v0.37.0) (2026-11-24)
 
 
