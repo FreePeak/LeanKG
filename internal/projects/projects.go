@@ -81,8 +81,9 @@ type Project struct {
 	retired bool
 }
 
-// defaultMaxOpen is the cap on lazily-opened projects when neither
-// Config.MaxOpen nor LEANKG_HOSTED_MAX_OPEN_PROJECTS sets one.
+// defaultMaxOpen is the cap on lazily-opened projects in hosted mode when
+// neither Config.MaxOpen nor LEANKG_HOSTED_MAX_OPEN_PROJECTS sets one. Outside
+// hosted mode the default is no cap.
 const defaultMaxOpen = 64
 
 // MaxOpenEnv names the environment variable that caps how many routed
@@ -103,8 +104,9 @@ type Config struct {
 	Memory     bool
 	Embedder   embed.Provider
 	// MaxOpen caps how many routed projects stay open (0 = the env
-	// LEANKG_HOSTED_MAX_OPEN_PROJECTS, else 64). The default project is not
-	// counted: it is seeded, never evicted.
+	// LEANKG_HOSTED_MAX_OPEN_PROJECTS, else 64 in hosted mode and no cap
+	// outside it). The default project is not counted: it is seeded, never
+	// evicted.
 	MaxOpen int
 	// Hosted serves a control plane: routed project stores open read-only
 	// (a separate worker is their only writer), they never migrate, and the
@@ -150,6 +152,9 @@ func NewRouter(defaultDir string, cfg Config) *Router {
 	}
 	if r.maxOpen <= 0 {
 		r.maxOpen = maxOpenFromEnv()
+	}
+	if r.maxOpen <= 0 && cfg.Hosted {
+		r.maxOpen = defaultMaxOpen
 	}
 	for _, d := range cfg.ExtraDirs {
 		c := canonical(d)
@@ -275,11 +280,11 @@ func (r *Router) MultiProject() bool {
 }
 
 // maxOpenFromEnv reads LEANKG_HOSTED_MAX_OPEN_PROJECTS: a positive integer,
-// else the default.
+// else 0 (no value).
 func maxOpenFromEnv() int {
 	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv(MaxOpenEnv)))
 	if err != nil || n <= 0 {
-		return defaultMaxOpen
+		return 0
 	}
 	return n
 }
@@ -560,10 +565,11 @@ func (r *Router) OpenAs(ctx context.Context, selector string, visible func(dir s
 
 // makeRoomLocked closes idle least-recently-used projects until one more can
 // open under the cap, and returns their dirs. Projects with a live lease are
-// never chosen; if none is idle the loop stops and the cap is exceeded.
+// never chosen; if none is idle the loop stops and the cap is exceeded. A
+// router with no cap (maxOpen 0) never evicts.
 func (r *Router) makeRoomLocked() []string {
 	var evicted []string
-	for r.openProjectsLocked() >= r.maxOpen {
+	for r.maxOpen > 0 && r.openProjectsLocked() >= r.maxOpen {
 		victim := r.idleLRULocked()
 		if victim == nil {
 			break

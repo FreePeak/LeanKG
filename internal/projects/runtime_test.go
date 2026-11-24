@@ -2,6 +2,7 @@ package projects
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -275,17 +276,102 @@ func TestRegistryIsSafeUnderConcurrentUse(t *testing.T) {
 }
 
 func TestMaxOpenProjectsReadsTheEnvironment(t *testing.T) {
-	t.Setenv("LEANKG_HOSTED_MAX_OPEN_PROJECTS", "3")
+	t.Setenv(MaxOpenEnv, "3")
+	if r := NewRouter(t.TempDir(), Config{Hosted: true}); r.maxOpen != 3 {
+		t.Fatalf("hosted maxOpen = %d, want 3 from %s", r.maxOpen, MaxOpenEnv)
+	}
+	// An operator who sets the env var outside hosted mode still gets the cap.
 	if r := NewRouter(t.TempDir(), Config{}); r.maxOpen != 3 {
-		t.Fatalf("maxOpen = %d, want 3 from LEANKG_HOSTED_MAX_OPEN_PROJECTS", r.maxOpen)
+		t.Fatalf("non-hosted maxOpen = %d, want 3 from %s", r.maxOpen, MaxOpenEnv)
 	}
 	for _, bad := range []string{"", "0", "-2", "many"} {
-		t.Setenv("LEANKG_HOSTED_MAX_OPEN_PROJECTS", bad)
-		if r := NewRouter(t.TempDir(), Config{}); r.maxOpen != defaultMaxOpen {
-			t.Fatalf("env %q: maxOpen = %d, want the default %d", bad, r.maxOpen, defaultMaxOpen)
+		t.Setenv(MaxOpenEnv, bad)
+		if r := NewRouter(t.TempDir(), Config{Hosted: true}); r.maxOpen != defaultMaxOpen {
+			t.Fatalf("hosted env %q: maxOpen = %d, want the default %d", bad, r.maxOpen, defaultMaxOpen)
+		}
+		if r := NewRouter(t.TempDir(), Config{}); r.maxOpen != 0 {
+			t.Fatalf("non-hosted env %q: maxOpen = %d, want 0 (no cap)", bad, r.maxOpen)
 		}
 	}
 	if defaultMaxOpen != 64 {
 		t.Fatalf("defaultMaxOpen = %d, want 64", defaultMaxOpen)
+	}
+}
+
+func TestNonHostedRouterNeverEvictsOpenProjects(t *testing.T) {
+	t.Setenv("LEANKG_PORTFOLIO_DB", filepath.Join(t.TempDir(), "portfolio.db"))
+	t.Setenv(MaxOpenEnv, "")
+	base := t.TempDir()
+	def := filepath.Join(base, "primary")
+	var dirs []string
+	for i := 0; i < 120; i++ {
+		dirs = append(dirs, filepath.Join(base, fmt.Sprintf("p%03d", i)))
+	}
+	r, fo := newFakeRouter(def, Config{ExtraDirs: dirs})
+	for _, d := range dirs {
+		leaseAndRelease(t, r, d)
+	}
+	for _, d := range dirs {
+		if n := closedCount(t, fo, d); n != 0 {
+			t.Fatalf("%s closed %d times; a non-hosted router must keep every opened project open", d, n)
+		}
+	}
+}
+
+func TestHostedRouterCapsOpenProjectsAtTheDefault(t *testing.T) {
+	t.Setenv("LEANKG_PORTFOLIO_DB", filepath.Join(t.TempDir(), "portfolio.db"))
+	t.Setenv(MaxOpenEnv, "")
+	base := t.TempDir()
+	def := filepath.Join(base, "primary")
+	var dirs []string
+	for i := 0; i < defaultMaxOpen+2; i++ {
+		dirs = append(dirs, filepath.Join(base, fmt.Sprintf("p%03d", i)))
+	}
+	r, fo := newFakeRouter(def, Config{ExtraDirs: dirs, Hosted: true})
+	for _, d := range dirs {
+		leaseAndRelease(t, r, d)
+	}
+	if n := closedCount(t, fo, dirs[0]); n != 1 {
+		t.Fatalf("hosted: first project closed %d times, want 1 (LRU victim over the default cap)", n)
+	}
+	if n := closedCount(t, fo, dirs[len(dirs)-1]); n != 0 {
+		t.Fatalf("hosted: last project closed %d times, want 0", n)
+	}
+}
+
+func TestHostedRouterEvictsOverASmallEnvCap(t *testing.T) {
+	t.Setenv("LEANKG_PORTFOLIO_DB", filepath.Join(t.TempDir(), "portfolio.db"))
+	t.Setenv(MaxOpenEnv, "2")
+	base := t.TempDir()
+	def := filepath.Join(base, "primary")
+	a := filepath.Join(base, "a")
+	b := filepath.Join(base, "b")
+	c := filepath.Join(base, "c")
+	r, fo := newFakeRouter(def, Config{ExtraDirs: []string{a, b, c}, Hosted: true})
+	leaseAndRelease(t, r, a)
+	leaseAndRelease(t, r, b)
+	leaseAndRelease(t, r, c)
+	if n := closedCount(t, fo, a); n != 1 {
+		t.Fatalf("a closed %d times, want 1 (cap 2 from %s)", n, MaxOpenEnv)
+	}
+}
+
+func TestMultiProjectSeesRuntimeAddOnASeededDefault(t *testing.T) {
+	t.Setenv("LEANKG_PORTFOLIO_DB", filepath.Join(t.TempDir(), "portfolio.db"))
+	base := t.TempDir()
+	def := filepath.Join(base, "primary")
+	alpha := filepath.Join(base, "alpha")
+	r, _ := newFakeRouter(def, Config{})
+	// The serving process seeds its own project into the router (SeedDefault),
+	// so the open-project count includes it.
+	r.SeedDefault(&Project{Dir: canonical(def), Name: "primary", Store: &fakeProjectStore{}})
+	if r.MultiProject() {
+		t.Fatal("a router with only its default project must not be multi-project")
+	}
+	if err := r.Add(alpha); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if !r.MultiProject() {
+		t.Fatal("after a runtime Add the router serves two projects and must report multi-project")
 	}
 }
