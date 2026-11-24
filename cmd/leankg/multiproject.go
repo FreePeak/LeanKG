@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/FreePeak/LeanKG/internal/auth"
+	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/projects"
 )
@@ -16,6 +18,7 @@ import (
 // process.
 type projectRouting struct {
 	router   *projects.Router
+	identify func(*http.Request) (auth.AuthContext, error)
 	fallback http.Handler
 	build    func(*projects.Project) http.Handler
 
@@ -28,28 +31,68 @@ type projectRouting struct {
 // leankgmcp.New(engine).HTTPHandler()). The router keeps no context: each
 // request opens its project on that request's own context, and a request
 // whose client has gone away is refused before anything is opened.
-func routeByProject(router *projects.Router, fallback http.Handler, build func(*projects.Project) http.Handler) http.Handler {
+//
+// identify resolves the caller of a routed request. It is for a listener that
+// routes outside its own gate (the MCP listener); a listener whose gate already
+// stored the caller in the request context (REST, the dashboard) passes nil.
+func routeByProject(router *projects.Router, identify func(*http.Request) (auth.AuthContext, error), fallback http.Handler, build func(*projects.Project) http.Handler) http.Handler {
 	return httpx.Guard(&projectRouting{
 		router:   router,
-		fallback: fallback,
+		identify: identify,
+		fallback: defaultProjectGate(router, fallback),
 		build:    build,
 		cache:    map[string]http.Handler{},
 	})
 }
 
+// defaultProjectGate serves next only to a caller whose grant covers the default
+// project, the project a request with no selector is served from. The refusal
+// is the router's own, the same one a withheld project gets.
+func defaultProjectGate(router *projects.Router, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := router.Authorize(r.Context(), ""); err != nil {
+			httpx.WriteError(w, err)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// resolveCaller is the identify step for a listener whose routing sits outside
+// its gate: the caller resolves exactly as the gate resolves it.
+func resolveCaller(st auth.Store) func(*http.Request) (auth.AuthContext, error) {
+	return func(r *http.Request) (auth.AuthContext, error) { return auth.Resolve(st, r) }
+}
+
 func (h *projectRouting) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	sel := r.URL.Query().Get("project")
 	if sel == "" {
+		// The fallback is defaultProjectGate: the caller's grant applies to the
+		// default's name too. The MCP listener's own gate covers its callers,
+		// which carry no grant in this context.
 		h.fallback.ServeHTTP(w, r)
 		return
 	}
-	p, err := h.router.Open(r.Context(), sel)
+	ctx := r.Context()
+	if h.identify != nil {
+		caller, err := h.identify(r)
+		if err != nil {
+			httpx.WriteError(w, errs.NewError(errs.Unauthorized, errs.Unauthorized.Cause, ""))
+			return
+		}
+		ctx = auth.WithAuth(ctx, caller)
+	}
+	p, err := h.router.Open(ctx, sel)
 	if err != nil {
+		if httpx.CodeOf(err) == errs.PermissionDenied.Code {
+			httpx.WriteError(w, err)
+			return
+		}
 		// FR-ZCP-02: an unknown project is refused as a 404, never routed to the default.
 		httpx.WriteMessage(w, http.StatusNotFound, err.Error())
 		return
 	}
-	h.handlerFor(p).ServeHTTP(w, r)
+	h.handlerFor(p).ServeHTTP(w, r.WithContext(ctx))
 }
 
 // handlerFor builds (once) the transport handler for a project.

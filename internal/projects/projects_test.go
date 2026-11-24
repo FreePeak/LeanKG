@@ -185,17 +185,17 @@ func TestResolveDoesNotOpenStore(t *testing.T) {
 	r := NewRouter(a, Config{ExtraDirs: []string{b}})
 	defer r.Close()
 
-	dir, err := r.Resolve(b)
+	dir, err := r.resolve(b)
 	if err != nil {
-		t.Fatalf("Resolve(%q) = %v", b, err)
+		t.Fatalf("resolve(%q) = %v", b, err)
 	}
 	if dir == "" {
-		t.Fatal("Resolve returned an empty dir")
+		t.Fatal("resolve returned an empty dir")
 	}
 	if _, err := os.Stat(filepath.Join(b, ".leankg")); !os.IsNotExist(err) {
-		t.Fatalf("Resolve created a store under %s (stat err = %v); it must not open", b, err)
+		t.Fatalf("resolve created a store under %s (stat err = %v); it must not open", b, err)
 	}
-	if _, err := r.Resolve(filepath.Join(t.TempDir(), "unknown")); err == nil {
-		t.Fatal("Resolve accepted an unregistered path")
+	if _, err := r.resolve(filepath.Join(t.TempDir(), "unknown")); err == nil {
+		t.Fatal("resolve accepted an unregistered path")
 	}
 }

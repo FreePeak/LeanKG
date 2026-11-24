@@ -1,4 +1,10 @@
 {
+  "access": {
+    "project": "proj",
+    "restricted": false,
+    "role": "admin",
+    "via": "local"
+  },
   "action": "explain",
   "element": {
     "content": "func Alpha() int {\n\treturn Beta() + 1\n}",

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"testing"
 
@@ -136,7 +137,13 @@ func TestCaptureInterceptorResponsesIdentical(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Msg.Json != b.Msg.Json {
+	// Each fixture is built on its own store, so indexed_at (the watermark time)
+	// can differ by a second between the two calls; mask it like the other
+	// wall-clock fields.
+	volatileIndexedAt := regexp.MustCompile(`"indexed_at":\d+`)
+	maskedA := volatileIndexedAt.ReplaceAllString(a.Msg.Json, `"indexed_at":0`)
+	maskedB := volatileIndexedAt.ReplaceAllString(b.Msg.Json, `"indexed_at":0`)
+	if maskedA != maskedB {
 		t.Fatalf("capture changed the response:\noff: %s\non:  %s", a.Msg.Json, b.Msg.Json)
 	}
 }

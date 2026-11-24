@@ -1,4 +1,9 @@
 {
+  "access": {
+    "restricted": false,
+    "role": "admin",
+    "via": "local"
+  },
   "freshness": "possibly_stale",
   "hits": [
     {

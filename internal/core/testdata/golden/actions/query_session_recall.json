@@ -1,4 +1,10 @@
 {
+  "access": {
+    "project": "proj",
+    "restricted": false,
+    "role": "admin",
+    "via": "local"
+  },
   "command": "recall",
   "node_id": "node-1",
   "payload": "payload-one"

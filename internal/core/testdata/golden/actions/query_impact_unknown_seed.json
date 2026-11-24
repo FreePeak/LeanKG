@@ -1,4 +1,10 @@
 {
+  "access": {
+    "project": "proj",
+    "restricted": false,
+    "role": "admin",
+    "via": "local"
+  },
   "action": "impact",
   "freshness": "possibly_stale",
   "guidance": "No indexed element matches the seed \"NoSuchSymbol\"; resolve it with query (action empty) to a qualified_name, then retry impact with that exact QN.",

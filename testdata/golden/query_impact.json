@@ -1,4 +1,9 @@
 {
+  "access": {
+    "restricted": false,
+    "role": "admin",
+    "via": "local"
+  },
   "action": "impact",
   "depth": 2,
   "freshness": "possibly_stale",

@@ -1,4 +1,10 @@
 {
+  "access": {
+    "project": "proj",
+    "restricted": false,
+    "role": "admin",
+    "via": "local"
+  },
   "command": "canvas",
   "refs": [
     {

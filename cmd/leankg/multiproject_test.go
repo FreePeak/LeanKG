@@ -124,7 +124,7 @@ func TestRESTProjectRouting(t *testing.T) {
 	})
 	defer router.Close()
 
-	h := auth.MiddlewareWithStore(nil, routeByProject(router, rest.Handler(defaultEng, nil), func(p *projects.Project) http.Handler {
+	h := auth.MiddlewareWithStore(nil, routeByProject(router, nil, rest.Handler(defaultEng, nil), func(p *projects.Project) http.Handler {
 		return rest.Handler(p.Engine, p.Memory)
 	}))
 	srv := httptest.NewServer(h)

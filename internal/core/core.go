@@ -22,6 +22,7 @@ import (
 	"unicode"
 
 	"github.com/FreePeak/LeanKG/internal/astgrep"
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/compress"
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/errs"
@@ -239,6 +240,29 @@ func (e *Engine) stampProvenance(ctx context.Context, resp map[string]any, rung,
 		e.stampFreshness(ctx, resp, els)
 	}
 	return resp, nil
+}
+
+// stampAccess sets the access block of a query answer: the role the caller
+// holds and the source that decided it, whether a project grant restricts the
+// caller, the project the answer was built from, and on a portfolio fan-out the
+// withheld count (the same projects_withheld the fan-out reports, omitted when
+// zero). It names no identity (no account, org or token id, no scope) and no
+// project the caller cannot see: the router already applied the grant to the
+// served project. A context with no caller (stdio, the CLI) is an unrestricted
+// local admin. A portfolio answer spans several projects, so it has no project
+// key. A project-less engine (no ProjectDir) has none either.
+func (e *Engine) stampAccess(ctx context.Context, resp map[string]any, action string) {
+	access := map[string]any{"role": auth.Admin.String(), "via": auth.ViaLocal, "restricted": false}
+	if ac, ok := auth.AuthFrom(ctx); ok {
+		access["role"], access["via"], access["restricted"] = ac.Role.String(), ac.Via, ac.ProjectRestricted()
+	}
+	if action != PortfolioAction && e.projectDir != "" {
+		access["project"] = filepath.Base(e.projectDir)
+	}
+	if n, _ := resp["projects_withheld"].(int); n > 0 {
+		access["withheld"] = map[string]any{"projects": n}
+	}
+	resp["access"] = access
 }
 
 // ImportRequest is the import tool payload. The flat curation fields mirror
@@ -669,6 +693,8 @@ type QueryRequest struct {
 // retrieval{rung,reason} + freshness; memory/ontology/portfolio reads answer
 // with their own payload shape (command/banks/count) and do not.
 // "memory" additionally dispatches on args.command (session_recall, memories).
+// Every answer, whatever its shape, carries access (see stampAccess): who the
+// caller is allowed as and which project the answer came from.
 func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, error) {
 	// Resolve the scope ONCE, before the ladder, so an unknown value is refused
 	// even when the ladder answers at L1/L2 — otherwise a caller asking for
@@ -705,6 +731,7 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	}
 	out, err := e.query(ctx, req)
 	if err == nil && out != nil {
+		e.stampAccess(ctx, out, req.Action)
 		if r, ok := out["retrieval"].(map[string]any); ok && r != nil {
 			r["scope"] = scopeName
 			// A weighted answer says so, for the same reason scope does — but

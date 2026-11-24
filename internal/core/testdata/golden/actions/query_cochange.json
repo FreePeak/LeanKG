@@ -1,4 +1,10 @@
 {
+  "access": {
+    "project": "proj",
+    "restricted": false,
+    "role": "admin",
+    "via": "local"
+  },
   "freshness": "fresh",
   "indexed_at": "<AT>",
   "partners": [

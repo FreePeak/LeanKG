@@ -64,9 +64,10 @@ type APIOption func(*apiH)
 
 // WithProjectSwitcher makes POST /api/project/switch answer for the projects a
 // multi-project server actually serves: fn resolves an absolute path to that
-// project's canonical dir. Without it the handler keeps the single-project
-// posture (and says so accurately).
-func WithProjectSwitcher(fn func(path string) (string, bool)) APIOption {
+// project's canonical dir for the caller in ctx. It returns a PermissionDenied
+// error for a project the caller's grant withholds. Without it the handler keeps
+// the single-project posture (and says so accurately).
+func WithProjectSwitcher(fn func(ctx context.Context, path string) (string, error)) APIOption {
 	return func(h *apiH) { h.switcher = fn }
 }
 
@@ -102,7 +103,7 @@ func APIHandler(engine *core.Engine, mem *memory.Memory, opts ...APIOption) http
 
 // apiH carries the engine plus the single project root the dashboard serves.
 type apiH struct {
-	switcher   func(path string) (string, bool)
+	switcher   func(ctx context.Context, path string) (string, error)
 	engine     *core.Engine
 	mem        *memory.Memory
 	projectDir string
@@ -381,31 +382,41 @@ func (h *apiH) projectSwitch(w http.ResponseWriter, r *http.Request) {
 	if a, err := filepath.Abs(path); err == nil {
 		abs = a
 	}
+	// Any other root goes through the injected switcher, which applies the
+	// caller's grant: a withheld project is refused with 403 and nothing about
+	// it is returned. It runs even when this handler has no project dir (a PG
+	// backend), so no caller can probe an arbitrary path through the fallback.
+	if h.switcher != nil && (h.projectDir == "" || !sameDir(abs, h.projectDir)) {
+		dir, err := h.switcher(ctx, abs)
+		if err == nil {
+			_, statErr := os.Stat(filepath.Join(dir, ".leankg"))
+			respondEnvelope(w, http.StatusOK, okEnvelope(map[string]any{
+				"is_directory":   true,
+				"has_database":   statErr == nil,
+				"needs_indexing": false,
+				"is_github":      false,
+				"project_path":   dir,
+				"project":        dir,
+				"element_count":  nil,
+				// Subsequent calls must select the project explicitly.
+				"select_with_project_param": true,
+			}))
+			return
+		}
+		if httpx.CodeOf(err) == errs.PermissionDenied.Code {
+			httpx.WriteError(w, err)
+			return
+		}
+	}
+	// Existence is checked after the grant, so a restricted caller gets the same
+	// refusal for a missing directory as for one it is not granted.
 	if st, err := os.Stat(abs); err != nil || !st.IsDir() {
 		respondEnvelope(w, http.StatusNotFound, failEnvelope("Directory not found. Please check the path and try again."))
 		return
 	}
-	// A different root is only reachable when this listener serves it: consult
-	// the injected switcher (multi-project mode), else refuse with the accurate
-	// fix rather than a claim that switching is impossible.
+	// Without a switcher, a different root is refused with the accurate fix
+	// rather than a claim that switching is impossible.
 	if h.projectDir != "" && !sameDir(abs, h.projectDir) {
-		if h.switcher != nil {
-			if dir, ok := h.switcher(abs); ok {
-				_, statErr := os.Stat(filepath.Join(dir, ".leankg"))
-				respondEnvelope(w, http.StatusOK, okEnvelope(map[string]any{
-					"is_directory":   true,
-					"has_database":   statErr == nil,
-					"needs_indexing": false,
-					"is_github":      false,
-					"project_path":   dir,
-					"project":        dir,
-					"element_count":  nil,
-					// Subsequent calls must select the project explicitly.
-					"select_with_project_param": true,
-				}))
-				return
-			}
-		}
 		respondEnvelope(w, http.StatusBadRequest, failEnvelope(fmt.Sprintf(
 			"this listener serves %s; to serve several projects start it with LEANKG_PROJECT_DIRS=<dir>[,<dir>...] and select one per request with ?project=<dir|name>",
 			h.projectDir)))
