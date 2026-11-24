@@ -64,6 +64,19 @@ type gitHistoryArgs struct {
 }
 
 func (e *Engine) gitHistoryQuery(ctx context.Context, req QueryRequest, a gitHistoryArgs) (map[string]any, error) {
+	out, err := e.gitHistoryRows(ctx, req, a)
+	if err != nil {
+		return nil, err
+	}
+	reason := "git " + req.Action
+	if req.Query != "" {
+		reason += " of " + req.Query
+	}
+	return e.stampProvenance(ctx, out, "git", reason)
+}
+
+// gitHistoryRows reads the rows of one history, cochange or churn answer.
+func (e *Engine) gitHistoryRows(ctx context.Context, req QueryRequest, a gitHistoryArgs) (map[string]any, error) {
 	limit := req.Limit
 	if limit <= 0 {
 		limit = 10

@@ -603,6 +603,7 @@ func TestActionGoldens(t *testing.T) {
 var (
 	actionReSeq     = regexp.MustCompile(`"seq":\s*-?\d+`)
 	actionReAt      = regexp.MustCompile(`"at":\s*-?\d+`)
+	actionReIndexed = regexp.MustCompile(`"indexed_at":\s*-?\d+`)
 	actionReBytes   = regexp.MustCompile(`"(size_bytes|free_bytes|live_bytes|wal_bytes|bloat_fraction)":\s*[0-9.e-]+`)
 	actionReSHA     = regexp.MustCompile(`\b[0-9a-f]{40}\b`)
 	actionReRFC3339 = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})`)
@@ -624,6 +625,7 @@ func actionCanon(t *testing.T, v any, f *actionFixture) []byte {
 	s = actionReBytes.ReplaceAllString(s, `"$1":"<BYTES>"`)
 	s = actionReSeq.ReplaceAllLiteralString(s, `"seq":"<SEQ>"`)
 	s = actionReAt.ReplaceAllLiteralString(s, `"at":"<AT>"`)
+	s = actionReIndexed.ReplaceAllLiteralString(s, `"indexed_at":"<AT>"`)
 	s = actionReSHA.ReplaceAllLiteralString(s, "<SHA>")
 	s = actionReRFC3339.ReplaceAllLiteralString(s, "<TIME>")
 	s = actionReUnix.ReplaceAllString(s, `"$1":"<UNIX>"`)

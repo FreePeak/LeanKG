@@ -14,6 +14,7 @@
   "in_by_type": {},
   "in_degree": 0,
   "in_samples": [],
+  "indexed_at": "<AT>",
   "limit": 10,
   "out_by_type": {
     "calls": 1
@@ -27,5 +28,10 @@
       "target": "src/beta.go::Beta"
     }
   ],
-  "query": "src/alpha.go::Alpha"
+  "query": "src/alpha.go::Alpha",
+  "retrieval": {
+    "reason": "explain from seed src/alpha.go::Alpha",
+    "rung": "graph",
+    "scope": "all"
+  }
 }

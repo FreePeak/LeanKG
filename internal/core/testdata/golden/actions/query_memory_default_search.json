@@ -1,4 +1,11 @@
 {
   "command": "search",
-  "hits": []
+  "freshness": "possibly_stale",
+  "hits": [],
+  "indexed_at": "<AT>",
+  "retrieval": {
+    "reason": "agent memory search",
+    "rung": "memory",
+    "scope": "all"
+  }
 }

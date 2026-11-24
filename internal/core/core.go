@@ -208,6 +208,39 @@ func (e *Engine) freshness(ctx context.Context, totalElements int) string {
 	return store.Freshness(ctx, e.st, totalElements)
 }
 
+// stampFreshness sets the freshness of a query answer over an index of els
+// elements: the state label, the time the index was last written (indexed_at,
+// unix seconds, the watermark time status reports) and, on a git-indexed store,
+// whether it still mirrors HEAD (head_sync; omitted when unknown). Every answer
+// gets its freshness here, once per request.
+func (e *Engine) stampFreshness(ctx context.Context, resp map[string]any, els int) {
+	resp["freshness"] = e.freshness(ctx, els)
+	if _, at, err := e.st.Watermark(ctx); err == nil && at > 0 {
+		resp["indexed_at"] = at
+	}
+	if hs := store.HeadSync(ctx, e.st); hs != store.HeadSyncUnknown {
+		resp["head_sync"] = hs
+	}
+}
+
+// stampProvenance is the one place a query answer gets retrieval{rung,reason}
+// and freshness. A rung a ladder step already set is kept. Freshness is derived
+// only when the answer has none, so an answer that already went through
+// searchPrelude is not counted twice.
+func (e *Engine) stampProvenance(ctx context.Context, resp map[string]any, rung, reason string) (map[string]any, error) {
+	if _, ok := resp["retrieval"]; !ok {
+		resp["retrieval"] = map[string]any{"rung": rung, "reason": reason}
+	}
+	if _, ok := resp["freshness"]; !ok {
+		els, err := e.st.ElementCount(ctx)
+		if err != nil {
+			return nil, err
+		}
+		e.stampFreshness(ctx, resp, els)
+	}
+	return resp, nil
+}
+
 // ImportRequest is the import tool payload. The flat curation fields mirror
 // the advertised MCP input schema (content/old/new/text/file/payload/summary/
 // session_id/node_id/insert_line): an agent that follows the schema sends them

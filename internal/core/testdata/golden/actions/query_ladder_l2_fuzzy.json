@@ -12,6 +12,7 @@
       "qualified_name": "src/beta.go::Beta"
     }
   ],
+  "indexed_at": "<AT>",
   "limit": 10,
   "query": "beta",
   "retrieval": {

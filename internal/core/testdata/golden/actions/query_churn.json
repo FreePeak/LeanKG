@@ -18,5 +18,12 @@
       "insertions": 3,
       "path": "util.go"
     }
-  ]
+  ],
+  "freshness": "fresh",
+  "indexed_at": "<AT>",
+  "retrieval": {
+    "reason": "git churn",
+    "rung": "git",
+    "scope": "all"
+  }
 }

@@ -4,6 +4,12 @@
     "src/beta.go::Beta"
   ],
   "freshness": "possibly_stale",
+  "indexed_at": "<AT>",
   "limit": 10,
-  "query": "src/alpha.go::Alpha"
+  "query": "src/alpha.go::Alpha",
+  "retrieval": {
+    "reason": "callees from seed src/alpha.go::Alpha",
+    "rung": "graph",
+    "scope": "all"
+  }
 }

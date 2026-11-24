@@ -4,5 +4,12 @@
   ],
   "command": "session_recall",
   "count": 0,
-  "memories": []
+  "freshness": "possibly_stale",
+  "indexed_at": "<AT>",
+  "memories": [],
+  "retrieval": {
+    "reason": "agent memory session_recall",
+    "rung": "memory",
+    "scope": "all"
+  }
 }
