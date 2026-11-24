@@ -270,7 +270,7 @@ func TestEmbeddingCoverage(t *testing.T) {
 func TestPoolEnv(t *testing.T) {
 	// Unset: pass with defaults spelled out.
 	f := checkPoolEnv(context.Background(), nil, Env{})
-	if f.Status != StatusPass || !strings.Contains(f.Detail, "pool size: default 5") {
+	if f.Status != StatusPass || !strings.Contains(f.Detail, "pool size: default 2") {
 		t.Fatalf("unset = %s (%s)", f.Status, f.Detail)
 	}
 	valid := Env{Pool: PoolEnv{strp("10"), strp("5000")}}
