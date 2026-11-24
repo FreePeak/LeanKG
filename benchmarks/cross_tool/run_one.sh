@@ -10,7 +10,7 @@
 # Arguments:
 #   repo_path        absolute path to the cloned repo to run inside
 #   prompt           architecture question (passed verbatim to `claude -p`)
-#   arm              "with" | "without"
+#   arm              "baseline" | "context-mode" | "leankg"
 #   run_idx          1..N (matches codegraph methodology = 4 runs per arm)
 #   model            claude model id, e.g. "sonnet" or "opus"
 #   mcp_config_path  absolute path to the strict-mcp-config JSON
@@ -18,13 +18,14 @@
 #
 # Output JSON line shape:
 #   {
-#     "repo": "...", "arm": "with|without", "run_idx": 1,
+#     "repo": "...", "arm": "baseline|context-mode|leankg", "run_idx": 1,
 #     "model": "...", "prompt_chars": 1234,
 #     "exit_code": 0,
 #     "duration_s": 41.2,
 #     "total_cost_usd": 0.36,
 #     "input_tokens": 265000, "output_tokens": 4500, "cache_read_tokens": 200000,
 #     "tool_calls": 2, "file_reads": 0,
+#     "tool_result_bytes": 52000,   # bytes of tool output the model received (transcript)
 #     "num_turns": 1,
 #     "stop_reason": "end_turn",
 #     "result_chars": 1234
@@ -50,11 +51,13 @@ MCP_CONFIG_PATH="${6:?mcp_config_path required}"
 OUTPUT_PATH="${7:?output_path required}"
 
 # Claude Code 2.1+ strips ToolSearch under --bare, which makes MCP tools
-# undiscoverable to the agent. For the WITH arm we want MCP tools to be
-# available, so we drop --bare there. WITHOUT arm keeps --bare for hermetic
+# undiscoverable to the agent. The MCP arms (leankg, context-mode) need their
+# tools, so they drop --bare. The baseline arm keeps --bare for hermetic
 # isolation (no global CLAUDE.md / hooks / plugins).
+# NOTE: the MCP arms therefore still load the user's global CLAUDE.md, hooks and
+# plugins; that confound is pre-existing and is not fixed here (see RUNNING.md).
 BARE_FLAG="--bare"
-if [[ "${ARM}" == "with" ]]; then
+if [[ "${ARM}" != "baseline" ]]; then
   BARE_FLAG=""
 fi
 
@@ -239,6 +242,28 @@ def walk_tool_uses(d):
                 pass
     return tool_calls, file_reads
 
+def tool_result_bytes(d):
+    """Bytes of tool_result content the model received (the delivered side of
+    the context-mode byte metric; tokens are estimated as bytes/4 downstream)."""
+    total = 0
+    events = d if isinstance(d, list) else [d]
+    for event in events:
+        msg = event.get("message") if isinstance(event, dict) else None
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not (isinstance(block, dict) and block.get("type") == "tool_result"):
+                continue
+            body = block.get("content")
+            if isinstance(body, str):
+                total += len(body.encode("utf-8"))
+            elif isinstance(body, list):
+                for part in body:
+                    if isinstance(part, dict) and isinstance(part.get("text"), str):
+                        total += len(part["text"].encode("utf-8"))
+    return total
+
 result = get_result_element(data)
 usage = result.get("usage", {}) if isinstance(result, dict) else {}
 
@@ -282,6 +307,7 @@ print(f"FILE_READS={file_reads}")
 print(f"ACTUAL_MODEL={actual_model}")
 print(f"MCP_SERVERS={','.join(mcp_server_names)}")
 print(f"MCP_TOOLS={mcp_tool_count}")
+print(f"TOOL_RESULT_BYTES={tool_result_bytes(data)}")
 PY
   )
   while IFS='=' read -r key value; do
@@ -298,6 +324,7 @@ PY
       ACTUAL_MODEL) ACTUAL_MODEL="${value}" ;;
       MCP_SERVERS) MCP_SERVERS="${value}" ;;
       MCP_TOOLS) MCP_TOOLS="${value}" ;;
+      TOOL_RESULT_BYTES) TOOL_RESULT_BYTES="${value}" ;;
     esac
   done <<< "${PARSED}"
 fi
@@ -306,6 +333,7 @@ fi
 ACTUAL_MODEL="${ACTUAL_MODEL:-}"
 MCP_SERVERS="${MCP_SERVERS:-}"
 MCP_TOOLS="${MCP_TOOLS:-0}"
+TOOL_RESULT_BYTES="${TOOL_RESULT_BYTES:-0}"
 
 # Compute validity from the ground-truth init event. If any rule fails, the
 # JSONL row still gets written (so we keep a paper trail) but is flagged
@@ -317,18 +345,18 @@ fi
 if [[ "${TOTAL_COST}" == "0" || "${TOTAL_COST}" == "0.0" ]]; then
   INVALID_REASONS+=("zero_cost")
 fi
-if [[ "${ARM}" == "with" && -z "${MCP_SERVERS}" ]]; then
+if [[ "${ARM}" != "baseline" && -z "${MCP_SERVERS}" ]]; then
   INVALID_REASONS+=("no_mcp_attached")
 fi
 # FR-ZCP-08 tool-access smoke: the init event must show at least one
 # mcp__ tool actually reachable by the agent, not just a server attach.
-if [[ "${ARM}" == "with" && "${MCP_TOOLS}" == "0" ]]; then
+if [[ "${ARM}" != "baseline" && "${MCP_TOOLS}" == "0" ]]; then
   INVALID_REASONS+=("no_mcp_tools_reachable")
 fi
-# Leakage guard: a WITHOUT run that somehow has MCP servers attached is
+# Leakage guard: the baseline run that somehow has MCP servers attached is
 # contaminated (global config leaked through) — the run is void.
-if [[ "${ARM}" == "without" && -n "${MCP_SERVERS}" ]]; then
-  INVALID_REASONS+=("mcp_leaked_into_without_arm")
+if [[ "${ARM}" == "baseline" && -n "${MCP_SERVERS}" ]]; then
+  INVALID_REASONS+=("mcp_leaked_into_baseline_arm")
 fi
 if [[ -n "${INVALID_REASONS[*]:-}" ]]; then
   VALID="false"
@@ -344,7 +372,8 @@ python3 - "${REPO_PATH}" "${ARM}" "${RUN_IDX}" "${MODEL}" "${PROMPT_CHARS}" \
   "${OUTPUT_TOKENS}" "${CACHE_READ_TOKENS}" "${TOOL_CALLS}" "${FILE_READS}" \
   "${NUM_TURNS}" "${STOP_REASON}" "${RESULT_CHARS}" \
   "${ACTUAL_MODEL}" "${MCP_SERVERS}" "${MCP_TOOLS}" \
-  "${VALID}" "${INVALID_REASON}" "${REPO_SHA}" "${PROMPT_SHA}" "${PROMPT_VERSION}" "${OUTPUT_PATH}" <<'PY'
+  "${VALID}" "${INVALID_REASON}" "${REPO_SHA}" "${PROMPT_SHA}" "${PROMPT_VERSION}" "${OUTPUT_PATH}" \
+  "${TOOL_RESULT_BYTES}" <<'PY'
 import json, pathlib, sys
 
 (repo_path, arm, run_idx, model, prompt_chars, exit_code, duration_s,
@@ -352,7 +381,7 @@ import json, pathlib, sys
  num_turns, stop_reason, result_chars,
  actual_model, mcp_servers, mcp_tools,
  valid, invalid_reason, repo_sha, prompt_sha, prompt_version,
- output_path) = sys.argv[1:]
+ output_path, tool_result_bytes) = sys.argv[1:]
 
 record = {
     "repo": pathlib.Path(repo_path).name,
@@ -380,6 +409,7 @@ record = {
     "num_turns": int(num_turns),
     "stop_reason": stop_reason,
     "result_chars": int(result_chars),
+    "tool_result_bytes": int(tool_result_bytes),
 }
 
 out = pathlib.Path(output_path)

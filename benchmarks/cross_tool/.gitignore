@@ -5,5 +5,8 @@ repos/
 scratch/
 **/scratch/
 
+# Run results hold raw transcripts and answers; never commit them by accident
+results/
+
 # Editor / OS noise
 .DS_Store
