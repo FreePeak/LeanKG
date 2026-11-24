@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/core"
+	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -42,11 +44,11 @@ func TestProjectSwitchBehavior(t *testing.T) {
 	// A multi-project server resolves the other root; the same handler without
 	// the switcher must still refuse — and say why truthfully.
 	withSwitcher := APIHandler(engine, nil, WithProjectDir(served),
-		WithProjectSwitcher(func(path string) (string, bool) {
+		WithProjectSwitcher(func(_ context.Context, path string) (string, error) {
 			if filepath.Clean(path) == filepath.Clean(other) {
-				return other, true
+				return other, nil
 			}
-			return "", false
+			return "", errors.New("unknown project")
 		}))
 	single := APIHandler(engine, nil, WithProjectDir(served))
 
@@ -103,5 +105,37 @@ func TestProjectSwitchBehavior(t *testing.T) {
 	// 4. An unknown path is an unknown path, in both modes.
 	if ok, _ := post(withSwitcher, filepath.Join(t.TempDir(), "nope")); ok {
 		t.Fatal("switch to a directory without a store reported success")
+	}
+}
+
+// TestProjectSwitchDeniedWithoutProjectDir pins that the switcher's refusal
+// holds when the handler has no project dir (a PG backend derives none): the
+// fallback must not answer for an arbitrary directory on the caller's behalf.
+func TestProjectSwitchDeniedWithoutProjectDir(t *testing.T) {
+	served := t.TempDir()
+	other := t.TempDir()
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(served, ".leankg", "leankg.db"), Mode: store.RW})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	engine := core.New(st, core.Options{ProjectDir: served})
+	h := APIHandler(engine, nil, WithProjectDir(""), WithProjectSwitcher(func(_ context.Context, path string) (string, error) {
+		return "", errs.NewError(errs.PermissionDenied, "not granted", "")
+	}))
+
+	body, err := json.Marshal(map[string]string{"path": other})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/api/project/switch", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "project_path") {
+		t.Fatalf("withheld path without a project dir = %d, want 403 with no project_path; got %s", rec.Code, rec.Body.String())
 	}
 }

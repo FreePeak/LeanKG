@@ -23,8 +23,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
+
+// projectScopePrefix marks a scope that names a project the token may reach.
+const projectScopePrefix = "project:"
 
 // errUnknownToken is the one rejection for a bearer token that does not
 // authenticate: an unknown token, and a token whose existing account is not active. The
@@ -87,6 +91,44 @@ func (c AuthContext) ScopeAllowed(scope string) bool {
 		}
 	}
 	return false
+}
+
+// ProjectRestricted reports whether the token names projects at all. A token
+// with no project: scope is unrestricted for projects, whatever its other
+// scopes are.
+func (c AuthContext) ProjectRestricted() bool {
+	for _, s := range c.Scopes {
+		if strings.HasPrefix(s, projectScopePrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// ProjectAllowed reports whether the token may reach the registered project
+// called name (the basename of its directory, the name the router serves it
+// by). shared is true when another registered project has the same basename:
+// a grant by name cannot tell those directories apart, so the name matches no
+// grant. An unrestricted token reaches every project; a restricted one reaches
+// only the names its project: scopes grant, by the same exact match as
+// ScopeAllowed.
+func (c AuthContext) ProjectAllowed(name string, shared bool) bool {
+	if !c.ProjectRestricted() {
+		return true
+	}
+	return !shared && c.ScopeAllowed(projectScopePrefix+name)
+}
+
+// ProjectDenied is the refusal for a project the caller's grant does not cover.
+// It names the selector the caller sent and nothing else: a registered project
+// that is withheld and a name that matches nothing get the same answer, so the
+// refusal cannot be used to probe which projects exist.
+func ProjectDenied(selector string) error {
+	cause := fmt.Sprintf("project %q is not available to this token", selector)
+	if selector == "" {
+		cause = "the project this endpoint serves is not available to this token"
+	}
+	return errs.NewError(errs.PermissionDenied, cause, "use a token whose project: scopes grant this project")
 }
 
 // Resolve resolves the caller of r with no specific resource target.

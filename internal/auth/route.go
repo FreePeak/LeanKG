@@ -17,6 +17,22 @@ func WithRole(ctx context.Context, role Role) context.Context {
 	return context.WithValue(ctx, roleKey{}, role)
 }
 
+// authKey is the context key the gate stores the caller's full identity under.
+type authKey struct{}
+
+// WithAuth returns ctx carrying the caller's resolved identity, so the layers
+// that choose a project (the router, the portfolio fan-out) can apply its grant.
+func WithAuth(ctx context.Context, ac AuthContext) context.Context {
+	return context.WithValue(ctx, authKey{}, ac)
+}
+
+// AuthFrom returns the caller's identity from ctx. ok is false when no gate ran
+// (stdio, a local listener): such a caller carries no project grant.
+func AuthFrom(ctx context.Context) (AuthContext, bool) {
+	ac, ok := ctx.Value(authKey{}).(AuthContext)
+	return ac, ok
+}
+
 // RoleFrom returns the caller's role from ctx. ok is false when no gate ran
 // for the request.
 func RoleFrom(ctx context.Context) (Role, bool) {

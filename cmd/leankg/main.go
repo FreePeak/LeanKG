@@ -320,6 +320,76 @@ func uiFileGate(st auth.Store, addr string, next http.Handler) http.Handler {
 	})
 }
 
+// rpcHandler is the ConnectRPC listener's handler: the service behind the
+// bearer gate. The service has no project selector and serves the default
+// project, so the caller's grant is checked against that project.
+func rpcHandler(st auth.Store, router *projects.Router, engine *core.Engine, rec telemetry.Recorder) http.Handler {
+	mux := http.NewServeMux()
+	// The descriptor types `args` as map<string,string>, so a typed action
+	// argument cannot be carried on this wire. The codec refuses by naming
+	// its own internal `value` field, which the caller never sent; this
+	// translates the refusal to name their value and this wire's limit.
+	rpc.Mount(mux, engine, rec)
+	// Liveness for the same reason the MCP, REST and UI mounts carry one:
+	// FR-SELF-01 asks for /health on every listener, and a ConnectRPC
+	// mux answers 404 for everything but the service route, so an
+	// orchestrator probe against this address saw a dead server that was
+	// in fact serving. Same envelope as the other listeners. It sits outside
+	// the default-project grant (a probe is not a project read) but inside the
+	// auth gate, so it still needs a token when the gate is on.
+	top := http.NewServeMux()
+	top.Handle("GET /health", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	top.Handle("/", defaultProjectGate(router, mux))
+	return auth.MiddlewareWithStore(st, top)
+}
+
+// dashboardHandler is the dashboard listener's handler. One address, two
+// surfaces: /api/ wins, the SPA fallback serves everything else (web.Handler
+// returns JSON 404 for unknown api/* paths). The API handler routes ?project=
+// like the REST and MCP mounts, so the dashboard follows the selected project.
+// The dashboard's project switcher is real only when this listener serves
+// several projects: hand the handler the router's Authorize, which bounds the
+// answer to the registered set and to the caller's grant (unknown selectors
+// still refuse). Authorize never opens a store or starts language servers, so
+// asking the UI about a path has no side effect.
+func dashboardHandler(st auth.Store, addr string, router *projects.Router, engine *core.Engine, mem *memory.Memory) http.Handler {
+	switcher := func(ctx context.Context, path string) (string, error) {
+		if router == nil {
+			return "", errors.New("no project registry")
+		}
+		return router.Authorize(ctx, path)
+	}
+	dash := routeByProject(router, nil,
+		web.APIHandler(engine, mem, web.WithProjectSwitcher(switcher)),
+		func(p *projects.Project) http.Handler {
+			return web.APIHandler(p.Engine, p.Memory, web.WithProjectDir(p.Dir), web.WithProjectSwitcher(switcher))
+		})
+	uiMux := http.NewServeMux()
+	// Liveness for container/orchestrator probes on this listener: the
+	// SPA fallback would answer 200 for /health anyway, but with HTML,
+	// which makes a health check that cannot tell a serving dashboard from
+	// a broken one. Same envelope as rest.Handler's /health.
+	uiMux.Handle("GET /health", auth.Public(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	})))
+	// D1: /api/file serves any file under the project root. It needs the
+	// bearer token (Viewer minimum) whenever the gate is on. With the gate off
+	// it is served only on a loopback --ui bind; any other bind refuses it
+	// (uiFileGate), because the middleware resolves every caller to Admin when
+	// no token exists. The Render demo therefore needs a token for the viewer.
+	uiMux.Handle("GET /api/file", auth.Public(uiFileGate(st, addr, auth.MiddlewareWithStore(st, auth.Require(auth.Viewer, dash)))))
+	// The data routes are gated like REST: the gate resolves the caller (401 on
+	// no or unknown token while it is on) and the grant rides the request
+	// context into the router. The static shell below stays public.
+	uiMux.Handle("/api/", auth.Public(auth.MiddlewareWithStore(st, dash)))
+	uiMux.Handle("/", auth.Public(web.Handler()))
+	return uiMux
+}
+
 func serve(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
@@ -626,7 +696,7 @@ afterSidecars:
 		mcpSrv.SetRecorder(rec) // plan v4.15 DS-04/DS-05: HTTP capture and headers
 		registerMCPSink(mcpSrv)
 		h := httpMux(mcpSrv.HTTPHandler())
-		h = routeByProject(router, h, func(p *projects.Project) http.Handler {
+		h = routeByProject(router, resolveCaller(st), h, func(p *projects.Project) http.Handler {
 			pSrv := newScopedMCPServer(p.Engine, router)
 			pSrv.SetAuthStore(st)
 			pSrv.SetRecorder(rec)
@@ -649,7 +719,7 @@ afterSidecars:
 		}
 		// Routing sits INSIDE the auth boundary: token gating applies
 		// before a selector is resolved or its name echoed back.
-		h := routeByProject(router, rest.Handler(engine, mem, restOpts...), func(p *projects.Project) http.Handler {
+		h := routeByProject(router, nil, rest.Handler(engine, mem, restOpts...), func(p *projects.Project) http.Handler {
 			return rest.Handler(p.Engine, p.Memory, restOpts...)
 		})
 		h = restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router), restauto.WithJobs(jobs),
@@ -670,66 +740,11 @@ afterSidecars:
 		eps = append(eps, endpoint{addr: *restAddr, h: root})
 	}
 	if *rpcAddr != "" {
-		mux := http.NewServeMux()
-		// Liveness for the same reason the MCP, REST and UI mounts carry one:
-		// FR-SELF-01 asks for /health on every listener, and a ConnectRPC
-		// mux answers 404 for everything but the service route, so an
-		// orchestrator probe against this address saw a dead server that was
-		// in fact serving. Same envelope as the other listeners.
-		mux.Handle("GET /health", auth.Public(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"ok":true}`))
-		})))
-		// The descriptor types `args` as map<string,string>, so a typed action
-		// argument cannot be carried on this wire. The codec refuses by naming
-		// its own internal `value` field, which the caller never sent; this
-		// translates the refusal to name their value and this wire's limit.
-		rpc.Mount(mux, engine, rec)
 		log.Printf("leankg serve (ConnectRPC: gRPC+gRPC-Web+JSON) on %s", *rpcAddr)
-		eps = append(eps, endpoint{addr: *rpcAddr, h: auth.MiddlewareWithStore(st, mux)})
+		eps = append(eps, endpoint{addr: *rpcAddr, h: rpcHandler(st, router, engine, rec)})
 	}
 	if *uiAddr != "" {
-		// One address, two surfaces: /api/ wins, the SPA fallback serves
-		// everything else (web.Handler returns JSON 404 for unknown
-		// api/* paths). The API handler routes ?project= like the REST
-		// and MCP mounts, so the dashboard follows the selected project.
-		// The dashboard's project switcher is real only when this listener
-		// serves several projects: hand the handler a resolver bounded to the
-		// registered set (unknown selectors still refuse).
-		// Resolve, never Open: the switch endpoint must not migrate a store or
-		// start language servers just because the UI asked about a path.
-		switcher := func(path string) (string, bool) {
-			if router == nil {
-				return "", false
-			}
-			dir, err := router.Resolve(path)
-			if err != nil {
-				return "", false
-			}
-			return dir, true
-		}
-		dash := routeByProject(router,
-			web.APIHandler(engine, mem, web.WithProjectSwitcher(switcher)),
-			func(p *projects.Project) http.Handler {
-				return web.APIHandler(p.Engine, p.Memory, web.WithProjectDir(p.Dir), web.WithProjectSwitcher(switcher))
-			})
-		uiMux := http.NewServeMux()
-		// Liveness for container/orchestrator probes on this listener: the
-		// SPA fallback would answer 200 for /health anyway, but with HTML,
-		// which makes a health check that cannot tell a serving dashboard from
-		// a broken one. Same envelope as rest.Handler's /health.
-		uiMux.Handle("GET /health", auth.Public(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"ok":true}`))
-		})))
-		// D1: /api/file serves any file under the project root. It needs the
-		// bearer token (Viewer minimum) whenever the gate is on. With the gate off
-		// it is served only on a loopback --ui bind; any other bind refuses it
-		// (uiFileGate), because the middleware resolves every caller to Admin when
-		// no token exists. The Render demo therefore needs a token for the viewer.
-		uiMux.Handle("GET /api/file", auth.Public(uiFileGate(st, *uiAddr, auth.MiddlewareWithStore(st, auth.Require(auth.Viewer, dash)))))
-		uiMux.Handle("/api/", auth.Public(dash))
-		uiMux.Handle("/", auth.Public(web.Handler()))
+		uiMux := dashboardHandler(st, *uiAddr, router, engine, mem)
 		log.Printf("leankg serve (UI) on %s", *uiAddr)
 		// The UI listener is deliberately NOT gated by the exposure rule: the
 		// dashboard is public by design (the Render demo serves

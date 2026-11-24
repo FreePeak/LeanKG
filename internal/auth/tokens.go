@@ -50,9 +50,9 @@ type MintRequest struct {
 	// ownership themselves.
 	AccountID string
 	OrgID     string
-	// Scopes are opaque scope names. They are persisted and surfaced on the
-	// Grant; no code path authorizes on them (Rust declared a scopes column
-	// but always wrote an empty list and never read it).
+	// Scopes are persisted and surfaced on the Grant. A project:<name> scope
+	// restricts the token to the named projects (AuthContext.ProjectAllowed);
+	// any other scope is opaque and authorizes nothing.
 	Scopes []string
 	// TTL is the token lifetime. 0 means "never expires"; a negative value
 	// mints an already-expired token (the Rust test's negative-TTL path).

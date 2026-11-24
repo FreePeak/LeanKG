@@ -9,6 +9,7 @@
   "projects_not_indexed": 0,
   "projects_registered": 0,
   "projects_served": 0,
+  "projects_withheld": 0,
   "query": "Alpha",
   "registry": "sqlite portfolio registry at <TMP>/portfolio.db",
   "tier": "T1 — hot set opened read-only; nothing was indexed"

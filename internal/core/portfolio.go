@@ -20,7 +20,9 @@ package core
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/portfolioreg"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
@@ -58,21 +60,27 @@ func (e *Engine) portfolioOptions() portfolioreg.Options {
 // fleet query must not recurse into a fleet query.
 func (e *Engine) portfolioQuery(ctx context.Context, req QueryRequest, a portfolioArgs) (map[string]any, error) {
 	opts := e.portfolioOptions()
+	grant, _ := auth.AuthFrom(ctx)
 	cmd, alias := subCommandKey(a.Command, a.Cmd)
 	if cmd == PortfolioSummaryAction {
-		entries, err := portfolioreg.Manifest(ctx, opts, portfolioHotSet)
+		registered, err := portfolioreg.Projects(ctx, opts)
 		if err != nil {
 			return nil, err
 		}
+		visible, withheld := portfolioreg.Split(registered, grantedProjects(grant))
+		entries := portfolioreg.ManifestOf(opts, visible, portfolioHotSet)
 		out := map[string]any{
-			"action":     "portfolio",
-			"cmd":        PortfolioSummaryAction,
-			"tier":       "T0 — registry rows and on-disk store presence; no project store was opened",
-			"registry":   registryWhere(opts),
-			"hot_limit":  portfolioHotSet.Limit(),
-			"projects":   entries,
-			"count":      len(entries),
-			"registered": len(entries),
+			"action":            "portfolio",
+			"cmd":               PortfolioSummaryAction,
+			"tier":              "T0 — registry rows and on-disk store presence; no project store was opened",
+			"hot_limit":         portfolioHotSet.Limit(),
+			"projects":          entries,
+			"count":             len(entries),
+			"registered":        len(entries),
+			"projects_withheld": withheld,
+		}
+		if !grant.ProjectRestricted() {
+			out["registry"] = registryWhere(opts)
 		}
 		if alias {
 			out["deprecated"] = deprecatedSubCommandNote
@@ -87,6 +95,7 @@ func (e *Engine) portfolioQuery(ctx context.Context, req QueryRequest, a portfol
 	}
 	rep, err := portfolioreg.FanOut(ctx, opts, portfolioreg.Query{
 		Text: req.Query, Action: a.Action, Limit: req.Limit, Args: childArgs(req.Args),
+		Visible: grantedProjects(grant),
 	}, portfolioHotSet, e.portfolioChild)
 	if err != nil {
 		return nil, err
@@ -95,15 +104,18 @@ func (e *Engine) portfolioQuery(ctx context.Context, req QueryRequest, a portfol
 		"action":               PortfolioAction,
 		"query":                rep.Query,
 		"tier":                 "T1 — hot set opened read-only; nothing was indexed",
-		"registry":             registryWhere(opts),
 		"hot_limit":            rep.HotLimit,
 		"projects_registered":  rep.Registered,
 		"projects_served":      rep.Served,
 		"projects_failed":      rep.Failed,
 		"projects_not_hot":     rep.NotHot,
 		"projects_not_indexed": rep.NotIndexed,
+		"projects_withheld":    rep.Withheld,
 		"children":             rep.Projects,
 		"hits":                 rep.Hits,
+	}
+	if !grant.ProjectRestricted() {
+		resp["registry"] = registryWhere(opts)
 	}
 	if rep.Action != "" {
 		resp["child_action"] = rep.Action
@@ -112,9 +124,23 @@ func (e *Engine) portfolioQuery(ctx context.Context, req QueryRequest, a portfol
 		resp["deprecated"] = deprecatedSubCommandNote
 	}
 	if rep.Registered == 0 {
-		resp["guidance"] = "No projects in the portfolio registry: `leankg register-project <dir> --name <n>` (or `leankg index`, which registers on completion)."
+		// Withheld projects are not in Registered, so a restricted caller whose
+		// projects were all withheld would otherwise be told the registry is empty.
+		if rep.Withheld > 0 {
+			resp["guidance"] = "No project is visible to this token."
+		} else {
+			resp["guidance"] = "No projects in the portfolio registry: `leankg register-project <dir> --name <n>` (or `leankg index`, which registers on completion)."
+		}
 	}
 	return resp, nil
+}
+
+// grantedProjects applies the caller's project grant to the registry. A caller
+// with no grant (stdio, a local listener) sees every project.
+func grantedProjects(grant auth.AuthContext) func(store.ProjectRecord, bool) bool {
+	return func(p store.ProjectRecord, shared bool) bool {
+		return grant.ProjectAllowed(filepath.Base(p.Dir), shared)
+	}
 }
 
 // portfolioArgs are the args of query{action:"portfolio"}. command (cmd is its

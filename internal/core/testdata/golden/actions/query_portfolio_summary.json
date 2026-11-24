@@ -5,6 +5,7 @@
   "deprecated": "args.cmd is deprecated; send args.command",
   "hot_limit": 8,
   "projects": [],
+  "projects_withheld": 0,
   "registered": 0,
   "registry": "sqlite portfolio registry at <TMP>/portfolio.db",
   "tier": "T0 — registry rows and on-disk store presence; no project store was opened"

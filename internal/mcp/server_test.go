@@ -500,6 +500,10 @@ func (fakeRouter) EngineFor(context.Context, string) (*core.Engine, error) {
 
 func (f fakeRouter) MultiProject() bool { return f.multi }
 
+func (fakeRouter) Authorize(context.Context, string) (string, error) {
+	return "", fmt.Errorf("fakeRouter: consulted")
+}
+
 // newServerForTest builds the Server under test (the go-sdk plumbing newTestServer
 // needs is not relevant to engine selection).
 func newServerForTest(t *testing.T) *Server {

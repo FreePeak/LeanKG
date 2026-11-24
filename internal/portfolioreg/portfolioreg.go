@@ -631,6 +631,30 @@ type Query struct {
 	Action string         // child action; "" = that project's ladder router
 	Limit  int            // merged cap
 	Args   map[string]any // child args (depth, to, service, ...)
+	// Visible limits the fan-out to the registered projects it accepts. shared
+	// reports that another registered project has the same basename. A project
+	// it refuses is counted in Report.Withheld and is never named or opened. nil
+	// shows every project.
+	Visible func(p store.ProjectRecord, shared bool) bool
+}
+
+// Split returns the registered projects visible accepts, and how many it
+// withheld. A nil visible keeps every project.
+func Split(projects []store.ProjectRecord, visible func(store.ProjectRecord, bool) bool) ([]store.ProjectRecord, int) {
+	if visible == nil {
+		return projects, 0
+	}
+	names := make(map[string]int, len(projects))
+	for _, p := range projects {
+		names[filepath.Base(p.Dir)]++
+	}
+	kept := make([]store.ProjectRecord, 0, len(projects))
+	for _, p := range projects {
+		if visible(p, names[filepath.Base(p.Dir)] > 1) {
+			kept = append(kept, p)
+		}
+	}
+	return kept, len(projects) - len(kept)
 }
 
 // Child serves q inside one registered project. Implementations open the
@@ -658,9 +682,12 @@ type Report struct {
 	Action     string `json:"action,omitempty"`
 	HotLimit   int    `json:"hot_limit"`
 	Registered int    `json:"projects_registered"`
-	Served     int    `json:"projects_served"`
-	Failed     int    `json:"projects_failed"`
-	NotHot     int    `json:"projects_not_hot"`
+	// Withheld counts registered projects the query's Visible predicate refused.
+	// They are not in Registered, not named, and not opened.
+	Withheld int `json:"projects_withheld"`
+	Served   int `json:"projects_served"`
+	Failed   int `json:"projects_failed"`
+	NotHot   int `json:"projects_not_hot"`
 	// NotIndexed counts T0 manifest PARENTS skipped without a store-open:
 	// registered never-indexed with zero counts (children carry the stores).
 	// Distinct from Failed — a manifest parent is not a fault, it is the
@@ -700,6 +727,7 @@ func FanOut(ctx context.Context, o Options, q Query, hot *HotSet, child Child) (
 		}
 		return nil, err
 	}
+	projects, rep.Withheld = Split(projects, q.Visible)
 	rep.Registered = len(projects)
 	if len(projects) == 0 {
 		return rep, nil
