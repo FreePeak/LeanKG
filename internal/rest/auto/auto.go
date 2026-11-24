@@ -13,6 +13,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/embed"
+	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/refresh"
@@ -144,13 +145,18 @@ func RegisterAutoConfig(h http.Handler, engine *core.Engine, opts ...Option) htt
 	mux.Handle("/", auth.Public(h)) // delegates; the REST or MCP mux declares its own roles
 	mux.Handle("POST /api/v1/mcp/auto-config", auth.Require(auth.Contributor, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		eng := engine
-		// ?project= wins when a router is wired; without one we keep the
-		// single-engine behaviour a stdio spawn depends on.
-		if sel := r.URL.Query().Get("project"); sel != "" && cfg.router != nil {
-			resolved, err := cfg.router.EngineFor(r.Context(), sel)
+		// With a router wired, every selector goes through it, the empty one
+		// included, so the default project's grant is checked like any other.
+		// Without one we keep the single-engine behaviour a stdio spawn depends on.
+		if cfg.router != nil {
+			resolved, err := cfg.router.EngineFor(r.Context(), r.URL.Query().Get("project"))
 			if err != nil {
 				// Fail closed: an unknown selector never falls back to the
 				// default engine, and nothing is indexed.
+				if httpx.CodeOf(err) == errs.PermissionDenied.Code {
+					httpx.WriteError(w, err)
+					return
+				}
 				httpx.WriteMessage(w, http.StatusBadRequest, err.Error())
 				return
 			}

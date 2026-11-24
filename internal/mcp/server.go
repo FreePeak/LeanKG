@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,9 @@ type ProjectRouter interface {
 	// `project` argument is not an error — a stdio spawn is one agent session
 	// over one project and must keep working.
 	MultiProject() bool
+	// Authorize applies the caller's project grant to a selector without opening
+	// the project, and returns its directory.
+	Authorize(ctx context.Context, selector string) (string, error)
 }
 
 // Server wraps the go-sdk server over one core engine. When router is set,
@@ -115,7 +119,7 @@ func WithProjectRequired(v bool) Option {
 // configured, else the wrapped engine.
 func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core.Engine, error) {
 	if s.router == nil {
-		return s.engine, nil
+		return s.grantedEngine(ctx, s.engine)
 	}
 	var args map[string]any
 	if req != nil && req.Params != nil && len(req.Params.Arguments) > 0 {
@@ -134,13 +138,35 @@ func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core
 		if s.scoped || !s.router.MultiProject() {
 			// One project registered: the wrapped engine is the only answer, and
 			// an agent that never learned about `project` must keep working.
-			return s.engine, nil
+			return s.grantedEngine(ctx, s.engine)
 		}
 		return nil, errs.NewError(errs.MissingParam,
 			"this server serves multiple projects (LEANKG_PROJECT_DIRS), so a tool call must name one",
 			"add \"project\": \"<repo dir or name>\" to the tool arguments, or from inside a repo run `leankg query …` against that project's own server")
 	}
+	// The router applies the caller's project grant before it opens anything.
 	return s.router.EngineFor(ctx, p)
+}
+
+// grantedEngine refuses a caller whose grant does not cover the project eng
+// serves. A caller with no grant, or a grant that names no project, is served
+// as before. With a router the router decides, so a basename shared by two
+// registered projects is refused here too.
+func (s *Server) grantedEngine(ctx context.Context, eng *core.Engine) (*core.Engine, error) {
+	grant, _ := auth.AuthFrom(ctx)
+	if !grant.ProjectRestricted() {
+		return eng, nil
+	}
+	if s.router != nil {
+		if _, err := s.router.Authorize(ctx, eng.ProjectDir()); err != nil {
+			return nil, auth.ProjectDenied("")
+		}
+		return eng, nil
+	}
+	if grant.ProjectAllowed(filepath.Base(eng.ProjectDir()), false) {
+		return eng, nil
+	}
+	return nil, auth.ProjectDenied("")
 }
 
 // version is reported as the MCP serverInfo version. It must match the release
@@ -284,12 +310,12 @@ func (s *Server) HTTPHandler() http.Handler {
 		&mcp.StreamableHTTPOptions{Stateless: true, PropagateRequestCancellation: true},
 	)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		role, anonymous, err := auth.RoleOrAnonymous(s.authStore, r)
+		ac, anonymous, err := auth.AuthOrAnonymous(s.authStore, r)
 		if err != nil {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
-		ctx := withCaller(r.Context(), caller{role: role, anonymous: anonymous})
+		ctx := withCaller(r.Context(), caller{ac: ac, anonymous: anonymous})
 		if s.recorder().Level() != telemetry.Off {
 			ctx = telemetry.WithIdentity(ctx, identityFromHeaders(r), telemetry.TransportHTTP)
 		}
@@ -299,25 +325,29 @@ func (s *Server) HTTPHandler() http.Handler {
 
 type ctxKey int
 
-// caller is who an HTTP request resolved to. anonymous is set when the gate is
-// on and the request carried no Authorization header. A context without a
-// caller (stdio, which is inherently local) is Admin and not anonymous.
+// caller is who an HTTP request resolved to: its identity (role and project
+// grant) and whether it is the anonymous principal. anonymous is set when the
+// gate is on and the request carried no Authorization header. A context without
+// a caller (stdio, which is inherently local) is Admin with no grant, and not
+// anonymous.
 type caller struct {
-	role      auth.Role
+	ac        auth.AuthContext
 	anonymous bool
 }
 
 const callerKey ctxKey = 0
 
+// withCaller stores the caller, and its identity for the router and the
+// portfolio fan-out, which apply the project grant.
 func withCaller(ctx context.Context, c caller) context.Context {
-	return context.WithValue(ctx, callerKey, c)
+	return context.WithValue(auth.WithAuth(ctx, c.ac), callerKey, c)
 }
 
 // roleOf returns the caller role (Admin when ungated, which is the local
 // default; stdio transport is inherently local).
 func roleOf(ctx context.Context) auth.Role {
 	if c, ok := ctx.Value(callerKey).(caller); ok {
-		return c.role
+		return c.ac.Role
 	}
 	return auth.Admin
 }

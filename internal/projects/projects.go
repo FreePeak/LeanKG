@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/langs"
@@ -168,13 +169,6 @@ func (r *Router) MultiProject() bool {
 //     subdirectory inside a routed project routes to that project)
 //   - a NAME matching a project's basename; ambiguous names error
 //
-// Resolve maps a selector (dir path or name) to a registered project's
-// canonical directory WITHOUT opening it — no store open, no Migrate, no
-// language activation. Callers that only need "is this a project we serve"
-// (the dashboard's switch endpoint, routing decisions) must use this rather
-// than EngineFor/Open, which have write and startup side effects.
-func (r *Router) Resolve(selector string) (string, error) { return r.resolve(selector) }
-
 // Everything else errors (FR-ZCP-02): no silent default fallback.
 func (r *Router) resolve(selector string) (string, error) {
 	if selector == "" {
@@ -312,6 +306,27 @@ func (r *Router) EngineFor(ctx context.Context, selector string) (*core.Engine, 
 	return p.Engine, nil
 }
 
+// Authorize resolves the selector and applies the caller's project grant
+// (auth.AuthFrom on ctx) without opening anything. It returns the project's
+// directory. A caller with no grant is unrestricted.
+func (r *Router) Authorize(ctx context.Context, selector string) (string, error) {
+	grant, _ := auth.AuthFrom(ctx)
+	dir, err := r.resolve(selector)
+	if err != nil {
+		if grant.ProjectRestricted() {
+			// A restricted caller learns nothing from a failed selector: the same
+			// refusal as a withheld project, with no list of known projects.
+			return "", auth.ProjectDenied(selector)
+		}
+		return "", err
+	}
+	name := filepath.Base(dir)
+	if !grant.ProjectAllowed(name, len(r.byName(name)) > 1) {
+		return "", auth.ProjectDenied(selector)
+	}
+	return dir, nil
+}
+
 // Open resolves the selector and lazily opens the project's store,
 // engine, and memory (built exactly like the serving process builds the
 // default: same engine selection, same language activation).
@@ -319,8 +334,12 @@ func (r *Router) EngineFor(ctx context.Context, selector string) (*core.Engine, 
 // It never migrates the store: a routed project is served, and a read must
 // not rewrite the schema of the store it reads. A project with no store is
 // refused as not indexed (see Config.open).
+//
+// The caller's project grant (auth.AuthFrom on ctx) is checked here, before any
+// store is opened, so every selector path (MCP, REST, auto-config) shares one
+// check. A caller with no grant in ctx is unrestricted.
 func (r *Router) Open(ctx context.Context, selector string) (*Project, error) {
-	dir, err := r.resolve(selector)
+	dir, err := r.Authorize(ctx, selector)
 	if err != nil {
 		return nil, err
 	}

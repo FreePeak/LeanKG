@@ -31,7 +31,7 @@ func TestRouteByProjectUsesEachRequestsContext(t *testing.T) {
 	defer router.Close()
 
 	built := map[string]int{}
-	h := auth.MiddlewareWithStore(nil, routeByProject(router, rest.Handler(defaultEng, nil), func(p *projects.Project) http.Handler {
+	h := auth.MiddlewareWithStore(nil, routeByProject(router, nil, rest.Handler(defaultEng, nil), func(p *projects.Project) http.Handler {
 		built[p.Dir]++
 		return rest.Handler(p.Engine, p.Memory)
 	}))

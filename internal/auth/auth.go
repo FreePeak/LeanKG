@@ -123,15 +123,23 @@ func GateEnabled(ctx context.Context, st Store) (bool, error) {
 // Authorization header resolves exactly like RoleForRequestWithStore, so a bad
 // or expired token is still an error.
 func RoleOrAnonymous(st Store, r *http.Request) (role Role, anonymous bool, err error) {
+	ac, anonymous, err := AuthOrAnonymous(st, r)
+	return ac.Role, anonymous, err
+}
+
+// AuthOrAnonymous is RoleOrAnonymous with the caller's whole identity: the role
+// and the token's project grant. The open case carries no grant (unrestricted);
+// the anonymous case carries no grant and is denied every project.
+func AuthOrAnonymous(st Store, r *http.Request) (ac AuthContext, anonymous bool, err error) {
 	if r.Header.Get("Authorization") != "" {
-		role, err := RoleForRequestWithStore(st, r)
-		return role, false, err
+		resolved, err := Resolve(st, r)
+		return resolved, false, err
 	}
 	gated, gateErr := GateEnabled(r.Context(), st)
 	if gateErr != nil || gated {
-		return Viewer, true, nil
+		return AuthContext{Role: Viewer, Via: ViaAnonymous}, true, nil
 	}
-	return Admin, false, nil
+	return AuthContext{Role: Admin, Via: ViaOpen}, false, nil
 }
 
 // AllowedTool reports whether role may invoke the MCP tool named tool.
@@ -168,11 +176,12 @@ func Middleware(next http.Handler) http.Handler {
 func MiddlewareWithStore(st Store, next http.Handler) http.Handler {
 	reg := fromEnv()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		role, err := reg.classify(st, r)
+		ac, err := reg.resolveFor(st, r, Target{})
 		if err != nil {
 			httpx.WriteError(w, errs.NewError(errs.Unauthorized, errs.Unauthorized.Cause, ""))
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(WithRole(r.Context(), role)))
+		ctx := WithAuth(r.Context(), ac)
+		next.ServeHTTP(w, r.WithContext(WithRole(ctx, ac.Role)))
 	})
 }

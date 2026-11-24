@@ -1,4 +1,10 @@
 {
+  "access": {
+    "project": "proj",
+    "restricted": false,
+    "role": "admin",
+    "via": "local"
+  },
   "cached": false,
   "content": "package src\n\nfunc Alpha() int {\n\treturn Beta() + 1\n}\n",
   "lines_included": 5,

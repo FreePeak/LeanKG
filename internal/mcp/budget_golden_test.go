@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -150,6 +151,22 @@ func TestBudgetKeepsGraphProvenance(t *testing.T) {
 	}
 	if obj["freshness"] == nil {
 		t.Fatalf("freshness dropped by the budget: keys=%v", keys(obj))
+	}
+
+	// The same answer squeezed below what it needs: the cap must really cut it,
+	// and the access block still says who asked and which project answered.
+	squeezed, stats := core.EnforceBudget(out, "callees", 5)
+	if !stats.Truncated {
+		t.Fatalf("cap 5 did not squeeze the answer; the check below would prove nothing")
+	}
+	raw, _ = json.Marshal(squeezed)
+	obj = map[string]any{}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		t.Fatalf("squeezed answer not an object: %s", raw)
+	}
+	want := map[string]any{"role": "admin", "via": "local", "restricted": false, "project": filepath.Base(dir)}
+	if a, _ := obj["access"].(map[string]any); !reflect.DeepEqual(a, want) {
+		t.Fatalf("access after squeeze = %v; want %v", obj["access"], want)
 	}
 }
 

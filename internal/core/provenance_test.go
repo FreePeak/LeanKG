@@ -2,13 +2,17 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/gitobj/gittest"
 	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -91,6 +95,13 @@ func TestQueryAnswersCarryProvenance(t *testing.T) {
 				t.Skip(why)
 			}
 			_, out := queryActionCase(t, key)
+			access, _ := out["access"].(map[string]any)
+			if role, _ := access["role"].(string); role == "" {
+				t.Errorf("access.role missing: access=%v", out["access"])
+			}
+			if project, _ := access["project"].(string); project == "" {
+				t.Errorf("access.project missing: access=%v", out["access"])
+			}
 			if why, ok := provenanceGaps[key]; ok {
 				if _, has := out["retrieval"]; has {
 					t.Fatalf("query/%s now carries retrieval: remove it from provenanceGaps", key)
@@ -233,5 +244,97 @@ func TestAnswerHeadSyncTellsTheTreeMoved(t *testing.T) {
 	gittest.Git(t, dir, "commit", "-m", "drop main.go")
 	if got := ask(); got != wantHeadSyncStale {
 		t.Fatalf("head_sync = %q; want %q after the tree moved", got, wantHeadSyncStale)
+	}
+}
+
+// TestAccessBlockUnrestrictedCaller: with no caller in the context (stdio, the
+// CLI) the answer names an unrestricted local admin and the served project.
+// An open gate (no token configured) reads as admin via open. Neither carries
+// a withheld count.
+func TestAccessBlockUnrestrictedCaller(t *testing.T) {
+	f := newActionFixture(t)
+	out, err := f.e.Query(context.Background(), QueryRequest{Query: "Thing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"role": "admin", "via": "local", "restricted": false, "project": "proj"}
+	if !reflect.DeepEqual(out["access"], want) {
+		t.Fatalf("no-caller access = %v; want %v", out["access"], want)
+	}
+
+	open := auth.WithAuth(context.Background(), auth.AuthContext{Role: auth.Admin, Via: auth.ViaOpen})
+	out, err = f.e.Query(open, QueryRequest{Query: "Thing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want["via"] = "open"
+	if !reflect.DeepEqual(out["access"], want) {
+		t.Fatalf("open-gate access = %v; want %v", out["access"], want)
+	}
+}
+
+// TestAccessBlockRestrictedToken: a token limited to project proj gets the role
+// it was granted, via token, restricted true. Nothing identifying the token,
+// its account or its org reaches the answer, and neither does a scope or the
+// name of another project.
+func TestAccessBlockRestrictedToken(t *testing.T) {
+	f := newActionFixture(t)
+	ctx := auth.WithAuth(context.Background(), auth.AuthContext{
+		AccountID: "acct-7f3c", OrgID: "org-91aa", TokenID: "tok-5e2d",
+		Role: auth.Viewer, Via: auth.ViaToken,
+		Scopes: []string{"project:proj", "project:zeta-private"},
+	})
+	out, err := f.e.Query(ctx, QueryRequest{Query: "Thing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"role": "viewer", "via": "token", "restricted": true, "project": "proj"}
+	if !reflect.DeepEqual(out["access"], want) {
+		t.Fatalf("restricted access = %v; want %v", out["access"], want)
+	}
+	body, _ := json.Marshal(out)
+	for _, leak := range []string{"acct-7f3c", "org-91aa", "tok-5e2d", "zeta-private", "project:"} {
+		if strings.Contains(string(body), leak) {
+			t.Fatalf("answer leaks %q: %s", leak, body)
+		}
+	}
+}
+
+// TestAccessBlockPortfolioWithheld: a fan-out names no single project, so it
+// has no access.project. Its withheld count is the existing projects_withheld
+// value, and the answer names no withheld project, id or scope.
+func TestAccessBlockPortfolioWithheld(t *testing.T) {
+	fleet := seedGrantFleet(t)
+	ctx := auth.WithAuth(context.Background(), auth.AuthContext{
+		TokenID: "tok-5e2d", Role: auth.Viewer, Via: auth.ViaToken, Scopes: []string{"project:alpha"},
+	})
+	out, err := fleet.engine.Query(ctx, QueryRequest{Action: "portfolio", Query: "Shared", Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, _ := out["access"].(map[string]any)
+	if access["restricted"] != true || access["via"] != "token" || access["role"] != "viewer" {
+		t.Fatalf("granted portfolio access = %v; want viewer via token, restricted", access)
+	}
+	if _, ok := access["project"]; ok {
+		t.Fatalf("portfolio access names a single project: %v", access)
+	}
+	withheld, _ := access["withheld"].(map[string]any)
+	if withheld["projects"] != out["projects_withheld"] || withheld["projects"] != 1 {
+		t.Fatalf("access.withheld = %v; want projects equal to projects_withheld (%v)", access["withheld"], out["projects_withheld"])
+	}
+	body, _ := json.Marshal(out)
+	for _, leak := range []string{"beta", fleet.betaDir, fleet.regDB, "tok-5e2d", "project:"} {
+		if strings.Contains(string(body), leak) {
+			t.Fatalf("restricted portfolio answer leaks %q: %s", leak, body)
+		}
+	}
+
+	open, err := fleet.engine.Query(context.Background(), QueryRequest{Action: "portfolio", Query: "Shared", Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := open["access"].(map[string]any)["withheld"]; ok {
+		t.Fatalf("unrestricted portfolio carries a withheld block: %v", open["access"])
 	}
 }

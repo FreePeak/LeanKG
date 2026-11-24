@@ -136,12 +136,15 @@ func TestSameQueryReturnsOneBodyOnEveryTransport(t *testing.T) {
 
 	restSrv := httptest.NewServer(auth.MiddlewareWithStore(nil, rest.Handler(engine, nil)))
 	t.Cleanup(restSrv.Close)
-	webSrv := httptest.NewServer(web.APIHandler(engine, nil))
+	// The web API and ConnectRPC sit behind the same auth gate in production
+	// (cmd/leankg wraps /api/ and the RPC mux), so the caller identity, and with
+	// it the answer's access block, is the same on every transport.
+	webSrv := httptest.NewServer(auth.MiddlewareWithStore(nil, web.APIHandler(engine, nil)))
 	t.Cleanup(webSrv.Close)
 	rpcMux := http.NewServeMux()
 	path, handler := rpc.Handler(engine, telemetry.Nop{})
 	rpcMux.Handle(path, handler)
-	rpcSrv := httptest.NewServer(rpcMux)
+	rpcSrv := httptest.NewServer(auth.MiddlewareWithStore(nil, rpcMux))
 	t.Cleanup(rpcSrv.Close)
 	mcpSrv := httptest.NewServer(leankgmcp.New(engine).HTTPHandler())
 	t.Cleanup(mcpSrv.Close)

@@ -23,8 +23,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
+
+// projectScopePrefix marks a scope that names a project the token may reach.
+const projectScopePrefix = "project:"
 
 // errUnknownToken is the one rejection for a bearer token that does not
 // authenticate: an unknown token, and a token whose existing account is not active. The
@@ -43,6 +47,12 @@ const (
 	ViaEnv = "env"
 	// ViaOpen means no token was configured anywhere (local default).
 	ViaOpen = "open"
+	// ViaLocal means no caller reached the engine at all (stdio, the CLI): the
+	// answer names no request identity, so it is an unrestricted local admin.
+	ViaLocal = "local"
+	// ViaAnonymous means an HTTP caller sent no Authorization header while the
+	// gate is on. It holds no grant, so it reaches no project.
+	ViaAnonymous = "anonymous"
 )
 
 // Target identifies the resource an authorization decision is about. The zero
@@ -87,6 +97,52 @@ func (c AuthContext) ScopeAllowed(scope string) bool {
 		}
 	}
 	return false
+}
+
+// ProjectRestricted reports whether the token names projects at all. A token
+// with no project: scope is unrestricted for projects, whatever its other
+// scopes are.
+func (c AuthContext) ProjectRestricted() bool {
+	return c.Via == ViaAnonymous || len(c.ProjectScopes()) > 0
+}
+
+// ProjectScopes returns the caller's project: scopes, the part of its grant a
+// token minted by this caller may carry. Nil for an unrestricted caller.
+func (c AuthContext) ProjectScopes() []string {
+	var out []string
+	for _, s := range c.Scopes {
+		if strings.HasPrefix(s, projectScopePrefix) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// ProjectAllowed reports whether the token may reach the registered project
+// called name (the basename of its directory, the name the router serves it
+// by). shared is true when another registered project has the same basename:
+// a grant by name cannot tell those directories apart, so the name matches no
+// grant. An unrestricted token reaches every project; a restricted one reaches
+// only the names its project: scopes grant, by the same exact match as
+// ScopeAllowed. An anonymous caller has no grant, so it reaches none (its empty
+// scope list must not read as unrestricted).
+func (c AuthContext) ProjectAllowed(name string, shared bool) bool {
+	if !c.ProjectRestricted() {
+		return true
+	}
+	return c.Via != ViaAnonymous && !shared && c.ScopeAllowed(projectScopePrefix+name)
+}
+
+// ProjectDenied is the refusal for a project the caller's grant does not cover.
+// It names the selector the caller sent and nothing else: a registered project
+// that is withheld and a name that matches nothing get the same answer, so the
+// refusal cannot be used to probe which projects exist.
+func ProjectDenied(selector string) error {
+	cause := fmt.Sprintf("project %q is not available to this token", selector)
+	if selector == "" {
+		cause = "the project this endpoint serves is not available to this token"
+	}
+	return errs.NewError(errs.PermissionDenied, cause, "use a token whose project: scopes grant this project")
 }
 
 // Resolve resolves the caller of r with no specific resource target.
