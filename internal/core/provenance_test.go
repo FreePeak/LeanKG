@@ -218,6 +218,11 @@ func TestAnswerHeadSyncTellsTheTreeMoved(t *testing.T) {
 	if got := ask(); got != wantHeadSyncStale {
 		t.Fatalf("head_sync = %q; want %q after the tree moved", got, wantHeadSyncStale)
 	}
+	// Checking out the indexed commit moves HEAD back onto the store's tree.
+	gittest.Git(t, dir, "checkout", "-q", "--detach", "HEAD~1")
+	if got := ask(); got != wantHeadSyncMatch {
+		t.Fatalf("head_sync = %q; want %q after checking out the indexed commit", got, wantHeadSyncMatch)
+	}
 }
 
 // TestAccessBlockUnrestrictedCaller: with no caller in the context (stdio, the
