@@ -184,6 +184,8 @@ func seedMemory(t *testing.T, mem *memory.Memory) {
 var (
 	reWatermarkSeq = regexp.MustCompile(`"seq":\s*-?\d+`)
 	reWatermarkAt  = regexp.MustCompile(`"at":\s*-?\d+`)
+	// indexed_at is the answer-side watermark time (the same unix seconds).
+	reIndexedAt = regexp.MustCompile(`"indexed_at":\s*-?\d+`)
 )
 
 // reSpaceBytes redacts the status tool's storage-space block: the byte counts
@@ -205,6 +207,7 @@ func canon(t *testing.T, v any, project string) []byte {
 	s = strings.ReplaceAll(s, project, "<PROJECT>")
 	s = reWatermarkSeq.ReplaceAllLiteralString(s, `"seq":"<SEQ>"`)
 	s = reWatermarkAt.ReplaceAllLiteralString(s, `"at":"<AT>"`)
+	s = reIndexedAt.ReplaceAllLiteralString(s, `"indexed_at":"<AT>"`)
 	var out any
 	if err := json.Unmarshal([]byte(s), &out); err != nil {
 		t.Fatalf("redaction produced invalid JSON: %v\n%s", err, s)

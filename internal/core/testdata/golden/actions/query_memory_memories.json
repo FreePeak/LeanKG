@@ -1,5 +1,12 @@
 {
   "command": "memories",
   "count": 0,
+  "freshness": "possibly_stale",
+  "indexed_at": "<AT>",
+  "retrieval": {
+    "reason": "agent memory memories",
+    "rung": "memory",
+    "scope": "all"
+  },
   "text": ""
 }

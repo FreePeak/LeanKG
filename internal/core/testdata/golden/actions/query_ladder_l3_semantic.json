@@ -17,6 +17,7 @@
       "similarity": -0.3505250911615613
     }
   ],
+  "indexed_at": "<AT>",
   "limit": 1,
   "query": "compute the answer",
   "retrieval": {

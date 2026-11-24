@@ -1,4 +1,6 @@
 {
+  "freshness": "fresh",
+  "indexed_at": "<AT>",
   "partners": [
     {
       "count": 1,
@@ -9,5 +11,10 @@
       "path": "util.go"
     }
   ],
-  "path": "main.go"
+  "path": "main.go",
+  "retrieval": {
+    "reason": "git cochange of main.go",
+    "rung": "git",
+    "scope": "all"
+  }
 }

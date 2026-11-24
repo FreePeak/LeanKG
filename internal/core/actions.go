@@ -207,7 +207,7 @@ func (e *Engine) searchPrelude(ctx context.Context, req QueryRequest, env envelo
 		// ladder would otherwise answer "no elements indexed" (CX-45).
 		return searchScope{}, err
 	}
-	resp["freshness"] = e.freshness(ctx, els)
+	e.stampFreshness(ctx, resp, els)
 	// One population rule for every rung: git history rows are hidden unless
 	// args.include_git is set (see searchKeep). The semantic rung applies the
 	// same rule as a store-side predicate.
@@ -327,7 +327,11 @@ func graphQuery(verb graphVerb) actionHandler[QueryRequest] {
 		if seed != req.Query {
 			s.resp["resolved_query"] = seed
 		}
-		return verb(e, ctx, req, a, seed, s.resp)
+		out, err := verb(e, ctx, req, a, seed, s.resp)
+		if err != nil {
+			return nil, err
+		}
+		return e.stampProvenance(ctx, out, "graph", fmt.Sprintf("%s from seed %s", req.Action, seed))
 	})
 }
 
@@ -510,7 +514,15 @@ func (e *Engine) queryMemory(ctx context.Context, req QueryRequest, a queryMemor
 	if !ok {
 		return nil, fmt.Errorf("unknown memory read command %q (valid: session_recall, memories, view, snapshot, search)", a.Command)
 	}
-	return h(e, ctx, req, a)
+	out, err := h(e, ctx, req, a)
+	if err != nil {
+		return nil, err
+	}
+	cmd := a.Command
+	if cmd == "" {
+		cmd = "search"
+	}
+	return e.stampProvenance(ctx, out, "memory", "agent memory "+cmd)
 }
 
 func (e *Engine) querySessionMemory(ctx context.Context, req QueryRequest, a queryMemoryArgs) (map[string]any, error) {
@@ -641,7 +653,11 @@ type lspArgs struct {
 }
 
 func (e *Engine) queryLSP(ctx context.Context, req QueryRequest, a lspArgs) (map[string]any, error) {
-	return e.lspQuery(ctx, withArgLimit(req, a.Limit), a, map[string]any{"query": req.Query})
+	out, err := e.lspQuery(ctx, withArgLimit(req, a.Limit), a, map[string]any{"query": req.Query})
+	if err != nil {
+		return nil, err
+	}
+	return e.stampProvenance(ctx, out, "lsp", "language server symbols ("+a.Lang+")")
 }
 
 // patternArgs are the args of query{action:"pattern"}.
@@ -653,7 +669,13 @@ type patternArgs struct {
 }
 
 func (e *Engine) queryPattern(ctx context.Context, req QueryRequest, a patternArgs) (map[string]any, error) {
-	return e.patternQuery(ctx, withArgLimit(req, a.Limit), a, map[string]any{"query": req.Query})
+	out, err := e.patternQuery(ctx, withArgLimit(req, a.Limit), a, map[string]any{"query": req.Query})
+	if err != nil {
+		return nil, err
+	}
+	// patternQuery sets its own rung (ast-grep, or the L2 degrade); the
+	// fallback here is only for an answer that set none.
+	return e.stampProvenance(ctx, out, "ast-grep", "structural pattern match")
 }
 
 // withArgLimit applies args.limit to a full-scan action (pattern, lsp). The
