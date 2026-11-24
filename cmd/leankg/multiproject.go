@@ -47,11 +47,17 @@ func routeByProject(router *projects.Router, st auth.Store, identify func(*http.
 // evictions, so a handler built over a closed project engine is dropped with
 // it.
 func newProjectRouting(router *projects.Router, st auth.Store, identify func(*http.Request) (auth.AuthContext, error), fallback http.Handler, build func(*projects.Project) http.Handler) *projectRouting {
+	// A URL-only transport (identify nil) gates the default project here. The MCP
+	// listener does not: its project may ride in the tool arguments, and engineFor
+	// checks the caller's grant and org scope on the project each call resolves.
+	if identify == nil {
+		fallback = defaultProjectGate(router, st, fallback)
+	}
 	h := &projectRouting{
 		router:   router,
 		store:    st,
 		identify: identify,
-		fallback: defaultProjectGate(router, st, fallback),
+		fallback: fallback,
 		build:    build,
 		cache:    map[string]http.Handler{},
 	}
@@ -86,7 +92,10 @@ func resolveCaller(st auth.Store) func(*http.Request) (auth.AuthContext, error) 
 func (h *projectRouting) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	sel := r.URL.Query().Get("project")
 	if sel == "" {
-		if h.router.Hosted() {
+		// A URL-only transport (REST) must name its project in ?project=. The MCP
+		// listener (identify set) carries the project in the tool arguments, which
+		// this dispatcher cannot read; its engineFor refuses a call with none.
+		if h.identify == nil && h.router.Hosted() {
 			httpx.WriteError(w, errs.NewError(errs.MissingParam,
 				"this server is hosted, so every request must name its project",
 				"add ?project=<repo dir or name> to the URL"))
