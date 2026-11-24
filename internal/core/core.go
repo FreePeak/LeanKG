@@ -227,7 +227,8 @@ func (e *Engine) stampFreshness(ctx context.Context, resp map[string]any, els in
 // stampProvenance is the one place a query answer gets retrieval{rung,reason}
 // and freshness. A rung a ladder step already set is kept. Freshness is derived
 // only when the answer has none, so an answer that already went through
-// searchPrelude is not counted twice.
+// searchPrelude is not counted twice. A store that cannot count still answers:
+// the freshness degrades to possibly_stale, as store.Freshness does.
 func (e *Engine) stampProvenance(ctx context.Context, resp map[string]any, rung, reason string) (map[string]any, error) {
 	if _, ok := resp["retrieval"]; !ok {
 		resp["retrieval"] = map[string]any{"rung": rung, "reason": reason}
@@ -235,7 +236,8 @@ func (e *Engine) stampProvenance(ctx context.Context, resp map[string]any, rung,
 	if _, ok := resp["freshness"]; !ok {
 		els, err := e.st.ElementCount(ctx)
 		if err != nil {
-			return nil, err
+			resp["freshness"] = store.FreshnessPossiblyStale
+			return resp, nil
 		}
 		e.stampFreshness(ctx, resp, els)
 	}
