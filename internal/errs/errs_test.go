@@ -81,7 +81,7 @@ func TestCatalogTableMatchesAccessors(t *testing.T) {
 	consts := []ErrorCode{
 		PGUnreachable, PGURLMalformed, ProjectNotInitialized, UnknownProject,
 		AutoAttachFailed, Unauthorized, UnknownTool, NoVectors, TrgmUnavailable,
-		MethodNotFound, ReadOnly, UnknownAction, MissingParam, PermissionDenied,
+		MethodNotFound, ReadOnly, RoutedReadOnly, UnknownAction, MissingParam, PermissionDenied,
 		PathOutsideProject, IndexRootMismatch, InvalidParam,
 		RequestTooLarge, IndexUnavailable,
 	}

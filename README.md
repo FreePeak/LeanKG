@@ -317,6 +317,7 @@ docker run --rm -p 8080:10000 -e PORT=10000 leankg   # dashboard and its /api on
 | Wrong project served | Start the server with `--project DIR` (`query` and `impact` also honor `LEANKG_PROJECT`) |
 | Embeddings or a cold embed | `leankg-embed status`, then `leankg-embed full`. Provider variables are `LEANKG_EMBED_*` |
 | `LEANKG_ERROR_READ_ONLY` | The server was started with `--read-only`. Restart it without the flag, or send writes to a writable instance |
+| `LEANKG_ERROR_ROUTED_READ_ONLY` | A hosted server serves routed projects read-only. Index the project with `leankg index <dir>` or run `leankg writer --project <dir>` |
 | Server refuses to start on a non-loopback address | Bind `127.0.0.1` (the default), or configure a bearer token first (`leankg auth token create`) |
 | Query on a multi-project server is refused | Pass the `project` argument (a directory or a project name) on each call |
 

@@ -137,6 +137,15 @@ var ReadOnly = ErrorCode{
 	DocAnchor: "README.md#troubleshooting",
 }
 
+// RoutedReadOnly: a graph write reached a routed project's store on a hosted
+// server. Routed stores are read-only there; the writer indexes them.
+var RoutedReadOnly = ErrorCode{
+	Code:      "LEANKG_ERROR_ROUTED_READ_ONLY",
+	Cause:     "routed projects are read-only in hosted mode, so this import cannot write the project's graph",
+	Fix:       "index the project with the writer (`leankg index <dir>` or `leankg writer --project <dir>`); the hosted server only serves routed projects",
+	DocAnchor: "README.md#troubleshooting",
+}
+
 // UnknownAction: the tool was called with an action value it does not implement.
 var UnknownAction = ErrorCode{
 	Code:      "LEANKG_ERROR_UNKNOWN_ACTION",
@@ -217,6 +226,7 @@ var Catalog = []ErrorCode{
 	TrgmUnavailable,
 	MethodNotFound,
 	ReadOnly,
+	RoutedReadOnly,
 	UnknownAction,
 	MissingParam,
 	PermissionDenied,

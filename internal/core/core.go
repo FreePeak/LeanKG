@@ -459,6 +459,11 @@ func writesStore(action string) bool {
 // the real cause, while a migration error would name the schema.
 func (e *Engine) ensureStoreSchema(ctx context.Context) error {
 	if e.st.Mode() == store.RO {
+		// A hosted engine's read-only store is a routed project: the writer is
+		// its only indexer, so refuse the write with the catalog's typed error.
+		if e.hosted {
+			return errs.NewError(errs.RoutedReadOnly, errs.RoutedReadOnly.Cause, "")
+		}
 		return nil
 	}
 	if err := e.st.Migrate(ctx); err != nil {

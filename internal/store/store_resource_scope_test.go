@@ -49,3 +49,34 @@ func TestResourceClaimsByOrg(t *testing.T) {
 		t.Fatalf("after release ResourceOrgs(/work/a) = %v, want none", got)
 	}
 }
+
+// TestClaimedResourceIDsSpansEveryOrg pins the read a hosted restart needs:
+// ClaimedResourceIDs lists each claimed resource of a type once, across every
+// org, and skips other types and released claims.
+func TestClaimedResourceIDsSpansEveryOrg(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	claims := []struct{ typ, id, owner, org string }{
+		{"project", "/work/b", "org:org-1", "org-1"},
+		{"project", "/work/a", "org:org-2", "org-2"},
+		{"project", "/work/a", "org:org-3", "org-3"},
+		{"other", "/work/z", "org:org-1", "org-1"},
+	}
+	for _, c := range claims {
+		if err := s.ResourceClaim(ctx, c.typ, c.id, c.owner, c.org); err != nil {
+			t.Fatalf("claim %s/%s: %v", c.typ, c.id, err)
+		}
+	}
+	if got, err := s.ClaimedResourceIDs(ctx, "project"); err != nil || !reflect.DeepEqual(got, []string{"/work/a", "/work/b"}) {
+		t.Fatalf("ClaimedResourceIDs(project) = %v, %v; want [/work/a /work/b]", got, err)
+	}
+	if err := s.ResourceRelease(ctx, "project", "/work/b"); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if got, err := s.ClaimedResourceIDs(ctx, "project"); err != nil || !reflect.DeepEqual(got, []string{"/work/a"}) {
+		t.Fatalf("after release ClaimedResourceIDs = %v, %v; want [/work/a]", got, err)
+	}
+	if got, err := s.ClaimedResourceIDs(ctx, "missing"); err != nil || len(got) != 0 {
+		t.Fatalf("ClaimedResourceIDs(missing) = %v, %v; want none", got, err)
+	}
+}

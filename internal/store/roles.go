@@ -252,6 +252,9 @@ type Identity interface {
 	// ResourceIDs lists the resources of resourceType that orgID claimed. It is
 	// the org-keyed visibility of a project: a token with an org sees only these.
 	ResourceIDs(ctx context.Context, resourceType, orgID string) ([]string, error)
+	// ClaimedResourceIDs lists each resource of resourceType that any org has
+	// claimed, once. A hosted restart reads it to route every registered project.
+	ClaimedResourceIDs(ctx context.Context, resourceType string) ([]string, error)
 	// ResourceRelease removes every claim on the resource.
 	ResourceRelease(ctx context.Context, resourceType, resourceID string) error
 }
