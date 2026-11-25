@@ -27,6 +27,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/portfolioreg"
 	"github.com/FreePeak/LeanKG/internal/projectcfg"
 	"github.com/FreePeak/LeanKG/internal/refresh"
+	"github.com/FreePeak/LeanKG/internal/rest"
 	"github.com/FreePeak/LeanKG/internal/sources"
 	"github.com/FreePeak/LeanKG/internal/store"
 	"github.com/FreePeak/LeanKG/internal/summarize"
@@ -53,6 +54,22 @@ func gateAutoConfig(st store.Backend, mcp, autoConfig http.Handler) http.Handler
 	mux.Handle("/api/v1/mcp/auto-config", auth.Public(auth.MiddlewareWithStore(st, refuseOrgScoped(st, autoConfig))))
 	mux.Handle("/", auth.Public(mcp))
 	return mux
+}
+
+// restRoot mounts the REST listener's routes around its gated handler. The
+// auth bootstrap is public by design (its handlers enforce their own checks).
+// On a hosted listener /health answers ahead of the gate, so an orchestrator
+// probe needs no token, and the project registry is mounted with its own Admin
+// check. Everything else sits behind the bearer gate.
+func restRoot(st auth.Store, hosted bool, projectAdmin, api http.Handler) http.Handler {
+	root := http.NewServeMux()
+	root.Handle("/api/v1/auth/", auth.Public(auth.Routes(st)))
+	if hosted {
+		root.Handle("GET /health", auth.Public(rest.HealthHandler()))
+		root.Handle("/api/v1/projects", auth.Public(projectAdmin))
+	}
+	root.Handle("/", auth.Public(auth.MiddlewareWithStore(st, api)))
+	return root
 }
 
 // refuseOrgScoped answers 403 to a caller whose token carries an org. The

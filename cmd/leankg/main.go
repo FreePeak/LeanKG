@@ -754,14 +754,9 @@ afterSidecars:
 		// bootstrap (the handlers enforce their own caller/account checks), and
 		// Rust registered them outside the auth middleware for the same reason.
 		// Everything else sits behind the bearer gate.
-		root := http.NewServeMux()
-		root.Handle("/api/v1/auth/", auth.Public(auth.Routes(st)))
-		if *hosted {
-			root.Handle("/api/v1/projects", auth.Public(projectAdminRoute(st, router, portfolioreg.Options{
-				Engine: eng, PGURL: projectcfg.PGURL(dir),
-			})))
-		}
-		root.Handle("/", auth.Public(auth.MiddlewareWithStore(st, h)))
+		root := restRoot(st, *hosted, projectAdminRoute(st, router, portfolioreg.Options{
+			Engine: eng, PGURL: projectcfg.PGURL(dir),
+		}), h)
 		log.Printf("leankg serve (REST) on %s", *restAddr)
 		eps = append(eps, endpoint{addr: *restAddr, h: root})
 	}
