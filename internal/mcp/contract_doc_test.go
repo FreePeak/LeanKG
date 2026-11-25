@@ -63,8 +63,8 @@ func renderContract(t *testing.T) string {
 		}
 		desc := strings.ReplaceAll(tool.Description, "\n", " ")
 		desc = strings.Join(strings.Fields(desc), " ")
-		if len(desc) > 400 {
-			desc = desc[:397] + "..."
+		if len(desc) > 1000 {
+			desc = desc[:997] + "..."
 		}
 		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", tool.Name, desc, strings.Join(sortedStrings(names), ", "))
 	}
