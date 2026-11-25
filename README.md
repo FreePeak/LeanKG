@@ -32,6 +32,10 @@
   <img src="https://img.shields.io/badge/CGO-free_binary-2E7D32" alt="CGO-free binary">
 </p>
 
+<p align="center">
+  <img src="assets/banner.svg" alt="LeanKG" width="100%">
+</p>
+
 ---
 
 ## The problem
