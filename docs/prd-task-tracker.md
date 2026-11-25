@@ -67,6 +67,29 @@ Two defects this block used to carry, both corrected above: it counted **FR-GO-D
 | FIX-WAVE-2026-10-22 | Seven defects found by measuring the live self-host's own stores, ledgers and registry — the scheduled maintenance pass that ran hourly and reclaimed nothing, the vector row that owned a whole page, the memory row with no stable identity, the telemetry ledger that was never purged, the registry that pruned itself only by hand, the heading that stored its descendants' bodies, and the store that never reconciled with the tree it indexed | 2026-10-22 | **DONE — 7 fixes, one PR each, all merged.** #564 (memory lifecycle), #565 (markdown sections), #566 (the scheduled pass does its job), #567 (the store's page size), #568 (the registry's automatic prune), #570 (the telemetry ledger), #571 (reconcile with HEAD) — each with a regression test that fails on `main` and passes on its branch. The per-defect rows live in the sections each fix inserted; this row is the wave's index |
 
 
+## hosted-multi-tenant - one cell serves many orgs, each seeing only its own projects (2026-11-25, PRs #610, #611, #613, #614)
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| FR-HOST-01 | Hosted cell serves many orgs: org-bound tokens see only their org's projects; another org's project answers like an unknown one; every request names its project; routed stores read-only, home store writable; `serve --hosted` refusals | **DONE** (#610, #611) | `cmd/leankg/hosted.go:18-40` (`checkHostedFlags`, `hostedGateError`); `cmd/leankg/orgisolation_test.go:316,354`; `internal/errs/errs.go:146-149` |
+| FR-HOST-02 | Runtime project registration via POST/DELETE `/api/v1/projects` with ownership claims, restored at startup | **DONE** (#610, #611) | `cmd/leankg/projectadmin.go:18-41`; `cmd/leankg/main.go:620-621`; `internal/projects/projects.go:221-258` (`Restore`) |
+| FR-HOST-03 | Bounded open projects with idle eviction (`LEANKG_HOSTED_MAX_OPEN_PROJECTS`, default 64 hosted only); per-project PG pool cap (`LEANKG_PG_POOL_SIZE`, default 2) | **DONE** (#611) | `internal/projects/projects.go:84-107`; `internal/store/store_pg_pool.go:15` (`DefaultPGPoolSize = 2`) |
+| FR-HOST-04 | Secrets redacted before embedding; git credentials in the child environment only; `leankg connect --token-env` env-var Authorization header | **DONE** (PR not mapped in this pass) | `internal/embed/run.go:167`; `internal/sources/git.go:118-120,269`; `cmd/leankg/connect.go:53-59,196` |
+| FR-HOST-05 | Hosted error hygiene: no host paths in project errors; REST 401 hint names the token; REST `/health` public on hosted listeners; typed `LEANKG_ERROR_ROUTED_READ_ONLY` | **DONE** (#614) | `internal/auth/auth.go:190-194`; `cmd/leankg/helpers.go:61`; `internal/errs/errs.go:146-149` |
+| FR-HOST-06 | Release assets include SHA256SUMS | **DONE** (#613, first in v0.37.2) | `.github/workflows/release.yml:158-175` |
+
+Releases: v0.37.0 (2026-11-24), v0.37.1 (2026-11-24), v0.37.2 (2026-11-25, latest). Verified with `gh pr view` and `gh release list`.
+
+**Open items (not blocking; none is a regression):**
+
+- The embedding provider defaults to `local` unless `LEANKG_EMBED_*` is set. A hosted deployment must set it explicitly (`.env.example:13`).
+- `leankg index <dir> --source` into the same store is refused by design. Hosted ingestion uses `leankg refresh --project <dir> --source <url> --ref-name <sha>` (`cmd/leankg/main.go:199`). The refusal wording was not re-checked in this pass.
+- `refresh` embeds inline when a provider is configured (`cmd/leankg/refreshverb.go:42`).
+- `GITLAB_TOKEN` takes precedence over `GIT_TOKEN` in `sourceAuth` (`cmd/leankg/main.go:1170-1177`).
+- The MCP HTTP 401 body is a bare `{"error":"unauthorized"}` (`internal/mcp/server.go:343`).
+- Query output is not redacted for members of the owning org.
+- `session_recall` reads the top-level `query` only (`internal/core/actions.go:548-553`).
+
 ## v4.18-test-env-hermeticity — the suite's result must not depend on the operator's shell (2026-10-21, branch `fix/test-env-hermeticity`)
 
 **Why:** the embed provider is configured entirely by the `LEANKG_EMBED_*`

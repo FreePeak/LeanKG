@@ -10,6 +10,24 @@
 
 ## Changelog
 
+### hosted-multi-tenant - one cell serves many orgs, each seeing only its own projects (FR-HOST-01..04) (2026-11-25)
+
+**Requirement (FR-HOST-01).** A hosted cell (`leankg serve --hosted`) serves many organisations from one listener. A token is bound to an org (`org_id`) and sees only that org's projects. A request for another org's project is answered exactly like a request for an unknown project, so the response does not reveal that the project exists. Every request must name its project (FR-ZCP-02 fail-closed rule applies). Routed project stores are read-only; the cell home store (tokens, org claims, registry) stays writable.
+
+**Refusals.** `serve --hosted` refuses `--read-only`, `--memory-global`, `--ui`, `--rpc`, `--stdio`, serving without `--rest`, and serving without a token source. Each refusal runs before any store is opened (`cmd/leankg/hosted.go:18-40`, `checkHostedFlags`; the gate refusal is `hostedGateError`).
+
+**Runtime registration (FR-HOST-02).** `POST /api/v1/projects {dir, org_id}` and `DELETE /api/v1/projects` add and remove projects on the running cell. Each registration writes an ownership claim in the home store, and startup restores the claimed projects, skipping any claim whose directory no longer holds a store (`cmd/leankg/projectadmin.go:18-41`, `cmd/leankg/main.go:620-621`, `internal/projects/projects.go:221-258`).
+
+**Bounded open projects (FR-HOST-03).** Routed projects open lazily and are evicted least-recently-used. In hosted mode the cap is `LEANKG_HOSTED_MAX_OPEN_PROJECTS` (default 64; no cap outside hosted mode) (`internal/projects/projects.go:84-107`). The Postgres pool per project is capped by `LEANKG_PG_POOL_SIZE` (default 2, `internal/store/store_pg_pool.go:15`).
+
+**Secrets and credentials (FR-HOST-04).** Text sent to an embedding provider is redacted first (`internal/embed/run.go:167`, `telemetry.Redact`). Git credentials for `--source` travel in the git child environment as `GIT_CONFIG_*` headers, never in the clone URL or argv (`internal/sources/git.go:118-120`, `:269`). `leankg connect --token-env <VAR>` writes an env-var `Authorization` header for claude-code, cursor, opencode and codex (`cmd/leankg/connect.go:53-59`, `:196`).
+
+**Error hygiene.** Hosted project errors carry no host paths; the REST 401 hint names the token when a bearer was sent (`internal/auth/auth.go:190-194`); REST `/health` answers without a token on a hosted listener (`cmd/leankg/helpers.go:61`). Graph writes against a routed project return the typed refusal `LEANKG_ERROR_ROUTED_READ_ONLY` (`internal/errs/errs.go:146-149`). The MCP HTTP 401 body is a bare `{"error":"unauthorized"}` (`internal/mcp/server.go:343`).
+
+**Shipped.** PRs #610 (hosted serving hooks, merged 2026-11-24), #611 (restore registrations at startup and hold the open-project cap, merged 2026-11-24), #613 (publish SHA256SUMS with the release archives, merged 2026-11-25), #614 (no host paths in project errors, clearer 401 hint, public REST /health, merged 2026-11-25). Releases v0.37.0 (2026-11-24), v0.37.1 (2026-11-24) and v0.37.2 (2026-11-25, the first with SHA256SUMS among its assets; `.github/workflows/release.yml:158-175`).
+
+**Open items.** (1) The embedding provider defaults to `local` unless `LEANKG_EMBED_*` is set; a hosted deployment must set it explicitly (`.env.example:13`). (2) `leankg index <dir> --source` into the same store is refused by design; hosted ingestion uses `leankg refresh --project <dir> --source <url> --ref-name <sha>` (`cmd/leankg/main.go:199`, `cmd/leankg/refreshverb.go:1`). The refusal wording was not re-checked in this pass. (3) `refresh` embeds inline when a provider is configured (`cmd/leankg/refreshverb.go:42`). (4) `GITLAB_TOKEN` takes precedence over `GIT_TOKEN` in `sourceAuth` (`cmd/leankg/main.go:1170-1177`). (5) Query output is not redacted for members of the owning org. (6) `session_recall` reads the top-level `query` only (`internal/core/actions.go:548-553`).
+
 ### route-roles: every route declares its role; isWritePath is gone (CX-38, CX-49) (2026-11-15)
 
 The gate resolves the caller once and stores its role in the request context. Each route on a gated listener declares its access at registration: `auth.Require(role, h)` or `auth.Public(h)`. `TestRouteRegistrationsDeclareRole` fails on a route without a declaration, so a route with no role cannot ship. The path lists (`isWritePath`, `writePrefixes`, `memoryWritePrefixes`) are deleted.
