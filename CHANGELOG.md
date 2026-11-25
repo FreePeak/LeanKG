@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.37.2](https://github.com/FreePeak/LeanKG/compare/v0.37.1...v0.37.2) (2026-11-25)
+
+
+### Bug Fixes
+
+* **auth:** REST 401 for a bearer token names the token, not the login ([d1b15c9](https://github.com/FreePeak/LeanKG/commit/d1b15c9248ef518914e84048116d6944317ed352))
+* **hosted:** no host paths in project errors, clearer 401 hint, public REST /health ([277e646](https://github.com/FreePeak/LeanKG/commit/277e646543acbb497817d00d80a48828d6751b40))
+* **projects:** hosted unknown-project errors name projects, never paths ([d353746](https://github.com/FreePeak/LeanKG/commit/d35374679284121bc0aa26d8ef8d764ad40a28a1))
+* **rest:** hosted /health answers without a token ([f7abc24](https://github.com/FreePeak/LeanKG/commit/f7abc240b7434e48ed80a6e4209dedc6fe251d72))
+
 ## [0.37.1](https://github.com/FreePeak/LeanKG/compare/v0.37.0...v0.37.1) (2026-11-24)
 
 
