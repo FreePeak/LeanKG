@@ -97,6 +97,12 @@ var Unauthorized = ErrorCode{
 	DocAnchor: "README.md#troubleshooting",
 }
 
+// UnauthorizedBadTokenFix is the Fix of an Unauthorized answer to a request
+// that carried a bearer token. The token itself was refused, so the login hint
+// above would send the caller to the wrong step. The code and status are the
+// same as Unauthorized's.
+const UnauthorizedBadTokenFix = "the bearer token is unknown, revoked or expired: obtain a new token from the administrator, then send header `Authorization: Bearer <token>`"
+
 // UnknownTool: the requested tool name is not in this server's registry.
 var UnknownTool = ErrorCode{
 	Code:      "LEANKG_ERROR_UNKNOWN_TOOL",

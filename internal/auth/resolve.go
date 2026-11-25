@@ -160,9 +160,8 @@ func ResolveFor(st Store, r *http.Request, target Target) (AuthContext, error) {
 // resolveFor is the resolution over one registry snapshot: the middleware
 // already holds a registry, so it must not rebuild the env map per request.
 func (reg *registry) resolveFor(st Store, r *http.Request, target Target) (AuthContext, error) {
-	bearer, hasBearer := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	bearer = strings.TrimSpace(bearer)
-	if hasBearer && bearer != "" {
+	bearer, hasBearer := bearerOf(r)
+	if hasBearer {
 		// 1. DB-backed tokens win: they can be minted and revoked at runtime.
 		if st != nil {
 			grant, found, err := Verify(r.Context(), st, bearer)
@@ -185,10 +184,19 @@ func (reg *registry) resolveFor(st Store, r *http.Request, target Target) (AuthC
 	if !configured {
 		return AuthContext{Role: Admin, Via: ViaOpen}, nil
 	}
-	if !hasBearer || bearer == "" {
+	if !hasBearer {
 		return AuthContext{}, fmt.Errorf("auth: missing bearer token")
 	}
 	return AuthContext{}, errUnknownToken
+}
+
+// bearerOf returns the bearer token a request carries, and whether it carries
+// a non-empty one. It is the one parse of the Authorization header, shared by
+// the gate and by the refusal hint (see Refused).
+func bearerOf(r *http.Request) (string, bool) {
+	bearer, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	bearer = strings.TrimSpace(bearer)
+	return bearer, ok && bearer != ""
 }
 
 // EffectiveRole is Resolve reduced to the role that gates actions.

@@ -178,10 +178,21 @@ func MiddlewareWithStore(st Store, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ac, err := reg.resolveFor(st, r, Target{})
 		if err != nil {
-			httpx.WriteError(w, errs.NewError(errs.Unauthorized, errs.Unauthorized.Cause, ""))
+			httpx.WriteError(w, Refused(r))
 			return
 		}
 		ctx := WithAuth(r.Context(), ac)
 		next.ServeHTTP(w, r.WithContext(WithRole(ctx, ac.Role)))
 	})
+}
+
+// Refused is the Unauthorized answer for a request the gate cannot
+// authenticate. A request that carried a bearer token was refused for that
+// token, so its hint names the token; a request with no bearer keeps the login
+// hint. The code and status are the same either way.
+func Refused(r *http.Request) *errs.Error {
+	if _, ok := bearerOf(r); ok {
+		return errs.NewError(errs.Unauthorized, errs.Unauthorized.Cause, errs.UnauthorizedBadTokenFix)
+	}
+	return errs.NewError(errs.Unauthorized, errs.Unauthorized.Cause, "")
 }

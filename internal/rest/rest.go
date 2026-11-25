@@ -28,6 +28,14 @@ import (
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
+// HealthHandler is the liveness route: 200 and {"ok":true}, with nothing about
+// projects or paths. It is safe to serve ahead of an auth gate.
+func HealthHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})
+}
+
 // Handler builds the REST mux over an engine.
 func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) http.Handler {
 	mux := http.NewServeMux()
@@ -35,9 +43,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 	for _, o := range opts {
 		o(&cfg)
 	}
-	mux.Handle("GET /health", auth.Public(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
-	})))
+	mux.Handle("GET /health", auth.Public(HealthHandler()))
 	mux.Handle("GET /api/v1/status", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		out, err := engine.Status(r.Context())
 		if err != nil {
