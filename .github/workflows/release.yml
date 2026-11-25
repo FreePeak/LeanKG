@@ -153,6 +153,18 @@ jobs:
         with:
           pattern: release-*
           merge-multiple: true
+      # One checksum file over exactly the four archives, in the two-space
+      # format that `sha256sum -c` and `shasum -a 256 -c` both read back.
+      - name: Write SHA256SUMS for the four archives
+        run: |
+          set -euo pipefail
+          n="$(find . -maxdepth 1 -name 'leankg-*.tgz' | wc -l)"
+          if [ "$n" -ne 4 ]; then
+            echo "::error::expected 4 platform tarballs, found $n"
+            exit 1
+          fi
+          sha256sum leankg-*.tgz | sort -k2,2 > SHA256SUMS
+          sha256sum -c SHA256SUMS
       - name: Upload assets and the SHA256 table
         env:
           GH_TOKEN: ${{ github.token }}
@@ -160,7 +172,7 @@ jobs:
           TAG: v${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" leankg-*.tgz --clobber
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" leankg-*.tgz SHA256SUMS --clobber
           # `--latest` moves the pointer `leankg update` follows. Only claim it
           # when this version is at least the current latest: re-publishing the
           # binaries of an older release must not send every client backwards.
