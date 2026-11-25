@@ -54,7 +54,7 @@ var PGUnreachable = ErrorCode{
 	Code:      "LEANKG_ERROR_PG_UNREACHABLE",
 	Cause:     "Postgres is not reachable at the configured URL (connection refused or timed out)",
 	Fix:       "Postgres is only used when explicitly requested (LEANKG_DB_ENGINE=postgres + LEANKG_PG_URL); ensure the instance is reachable, or drop back to the sqlite default by unsetting LEANKG_DB_ENGINE/LEANKG_PG_URL, then check `leankg doctor`",
-	DocAnchor: "README.md#get-started",
+	DocAnchor: "docs/getting-started.md",
 }
 
 // PGURLMalformed: the resolved Postgres URL cannot be parsed.
@@ -62,7 +62,7 @@ var PGURLMalformed = ErrorCode{
 	Code:      "LEANKG_ERROR_PG_URL_MALFORMED",
 	Cause:     "the resolved Postgres URL is malformed",
 	Fix:       "set a full postgres:// URL including host and database (`export LEANKG_PG_URL=postgresql://user:pass@host:5432/db`) or the `db.url` key in .leankg/leankg.yaml",
-	DocAnchor: "README.md#get-started",
+	DocAnchor: "docs/getting-started.md",
 }
 
 // ProjectNotInitialized: the target directory has no .leankg project.
@@ -70,7 +70,7 @@ var ProjectNotInitialized = ErrorCode{
 	Code:      "LEANKG_ERROR_PROJECT_NOT_INITIALIZED",
 	Cause:     "the target directory has no .leankg project directory",
 	Fix:       "run `leankg index <path>` (registers the project and builds its index) or open it through `leankg serve` to create .leankg first",
-	DocAnchor: "README.md#get-started",
+	DocAnchor: "docs/getting-started.md",
 }
 
 // UnknownProject: no project is registered for the requested path.
@@ -78,7 +78,7 @@ var UnknownProject = ErrorCode{
 	Code:      "LEANKG_ERROR_UNKNOWN_PROJECT",
 	Cause:     "no .leankg project is registered for the requested path",
 	Fix:       "run `leankg index <path>` for that path (or select it via LEANKG_PROJECT_DIRS) so it resolves to its own store; queries never fall back to another project's data",
-	DocAnchor: "README.md#get-started",
+	DocAnchor: "docs/getting-started.md",
 }
 
 // AutoAttachFailed: nearest-project auto-attach could not initialize in place.
@@ -86,7 +86,7 @@ var AutoAttachFailed = ErrorCode{
 	Code:      "LEANKG_ERROR_AUTO_ATTACH_FAILED",
 	Cause:     "auto-attach could not initialize the project in place",
 	Fix:       "check write permission on the project directory and run `leankg index <path>` once, then retry",
-	DocAnchor: "README.md#get-started",
+	DocAnchor: "docs/getting-started.md",
 }
 
 // Unauthorized: no Authorization header, or the Bearer token does not match.
@@ -94,7 +94,7 @@ var Unauthorized = ErrorCode{
 	Code:      "LEANKG_ERROR_UNAUTHORIZED",
 	Cause:     "the request carried no Authorization header or the Bearer token does not match",
 	Fix:       "call the authenticate tool with the site-admin username and password, then send header `Authorization: Bearer <token>` on later requests (the token is valid for 24 hours); a server with no token and no site admin accepts every caller",
-	DocAnchor: "README.md#troubleshooting",
+	DocAnchor: "docs/getting-started.md#troubleshooting",
 }
 
 // UnauthorizedBadTokenFix is the Fix of an Unauthorized answer to a request
@@ -140,7 +140,7 @@ var ReadOnly = ErrorCode{
 	Code:      "LEANKG_ERROR_READ_ONLY",
 	Cause:     "the server runs in read-only mode and the requested tool mutates state",
 	Fix:       "restart the server without `--read-only` (`leankg serve ...`) or route writes through a writable instance",
-	DocAnchor: "README.md#troubleshooting",
+	DocAnchor: "docs/getting-started.md#troubleshooting",
 }
 
 // RoutedReadOnly: a graph write reached a routed project's store on a hosted
@@ -149,7 +149,7 @@ var RoutedReadOnly = ErrorCode{
 	Code:      "LEANKG_ERROR_ROUTED_READ_ONLY",
 	Cause:     "routed projects are read-only in hosted mode, so this import cannot write the project's graph",
 	Fix:       "index the project with the writer (`leankg index <dir>` or `leankg writer --project <dir>`); the hosted server only serves routed projects",
-	DocAnchor: "README.md#troubleshooting",
+	DocAnchor: "docs/getting-started.md#troubleshooting",
 }
 
 // UnknownAction: the tool was called with an action value it does not implement.
@@ -216,7 +216,7 @@ var IndexUnavailable = ErrorCode{
 	Code:      "LEANKG_ERROR_INDEX_UNAVAILABLE",
 	Cause:     "the project's index store could not be read, so its status cannot be reported",
 	Fix:       "check the store with `leankg doctor --project <dir>`; if the index is missing or damaged, run `leankg index <dir>` to rebuild it",
-	DocAnchor: "README.md#get-started",
+	DocAnchor: "docs/getting-started.md",
 }
 
 // Catalog is the registry, in presentation order (not significance).

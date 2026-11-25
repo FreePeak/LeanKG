@@ -42,7 +42,7 @@ func TestLookupResolvesRegisteredCodesOnly(t *testing.T) {
 	if !ok {
 		t.Fatal("UNKNOWN_PROJECT must resolve")
 	}
-	if entry.DocAnchor != "README.md#get-started" {
+	if entry.DocAnchor != "docs/getting-started.md" {
 		t.Fatalf("unexpected anchor: %q", entry.DocAnchor)
 	}
 	if _, ok := Lookup("LEANKG_ERROR_NO_SUCH_CODE"); ok {
@@ -52,7 +52,7 @@ func TestLookupResolvesRegisteredCodesOnly(t *testing.T) {
 
 func TestRenderRoundTrip(t *testing.T) {
 	rendered := Render("LEANKG_ERROR_UNKNOWN_PROJECT", "cause", "run this")
-	if rendered != "LEANKG_ERROR_UNKNOWN_PROJECT: cause. Fix: run this (docs: README.md#get-started)" {
+	if rendered != "LEANKG_ERROR_UNKNOWN_PROJECT: cause. Fix: run this (docs: docs/getting-started.md)" {
 		t.Fatalf("registered render drifted: %s", rendered)
 	}
 	// An unregistered code still renders (cause + fix) so callers never dead-end.
