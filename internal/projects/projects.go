@@ -446,11 +446,10 @@ const maxKnownProjectsInError = 10
 // "which projects exist?" is a real question, and the answer must not be a
 // 30 KB string.
 func (r *Router) unknownProjectError(selector string, known []string) error {
-	shown, more := known, 0
-	if len(shown) > maxKnownProjectsInError {
-		more = len(shown) - maxKnownProjectsInError
-		shown = shown[:maxKnownProjectsInError]
+	if r.cfg.Hosted {
+		return hostedUnknownError(selector, known)
 	}
+	shown, more := bounded(known)
 	// Name and path: the name is what a caller can pass back, the path is
 	// what makes it unambiguous (names repeat across a 286-project host).
 	parts := make([]string, 0, len(shown))
@@ -466,17 +465,51 @@ func (r *Router) unknownProjectError(selector string, known []string) error {
 	return errors.New(msg + " (queries never fall back to another project's data)")
 }
 
+// hostedUnknownError is the unknown-project answer on a hosted server. The
+// registry spans every org's repositories, so the answer names the caller's
+// own projects by name only: a path would reveal the data-root layout. known
+// is already the caller's visible set (see resolveVisible).
+func hostedUnknownError(selector string, known []string) error {
+	msg := fmt.Sprintf("unknown project %q — pass the name of a project you can see", selector)
+	if len(known) == 0 {
+		msg += "; this token can see no projects"
+	} else {
+		shown, more := bounded(known)
+		names := make([]string, 0, len(shown))
+		for _, d := range shown {
+			names = append(names, filepath.Base(d))
+		}
+		msg += "; projects you can see: " + strings.Join(names, ", ")
+		if more > 0 {
+			msg += fmt.Sprintf(" (+%d more)", more)
+		}
+	}
+	return errors.New(msg + " (queries never fall back to another project's data)")
+}
+
+// bounded returns at most maxKnownProjectsInError of items and the count of
+// the rest, so an error never carries the whole registry.
+func bounded(items []string) ([]string, int) {
+	if len(items) <= maxKnownProjectsInError {
+		return items, 0
+	}
+	return items[:maxKnownProjectsInError], len(items) - maxKnownProjectsInError
+}
+
 // ambiguousProjectError names every registered project that shares the
 // selector's name, so the caller can pick one by path instead of guessing.
 // The old message said "several registered projects share that name" and
 // stopped there: on a 286-project host the caller had no way to choose, so
 // the call could only be retried with a guess.
+//
+// A hosted server names no path (see hostedUnknownError): the caller sees a
+// count, and the administrator decides which project keeps the name.
 func (r *Router) ambiguousProjectError(selector string, matches []string) error {
-	shown, more := matches, 0
-	if len(shown) > maxKnownProjectsInError {
-		more = len(shown) - maxKnownProjectsInError
-		shown = shown[:maxKnownProjectsInError]
+	if r.cfg.Hosted {
+		return fmt.Errorf("ambiguous project %q — %d projects you can see share that name, and a hosted server does not show their paths; ask the administrator which one to use",
+			selector, len(matches))
 	}
+	shown, more := bounded(matches)
 	msg := fmt.Sprintf("ambiguous project %q — %d registered projects share that name: %s",
 		selector, len(matches), strings.Join(shown, ", "))
 	if more > 0 {
