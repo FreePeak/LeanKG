@@ -277,6 +277,8 @@ func actualSet(mem *memory.Memory, projectOf map[string]string, onlySlug string)
 		return nil, err
 	}
 	actual := map[Key]string{}
+	// Rows store the slug masked by memory.Redact, so the scope is matched in that form.
+	scope := memory.Redact(onlySlug)
 	for _, bank := range banks {
 		if !strings.HasPrefix(bank, centralBankPrefix) {
 			continue
@@ -291,7 +293,7 @@ func actualSet(mem *memory.Memory, projectOf map[string]string, onlySlug string)
 				continue
 			}
 			slug, _ := row.Metadata["project"].(string)
-			if onlySlug != "" && slug != onlySlug {
+			if onlySlug != "" && slug != scope {
 				continue
 			}
 			hash, _ := row.Metadata["source_hash"].(string)

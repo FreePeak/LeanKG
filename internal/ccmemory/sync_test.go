@@ -568,6 +568,45 @@ func TestApplyPlantedSecretAbsentFromCentralRoot(t *testing.T) {
 	}
 }
 
+func TestApplyDenyListedTextAbsentFromMetadataFields(t *testing.T) {
+	projects, mem := applySetup(t)
+	// The pattern is written with a bracket so this file does not contain the
+	// word it masks.
+	const term = "SERVICE_DNS_PLACEHOLDER"
+	writeFile(t, filepath.Join(mem.Root(), "scrub.txt"), "SERVICE_DNS_PLACE[H]OLDER\n")
+	source := memFile(projects, "-work-alpha", term+"-notes.md")
+	writeFile(t, source, "---\nname: "+term+" name\ndescription: "+term+" description\n---\n"+
+		"Body text. See [["+term+"-runbook]].\n")
+
+	runSync(t, mem, syncOpts(projects, mem))
+	if again := runSync(t, mem, syncOpts(projects, mem)); again.Upserted != 0 {
+		t.Errorf("second run planned %d upserts, want 0", again.Upserted)
+	}
+	if err := mem.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	for path, state := range snapshotDir(t, mem.Root()) {
+		if bytes.Contains(state.data, []byte(term)) {
+			t.Errorf("deny-listed term found in %s", path)
+		}
+	}
+}
+
+func TestApplyScopedRunOnDenyListedSlugIsNoOp(t *testing.T) {
+	projects, mem := applySetup(t)
+	const term = "SERVICE_DNS_PLACEHOLDER"
+	writeFile(t, filepath.Join(mem.Root(), "scrub.txt"), "SERVICE_DNS_PLACE[H]OLDER\n")
+	writeFile(t, memFile(projects, "-work-"+term, "a.md"), "---\nname: a\ndescription: b\n---\nBody.\n")
+
+	runSync(t, mem, syncOpts(projects, mem))
+	opts := syncOpts(projects, mem)
+	opts.OnlySlug = "-work-" + term
+	if res := runSync(t, mem, opts); res.Upserted != 0 || res.Deleted != 0 {
+		t.Errorf("scoped run on a deny-listed slug: upserted %d deleted %d, want 0 and 0", res.Upserted, res.Deleted)
+	}
+}
+
 func TestApplyEmptyProjectsRootWithholdsDeletes(t *testing.T) {
 	projects, mem := applySetup(t)
 	runSync(t, mem, syncOpts(projects, mem))
