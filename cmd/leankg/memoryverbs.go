@@ -16,7 +16,31 @@ import (
 	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/memory"
 	"github.com/FreePeak/LeanKG/internal/sessionlink/claudecode"
+	"github.com/FreePeak/LeanKG/internal/telemetry"
 )
+
+// withMemoryTelemetry wires the process memory recorder for one memory verb: the
+// serve wiring (telemetryRecorder, memory.SetRecorder, closeTelemetry) with the
+// caller identity added to ctx on the stdio transport. With capture Off it opens
+// nothing, so no recorder and no ledger file. The returned closer detaches the
+// recorder and flushes it within telemetryCloseBudget.
+func withMemoryTelemetry(ctx context.Context, id telemetry.Identity) (context.Context, func()) {
+	return withMemoryTelemetryFlush(ctx, id, closeTelemetry)
+}
+
+// withMemoryTelemetryFlush is withMemoryTelemetry with the flush step supplied by
+// the caller, so a run with its own deadline can bound the flush by that deadline.
+func withMemoryTelemetryFlush(ctx context.Context, id telemetry.Identity, flush func()) (context.Context, func()) {
+	cfg, err := telemetry.LoadConfig(telemetry.Home())
+	if err == nil && telemetry.EffectiveLevel(cfg, os.Getenv("LEANKG_TELEMETRY")) == telemetry.Off {
+		return ctx, func() {}
+	}
+	memory.SetRecorder(telemetryRecorder(ctx))
+	return telemetry.WithIdentity(ctx, id, telemetry.TransportStdio), func() {
+		memory.SetRecorder(nil)
+		flush()
+	}
+}
 
 // memorySynopsis is the usage of `leankg memory`, one subcommand per line. The
 // main usage and memoryUsage both print it, so each subcommand is listed once.
@@ -24,6 +48,7 @@ var memorySynopsis = []string{
 	"leankg memory sync [--dry-run] [--rebuild] [--json]",
 	"leankg memory migrate [--project SLUG] [--dry-run] [--json]",
 	"leankg memory recall <query...> [--scope project|global|all] [--type KIND ...] [--limit N] [--dir DIR] [--json] (keyword search)",
+	"leankg memory hook (SessionStart: reads the hook JSON on stdin; always exits 0)",
 }
 
 // memoryUsageText joins memorySynopsis; every line after the first starts with
@@ -37,6 +62,7 @@ var memorySubcommands = map[string]verbFunc{
 	"sync":    cmdMemorySync,
 	"migrate": cmdMemoryMigrate,
 	"recall":  cmdMemoryRecall,
+	"hook":    cmdMemoryHook,
 }
 
 func cmdMemory(ctx context.Context, args []string) error {
@@ -67,6 +93,8 @@ func cmdMemorySync(ctx context.Context, args []string) error {
 	if _, err := parseInterspersed("memory sync", flags, args, 0); err != nil {
 		return err
 	}
+	ctx, flush := withMemoryTelemetry(ctx, telemetry.Identity{})
+	defer flush()
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return verbFatal(err)
@@ -160,6 +188,8 @@ func cmdMemoryRecall(ctx context.Context, args []string) error {
 	if strings.TrimSpace(query) == "" {
 		return cliexit.Usage(errors.New("memory recall: a query is required"))
 	}
+	ctx, flush := withMemoryTelemetry(ctx, telemetry.Identity{})
+	defer flush()
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return verbFatal(err)

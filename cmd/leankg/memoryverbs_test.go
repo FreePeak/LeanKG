@@ -830,3 +830,49 @@ func TestMemoryRecallInvalidScopeOrTypeExitsOne(t *testing.T) {
 		}
 	}
 }
+
+func TestMemorySyncTelemetryRecordsRetainPerChangedBank(t *testing.T) {
+	_, projects := memorySyncEnv(t)
+	const slug = "-work-repo-a"
+	writeMemoryDoc(t, projects, slug, "a-feedback.md", "feedback", "Use tabs in deploy scripts.")
+	writeMemoryDoc(t, projects, slug, "a-project.md", "project", "Freeze on Friday.")
+	lk := enableTelemetryForTest(t)
+
+	if code, out := runMemorySync(t); code != 0 {
+		t.Fatalf("memory sync exit = %d\n%s", code, out)
+	}
+	evs := ledgerMemoryEvents(t, lk)
+	retains := ledgerEventsByVerb(evs, "retain")
+	want := map[string]bool{ccmemory.GlobalBank: true, ccmemory.ProjectBank(slug): true}
+	if len(retains) != len(want) {
+		t.Fatalf("retain events = %d, want one per changed bank (%d): %+v", len(retains), len(want), retains)
+	}
+	for _, e := range retains {
+		if !want[e.Banks] {
+			t.Errorf("retain names bank %q, which the fixture did not change", e.Banks)
+		}
+	}
+	if n := len(ledgerEventsByVerb(evs, "inject")) + len(ledgerEventsByVerb(evs, "recall")); n != 0 {
+		t.Errorf("sync recorded %d inject or recall events, want none", n)
+	}
+}
+
+func TestMemoryRecallTelemetryRecordsOneRecallEvent(t *testing.T) {
+	_, repoB := memoryRecallFixture(t)
+	lk := enableTelemetryForTest(t)
+
+	if code, _, stderr := runMemoryRecall(t, "deploy", "--scope", "all", "--dir", repoB); code != 0 {
+		t.Fatalf("recall exit = %d\n%s", code, stderr)
+	}
+	evs := ledgerMemoryEvents(t, lk)
+	recalls := ledgerEventsByVerb(evs, "recall")
+	if len(recalls) != 1 {
+		t.Fatalf("recall events = %d, want 1: %+v", len(recalls), evs)
+	}
+	if !strings.Contains(recalls[0].Banks, ccmemory.GlobalBank) {
+		t.Errorf("recall banks = %q, want it to name %s", recalls[0].Banks, ccmemory.GlobalBank)
+	}
+	if recalls[0].Returned == 0 {
+		t.Error("recall event returned 0 rows; the fixture query matches memories")
+	}
+}
