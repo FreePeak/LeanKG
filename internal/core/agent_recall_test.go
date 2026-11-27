@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/ccmemory"
 	"github.com/FreePeak/LeanKG/internal/embed"
+	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/memory"
 )
 
@@ -264,6 +267,51 @@ func TestAgentRecallRunsWithTheEngineEmbedder(t *testing.T) {
 	out := recallOKQuery(t, f.e, "tabs", map[string]any{"cwd": recallRepoB})
 	if _, ok := recallFind(recallRows(t, out), "Prefer tabs"); !ok {
 		t.Errorf("with the dense arm wired, the keyword arm no longer recalls the feedback row: %+v", recallRows(t, out))
+	}
+}
+
+// The central banks span every repository, so the engine itself refuses a caller
+// whose identity in the request context is limited to some projects, to an
+// organization's projects, or is anonymous. Every transport reaches the engine
+// through QueryAnswer, so the refusal holds on REST, ConnectRPC and the dashboard
+// as well as MCP. The refusal names no bank and no project.
+func TestAgentRecallRefusesLimitedCallersOnTheEngine(t *testing.T) {
+	f, _ := newRecallEngine(t, true, nil)
+	limited := map[string]auth.AuthContext{
+		"project grant": {Role: auth.Viewer, Via: auth.ViaToken, Scopes: []string{"project:repo-alpha"}},
+		"org scope":     {Role: auth.Viewer, Via: auth.ViaToken, OrgID: "org-placeholder"},
+		"anonymous":     {Role: auth.Viewer, Via: auth.ViaAnonymous},
+	}
+	for name, ac := range limited {
+		t.Run(name, func(t *testing.T) {
+			ctx := auth.WithAuth(context.Background(), ac)
+			_, err := f.e.QueryAnswer(ctx, QueryRequest{Action: "memory", Query: "tabs",
+				Args: map[string]any{"command": "agent_recall", "cwd": recallRepoB, "scope": "all"}})
+			var e *errs.Error
+			if !errors.As(err, &e) || e.Entry.Code != errs.PermissionDenied.Code {
+				t.Fatalf("err = %v; want %s", err, errs.PermissionDenied.Code)
+			}
+			for _, leak := range []string{"repo-alpha", "repo-beta", "cc-", "Prefer tabs", "Freeze policy"} {
+				if strings.Contains(err.Error(), leak) {
+					t.Errorf("refusal leaks %q: %v", leak, err)
+				}
+			}
+		})
+	}
+}
+
+// An unlimited token is answered as before: the refusal above is for limited
+// callers only.
+func TestAgentRecallServesUnlimitedCaller(t *testing.T) {
+	f, _ := newRecallEngine(t, true, nil)
+	ctx := auth.WithAuth(context.Background(), auth.AuthContext{Role: auth.Viewer, Via: auth.ViaToken})
+	res, err := f.e.QueryAnswer(ctx, QueryRequest{Action: "memory", Query: "tabs",
+		Args: map[string]any{"command": "agent_recall", "cwd": recallRepoB, "scope": "all"}})
+	if err != nil {
+		t.Fatalf("unlimited token refused: %v", err)
+	}
+	if _, ok := recallFind(recallRows(t, res.Raw), "Prefer tabs"); !ok {
+		t.Fatalf("unlimited token got no central rows: %+v", res.Raw)
 	}
 }
 

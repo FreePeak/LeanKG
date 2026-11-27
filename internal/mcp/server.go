@@ -192,11 +192,8 @@ func isAgentRecall(req *mcp.CallToolRequest, args map[string]any) bool {
 // limited to some projects, or to an organization's projects, is refused,
 // because the banks span every repository and no grant can narrow them.
 func (s *Server) centralEngine(ctx context.Context) (*core.Engine, func(), error) {
-	grant, _ := auth.AuthFrom(ctx)
-	if grant.ProjectRestricted() || visibleOf(ctx) != nil {
-		return nil, noRelease, errs.NewError(errs.PermissionDenied,
-			"agent_recall reads the central memory, which spans every repository, so a token or organization limited to some projects may not run it",
-			"use a token without project: scopes")
+	if auth.ProjectLimited(ctx) {
+		return nil, noRelease, auth.SpanningDenied()
 	}
 	return s.engine, noRelease, nil
 }

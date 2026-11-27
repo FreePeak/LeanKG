@@ -19,6 +19,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/ccmemory"
 	"github.com/FreePeak/LeanKG/internal/docindex"
 	"github.com/FreePeak/LeanKG/internal/graph"
@@ -559,6 +560,9 @@ func (e *Engine) querySessionMemory(ctx context.Context, req QueryRequest, a que
 // else the engine's project directory, and it names an identity only; the
 // router, not this handler, decides which engine answers (KD-8).
 func (e *Engine) queryAgentRecall(ctx context.Context, req QueryRequest, a queryMemoryArgs) (map[string]any, error) {
+	if auth.ProjectLimited(ctx) {
+		return nil, auth.SpanningDenied()
+	}
 	if e.agentMem == nil {
 		return nil, errors.New("agent_recall: central memory is not configured on this server")
 	}

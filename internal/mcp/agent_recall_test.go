@@ -230,3 +230,24 @@ func TestAgentRecallIsAdvertisedInQuerySchema(t *testing.T) {
 	}
 	t.Fatal("query tool is not advertised")
 }
+
+// TestSearchWithAgentRecallCommandIsNotRoutedAsRecall pins that only
+// action=memory is agent_recall: a search that carries args.command=agent_recall
+// is routed like any other search. For a limited caller it must not meet the
+// central-memory refusal, and for any caller it must not be answered from the
+// central banks.
+func TestSearchWithAgentRecallCommandIsNotRoutedAsRecall(t *testing.T) {
+	srv := agentRecallSetup(t)
+	args := `{"action":"search","query":"deploys","args":{"command":"agent_recall","scope":"all"}}`
+
+	out, err := callAgentQuery(context.Background(), srv, args)
+	if err == nil && strings.Contains(out, "Release freeze") {
+		t.Fatalf("action=search with command=agent_recall was answered from the central banks: %s", out)
+	}
+
+	limited := withCaller(context.Background(), caller{ac: auth.AuthContext{Role: auth.Viewer, Via: auth.ViaToken, Scopes: []string{"project:example-repo-a"}}})
+	_, err = callAgentQuery(limited, srv, args)
+	if err != nil && strings.Contains(err.Error(), "spans every repository") {
+		t.Fatalf("action=search met the agent_recall refusal: %v", err)
+	}
+}
