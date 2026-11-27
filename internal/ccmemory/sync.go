@@ -129,6 +129,13 @@ type SyncBank struct {
 	Rows    int    `json:"rows"`
 }
 
+// compactCentral is the post-apply compaction of the cc- banks. It runs under the
+// sync lock: compaction rewrites the bank files, and a locked sync that appended
+// to them in between would lose its rows. A test replaces it to observe the lock.
+var compactCentral = func(ctx context.Context, mem *memory.Memory) error {
+	return mem.CompactPrefix(ctx, CentralBankPrefix)
+}
+
 // renderVersion is part of every source hash. Bump it when the row mapping
 // changes, so the next run rewrites every row.
 const renderVersion = "cc-row-v1"
@@ -153,8 +160,8 @@ type syncState struct {
 	projectOf map[string]string
 }
 
-// syncPass is Sync. When after is not nil it runs under the lock once the plan
-// is applied, and not on a dry run.
+// syncPass is Sync. Once the plan is applied it compacts the cc- banks and then
+// runs after, when not nil, both under the lock and not on a dry run.
 func syncPass(ctx context.Context, mem *memory.Memory, opts SyncOptions, after func(syncState) error) (SyncResult, syncState, error) {
 	res := SyncResult{Root: opts.CentralRoot, Projects: opts.Projects}
 	if err := ctx.Err(); err != nil {
@@ -202,6 +209,9 @@ func syncPass(ctx context.Context, mem *memory.Memory, opts SyncOptions, after f
 		return res, st, nil
 	}
 	if err := apply(ctx, mem, plan, hashes, docs); err != nil {
+		return res, st, err
+	}
+	if err := compactCentral(ctx, mem); err != nil {
 		return res, st, err
 	}
 	if after != nil {

@@ -81,17 +81,31 @@ func TestMigrateRealRunRowsEqualFilesPerBank(t *testing.T) {
 	}
 }
 
+// snapshotDurable is snapshotDir without the SQLite write-ahead log and shared
+// memory files. The checkpoint that compaction runs rewrites those, but they
+// hold no state of their own: index.db and the bank files carry it.
+func snapshotDurable(t *testing.T, dir string) map[string]fileState {
+	t.Helper()
+	out := snapshotDir(t, dir)
+	for name := range out {
+		if strings.HasSuffix(name, "-wal") || strings.HasSuffix(name, "-shm") {
+			delete(out, name)
+		}
+	}
+	return out
+}
+
 func TestMigrateSecondRunChangesNothing(t *testing.T) {
 	projects, mem := applySetup(t)
 	runMigrate(t, mem, migrateOpts(projects, mem))
-	before := snapshotDir(t, mem.Root())
+	before := snapshotDurable(t, mem.Root())
 
 	res := runMigrate(t, mem, migrateOpts(projects, mem))
 
 	if res.Upserted != 0 || res.Deleted != 0 || !res.Verified {
 		t.Errorf("second run = upserted %d deleted %d verified %v, want 0 0 true", res.Upserted, res.Deleted, res.Verified)
 	}
-	if after := snapshotDir(t, mem.Root()); !reflect.DeepEqual(before, after) {
+	if after := snapshotDurable(t, mem.Root()); !reflect.DeepEqual(before, after) {
 		t.Fatalf("second run changed the central root")
 	}
 }

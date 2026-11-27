@@ -867,3 +867,51 @@ func TestApplyUnreadableProjectKeepsItsRows(t *testing.T) {
 		t.Errorf("migrate after restoring permissions: verified=false mismatches %v", mig.Mismatches)
 	}
 }
+
+// TestApplyCompactsCentralUnderSyncLock proves the post-apply compaction runs
+// while the sync lock is held: compaction rewrites the bank files, so a locked
+// sync that appended in between would lose rows. The seam records whether the
+// lock is held when compaction runs. No sleeps are involved.
+func TestApplyCompactsCentralUnderSyncLock(t *testing.T) {
+	projects, mem := applySetup(t)
+	lockPath := filepath.Join(mem.Root(), syncLockFile)
+	prev := compactCentral
+	calls, lockHeld := 0, false
+	compactCentral = func(ctx context.Context, mem *memory.Memory) error {
+		calls++
+		release, err := flock.TryLock(lockPath)
+		switch {
+		case errors.Is(err, flock.ErrHeld):
+			lockHeld = true
+		case err == nil:
+			release()
+		default:
+			return err
+		}
+		return prev(ctx, mem)
+	}
+	t.Cleanup(func() { compactCentral = prev })
+
+	runSync(t, mem, syncOpts(projects, mem))
+	if calls != 1 || !lockHeld {
+		t.Fatalf("sync: compaction calls = %d, lock held during compaction = %v; want 1 and true", calls, lockHeld)
+	}
+
+	dry := syncOpts(projects, mem)
+	dry.DryRun = true
+	runSync(t, mem, dry)
+	if calls != 1 {
+		t.Errorf("dry run compacted: calls = %d, want 1", calls)
+	}
+
+	runMigrate(t, mem, migrateOpts(projects, mem))
+	if calls != 2 || !lockHeld {
+		t.Errorf("migrate: compaction calls = %d, lock held = %v; want 2 and true", calls, lockHeld)
+	}
+
+	release, err := flock.TryLock(lockPath)
+	if err != nil {
+		t.Fatalf("sync lock still held after Migrate: %v", err)
+	}
+	release()
+}

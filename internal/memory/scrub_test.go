@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -83,6 +84,52 @@ func TestScrubLoadBadLineNamesLineNumber(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "[unclosed") {
 		t.Errorf("error %q echoes the deny-list pattern; it must not", err)
+	}
+}
+
+// TestScrubLoadRejectsEmptyMatchingLines: a pattern that matches the empty
+// string would insert the marker at every position, so each pass grows the row.
+// The load names the line and does not echo the pattern.
+func TestScrubLoadRejectsEmptyMatchingLines(t *testing.T) {
+	for _, tc := range []struct {
+		name, lines, pattern string
+		line                 int
+	}{
+		{"star class", "SERVICE_DNS_PLACEHOLDER\n[0-9]*\n", "[0-9]*", 2},
+		{"optional", "# note\nx?\n", "x?", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "scrub.txt")
+			if err := os.WriteFile(path, []byte(tc.lines), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err := LoadScrubFile(path)
+			if err == nil {
+				t.Fatalf("err = nil, want an error naming line %d", tc.line)
+			}
+			if !strings.Contains(err.Error(), fmt.Sprintf("line %d", tc.line)) {
+				t.Errorf("error %q does not name line %d", err, tc.line)
+			}
+			if strings.Contains(err.Error(), tc.pattern) {
+				t.Errorf("error %q echoes the deny-list pattern; it must not", err)
+			}
+		})
+	}
+}
+
+// TestScrubLoadKeepsNonEmptyPatterns: patterns that need at least one character
+// still load, including ones with optional parts.
+func TestScrubLoadKeepsNonEmptyPatterns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scrub.txt")
+	if err := os.WriteFile(path, []byte("SERVICE_DNS_PLACEHOLDER\n[0-9]+\nx?y\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	patterns, _, err := LoadScrubFile(path)
+	if err != nil {
+		t.Fatalf("LoadScrubFile: %v", err)
+	}
+	if len(patterns) != 3 {
+		t.Errorf("loaded %d patterns, want 3", len(patterns))
 	}
 }
 
