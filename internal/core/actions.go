@@ -19,6 +19,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/FreePeak/LeanKG/internal/ccmemory"
 	"github.com/FreePeak/LeanKG/internal/docindex"
 	"github.com/FreePeak/LeanKG/internal/graph"
 	"github.com/FreePeak/LeanKG/internal/index"
@@ -27,6 +28,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/orgknowledge"
 	"github.com/FreePeak/LeanKG/internal/prdindex"
 	"github.com/FreePeak/LeanKG/internal/session"
+	"github.com/FreePeak/LeanKG/internal/sessionlink/claudecode"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -103,7 +105,7 @@ func init() {
 		"callees":         graphQuery((*Engine).graphCallees),
 		"context":         graphQuery((*Engine).graphContext),
 		"explain":         graphQuery((*Engine).graphExplain),
-		"memory":          queryAction((*Engine).queryMemory),
+		"memory":          queryMemoryAction,
 		"ontology":        queryAction((*Engine).queryOntology),
 		"compress":        queryAction((*Engine).queryCompress),
 		"languages":       envelopeOnly((*Engine).queryLanguages),
@@ -172,6 +174,7 @@ var queryMemoryCommands = map[string]queryMemoryHandler{
 	"view":           (*Engine).queryMemoryView,
 	"snapshot":       (*Engine).queryMemorySnapshot,
 	"search":         (*Engine).queryMemorySearch,
+	"agent_recall":   (*Engine).queryAgentRecall,
 	"":               (*Engine).queryMemorySearch,
 }
 
@@ -499,8 +502,16 @@ func (e *Engine) graphExplain(ctx context.Context, req QueryRequest, _ graphArgs
 }
 
 // queryMemoryArgs are the args of query{action:"memory"}: the sub-command key
-// and the reads that take a path, a cwd or a bank (the envelope carries scope).
+// and the reads that take a path, a cwd, a bank or a type list (the envelope
+// carries scope).
 type queryMemoryArgs struct {
+	memoryBaseArgs
+	Types []string `json:"types"`
+}
+
+// memoryBaseArgs are the args every query{action:"memory"} sub-command takes.
+// args.types is not among them: only agent_recall decodes it.
+type memoryBaseArgs struct {
 	envelopeArgs
 	Command string `json:"command"`
 	Path    string `json:"path"`
@@ -509,10 +520,24 @@ type queryMemoryArgs struct {
 	Bank    string `json:"bank"`
 }
 
+// queryMemoryAction decodes query{action:"memory"} args. Only agent_recall takes
+// args.types; for every other sub-command the args decode against memoryBaseArgs,
+// so types is an unknown key and is refused with the same error any unknown key gets.
+func queryMemoryAction(e *Engine, ctx context.Context, req QueryRequest) (map[string]any, error) {
+	if cmd, _ := req.Args["command"].(string); cmd == "agent_recall" {
+		return queryAction((*Engine).queryMemory)(e, ctx, req)
+	}
+	base, err := decodeArgs[memoryBaseArgs](req.Args)
+	if err != nil {
+		return nil, err
+	}
+	return e.queryMemory(ctx, req, queryMemoryArgs{memoryBaseArgs: base})
+}
+
 func (e *Engine) queryMemory(ctx context.Context, req QueryRequest, a queryMemoryArgs) (map[string]any, error) {
 	h, ok := queryMemoryCommands[a.Command]
 	if !ok {
-		return nil, fmt.Errorf("unknown memory read command %q (valid: session_recall, memories, view, snapshot, search)", a.Command)
+		return nil, fmt.Errorf("unknown memory read command %q (valid: session_recall, memories, view, snapshot, search, agent_recall)", a.Command)
 	}
 	out, err := h(e, ctx, req, a)
 	if err != nil {
@@ -527,6 +552,47 @@ func (e *Engine) queryMemory(ctx context.Context, req QueryRequest, a queryMemor
 
 func (e *Engine) querySessionMemory(ctx context.Context, req QueryRequest, a queryMemoryArgs) (map[string]any, error) {
 	return e.SessionMemoryRead(ctx, a.Command, req.Query, req.Limit, a.Scope, a.Cwd, a.Bank)
+}
+
+// queryAgentRecall serves args.command=agent_recall (plan 6.5): ranked recall
+// over the central memory for the caller's repository. The caller is args.cwd,
+// else the engine's project directory, and it names an identity only; the
+// router, not this handler, decides which engine answers (KD-8).
+func (e *Engine) queryAgentRecall(ctx context.Context, req QueryRequest, a queryMemoryArgs) (map[string]any, error) {
+	if e.agentMem == nil {
+		return nil, errors.New("agent_recall: central memory is not configured on this server")
+	}
+	mem, err := e.agentMem.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	e.wireVectors(mem)
+	dir := a.Cwd
+	if dir == "" {
+		dir = e.projectDir
+	}
+	caller := ""
+	if dir != "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("agent_recall: resolve home: %w", err)
+		}
+		caller = ccmemory.ProjectKey(claudecode.ProjectsRoot(home), dir)
+	}
+	res, err := ccmemory.Recall(ctx, mem, ccmemory.RecallRequest{
+		Query: req.Query, Limit: req.Limit, Scope: a.Scope, Types: a.Types, Caller: caller,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"command":  res.Command,
+		"scope":    res.Scope,
+		"project":  res.Project,
+		"banks":    res.Banks,
+		"count":    res.Count,
+		"memories": res.Memories,
+	}, nil
 }
 
 // queryMemoryView reads one memory file by path (RS-21: was ConnectRPC-only).

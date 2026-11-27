@@ -1,0 +1,35 @@
+{
+  "access": {
+    "project": "proj",
+    "restricted": false,
+    "role": "admin",
+    "via": "local"
+  },
+  "banks": [
+    "cc-p-d3f83208272ebce3",
+    "cc-global"
+  ],
+  "command": "agent_recall",
+  "count": 1,
+  "freshness": "cold",
+  "indexed_at": "<AT>",
+  "memories": [
+    {
+      "content": "[feedback] Prefer tabs - Tabs in deploy scripts.\nUse tabs in every deploy script.",
+      "description": "Tabs in deploy scripts.",
+      "id": "ccm-259cf2e373501f51ee8b632f",
+      "kind": "feedback",
+      "links": [],
+      "name": "Prefer tabs",
+      "project": "-work-repo-alpha",
+      "score": 0.7782027832524666,
+      "timestamp": 1700000000
+    }
+  ],
+  "project": "-work-repo-beta",
+  "retrieval": {
+    "reason": "agent memory agent_recall",
+    "rung": "memory"
+  },
+  "scope": "project"
+}

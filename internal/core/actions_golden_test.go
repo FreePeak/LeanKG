@@ -27,6 +27,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/FreePeak/LeanKG/internal/ccmemory"
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/gitobj/gittest"
 	"github.com/FreePeak/LeanKG/internal/memory"
@@ -194,6 +195,21 @@ func seedActionCorpus(f *actionFixture) {
 	f.writeMemoryFile("MEMORY.md", "# Project Memory\n\n- Golden fixture corpus pins the L0-L3 ladder.\n")
 }
 
+// seedAgentRecall points HOME and CLAUDE_CONFIG_DIR at directories under the
+// fixture root (so the golden redaction covers them), seeds the central memory
+// and rebuilds the engine with the agent memory handle that serve wires.
+func seedAgentRecall(f *actionFixture) {
+	home := filepath.Join(f.root, "home")
+	config := filepath.Join(f.root, "config")
+	f.t.Setenv("HOME", home)
+	f.t.Setenv("CLAUDE_CONFIG_DIR", config)
+	seedRecallSource(f.t, home, filepath.Join(config, "projects"))
+	f.e = New(f.st, Options{
+		Memory: f.mem, Embedder: embed.Deterministic(8), ProjectDir: f.project,
+		AgentMemory: ccmemory.NewHandle(home, nil),
+	})
+}
+
 // writeMemoryFile places a file at the memory root, where the MEMORY.md
 // reads and the file-edit commands resolve it.
 func (f *actionFixture) writeMemoryFile(rel, content string) {
@@ -351,6 +367,8 @@ var actionCases = []actionCase{
 		run: qry(QueryRequest{Action: "memory", Query: "Golden"})},
 	{name: "query_memory_unknown_command", action: "query/memory", setup: seedActionCorpus,
 		run: qry(QueryRequest{Action: "memory", Args: map[string]any{"command": "bogus"}})},
+	{name: "query_memory_agent_recall", action: "query/memory", sub: "agent_recall", setup: seedAgentRecall,
+		run: qry(QueryRequest{Action: "memory", Query: "tabs", Args: map[string]any{"command": "agent_recall", "cwd": "/work/repo-beta"}})},
 
 	// --- query: ontology (args.cmd) -----------------------------------------
 	{name: "query_ontology_matches", action: "query/ontology", sub: "matches", setup: chain(seedActionCorpus, seedCatalog),
