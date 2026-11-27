@@ -145,8 +145,10 @@ const claudeCodeSource = "claude-code-memory"
 
 // Sync makes the cc- banks under mem equal to the memory files under
 // opts.Projects. It installs the deny-list, takes the sync lock, plans against
-// the stored rows and applies one retain and one delete per bank. A cancelled
-// ctx stops between banks; each bank's batch is complete or absent.
+// the stored rows and applies one retain and one delete per bank. A ctx
+// cancelled during the file scan fails the run before any plan is made, so
+// nothing is written or deleted. Once the plan is applied, a cancelled ctx stops
+// between banks; each bank's batch is complete or absent.
 func Sync(ctx context.Context, mem *memory.Memory, opts SyncOptions) (SyncResult, error) {
 	if err := installDenyList(opts.CentralRoot); err != nil {
 		return SyncResult{Root: opts.CentralRoot, Projects: opts.Projects}, err
@@ -192,7 +194,9 @@ func syncPass(ctx context.Context, mem *memory.Memory, opts SyncOptions, after f
 		defer release()
 	}
 
-	disc, err := Discover(opts.Projects)
+	// A scan that failed or was cancelled says nothing about the stored rows, so
+	// the run ends here with deletes withheld.
+	disc, err := Discover(ctx, opts.Projects)
 	if err != nil {
 		res.DeletesWithheld = true
 		return res, syncState{}, err

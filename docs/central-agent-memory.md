@@ -166,12 +166,14 @@ Code already loads that repository's `MEMORY.md`.
 | Block budget | 1,500 tokens (estimated as bytes / 4, about 6,000 bytes) |
 | Stdout ceiling | Under 10,000 characters, the limit Claude Code applies to hook output |
 | Hook deadline | 3 s inside the process; 10 s in `settings.json` |
-| Sync budget | 2 s, checked before each bank write |
+| Sync budget | 2 s, shared by the file scan and the bank writes |
 
 The sync runs at every session start. On one machine with a 500-file fixture it
 took about 0.35 s on the run that synced and about 0.2 s on the next run. The
-2 s budget is checked between banks. The file scan that comes before the banks
-is not yet interruptible, so a very large memory directory can overrun the budget.
+file scan checks the budget before each project directory and each file, and the
+bank writes check it between banks. A scan cut short by the budget counts as a
+failed scan: the sync writes and deletes nothing, and the block is built from the
+stored rows.
 
 Every failure path exits 0 and prints at most a couple of stderr lines. Nothing
 on stdout is printed unless there is a block to inject.
@@ -180,6 +182,7 @@ on stdout is printed unless there is a block to inject.
 | --- | --- |
 | No central root and no Claude Code memory files | Nothing printed. Nothing created. Exit 0. |
 | Another sync holds the lock | Sync step skipped; the block is built from the stored rows. |
+| Sync budget spent during the file scan | One stderr line; no rows written or deleted; the block is built from the stored rows. |
 | Projects root missing or unreadable | No sync; the block is built from the stored rows. |
 | `scrub.txt` has an invalid line | One stderr line; sync skipped; block built from stored rows. |
 | stdin empty or not JSON | The fallback directory (`CLAUDE_PROJECT_DIR`, then the working directory) is used. |

@@ -288,7 +288,8 @@ is waited for at most 500 ms). Without a usable `cwd` it falls back to
 
 1. Sync the `cc-` banks at every session start. The sync takes a non-waiting
    lock; when another sync holds it, the sync step is skipped and the stored rows
-   are used. The sync has a 2 s budget, checked between banks.
+   are used. The sync has a 2 s budget covering the file scan and the bank
+   writes; a scan cut short by it writes and deletes nothing.
 2. Print the cross-repository block for the caller: one context line, the
    newest `user` and `feedback` memories saved by other repositories as one line
    each (at most 30 lines and about 1,500 tokens), and one hint line that names

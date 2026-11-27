@@ -275,6 +275,56 @@ func TestMemoryHookHeldSyncLockSkipsSyncAndStillInjects(t *testing.T) {
 	}
 }
 
+// spendSyncBudget makes the sync step's budget spent before the run starts.
+func spendSyncBudget(t *testing.T) {
+	t.Helper()
+	prev := hookSyncBudget
+	hookSyncBudget = 0
+	t.Cleanup(func() { hookSyncBudget = prev })
+}
+
+func TestMemoryHookSpentSyncBudgetInjectsStoredRows(t *testing.T) {
+	home := hookFixtureEnv(t)
+	projects := claudecode.ProjectsRoot(home)
+	callerB := filepath.Join(home, "work", "repo-b")
+	slugA := claudecode.Slug(filepath.Join(home, "work", "repo-a"))
+	writeHookMemory(t, projects, slugA, "a-feedback", "feedback", "Use tabs in deploy scripts.")
+	runHook(t, home, callerB)
+
+	writeHookMemory(t, projects, slugA, "a-new", "feedback", "Written after the last sync.")
+	spendSyncBudget(t)
+
+	out, errOut := runHook(t, home, callerB)
+	if !strings.Contains(out, "a-feedback") {
+		t.Errorf("stdout lacks the stored row a-feedback:\n%s", out)
+	}
+	if strings.Contains(out, "a-new") {
+		t.Errorf("stdout carries a-new, so the sync ran past its budget:\n%s", out)
+	}
+	if n := strings.Count(strings.TrimSuffix(errOut, "\n"), "\n") + 1; errOut == "" || n != 1 {
+		t.Errorf("stderr has %d lines, want exactly one: %q", n, errOut)
+	}
+}
+
+func TestMemoryHookSpentSyncBudgetOnFirstRunCreatesNothing(t *testing.T) {
+	home := hookFixtureEnv(t)
+	projects := claudecode.ProjectsRoot(home)
+	callerB := filepath.Join(home, "work", "repo-b")
+	writeHookMemory(t, projects, claudecode.Slug(filepath.Join(home, "work", "repo-a")), "a-feedback", "feedback", "Use tabs in deploy scripts.")
+	spendSyncBudget(t)
+
+	out, errOut := runHook(t, home, callerB)
+	if out != "" {
+		t.Errorf("stdout = %q, want nothing: no stored rows exist yet", out)
+	}
+	if n := strings.Count(strings.TrimSuffix(errOut, "\n"), "\n") + 1; errOut == "" || n != 1 {
+		t.Errorf("stderr has %d lines, want exactly one: %q", n, errOut)
+	}
+	if _, err := os.Stat(memory.GlobalRoot(home)); !os.IsNotExist(err) {
+		t.Errorf("central root exists after a run whose sync budget was spent before it started: %v", err)
+	}
+}
+
 func TestMemoryHookSecondRunChangesNothingAndCompactsNothing(t *testing.T) {
 	home := hookFixtureEnv(t)
 	projects := claudecode.ProjectsRoot(home)
