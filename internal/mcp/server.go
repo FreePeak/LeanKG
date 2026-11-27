@@ -124,14 +124,17 @@ func WithProjectRequired(v bool) Option {
 // org-keyed token) is resolved through the router with its visibility, so a
 // project it may not see is refused exactly like an unknown one.
 func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core.Engine, func(), error) {
-	if s.router == nil {
-		return s.grantedEngine(ctx, s.engine)
-	}
 	var args map[string]any
 	if req != nil && req.Params != nil && len(req.Params.Arguments) > 0 {
 		if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
 			return nil, noRelease, err
 		}
+	}
+	if isAgentRecall(req, args) {
+		return s.centralEngine(ctx)
+	}
+	if s.router == nil {
+		return s.grantedEngine(ctx, s.engine)
 	}
 	visible := visibleOf(ctx)
 	// Fail closed: with several projects registered, an omitted `project` used
@@ -168,6 +171,46 @@ func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core
 			"add \"project\": \"<repo dir or name>\" to the tool arguments, or from inside a repo run `leankg query …` against that project's own server")
 	}
 	return s.router.EngineAs(ctx, p, visible)
+}
+
+// agentRecallCommand is the query{action:"memory"} command that reads the
+// central memory banks (KD-7).
+const agentRecallCommand = "agent_recall"
+
+// isAgentRecall reports whether a call is query{action:"memory",
+// args.command:"agent_recall"}. args is the decoded tool arguments.
+func isAgentRecall(req *mcp.CallToolRequest, args map[string]any) bool {
+	if req == nil || req.Params == nil || req.Params.Name != core.ToolQuery || args["action"] != "memory" {
+		return false
+	}
+	nested, _ := args["args"].(map[string]any)
+	return nested["command"] == agentRecallCommand
+}
+
+// centralEngine answers agent_recall from the default engine, whatever project
+// the call names: the central banks are not per project (KD-8). A caller
+// limited to some projects, or to an organization's projects, is refused,
+// because the banks span every repository and no grant can narrow them.
+func (s *Server) centralEngine(ctx context.Context) (*core.Engine, func(), error) {
+	grant, _ := auth.AuthFrom(ctx)
+	if grant.ProjectRestricted() || visibleOf(ctx) != nil {
+		return nil, noRelease, errs.NewError(errs.PermissionDenied,
+			"agent_recall reads the central memory, which spans every repository, so a token or organization limited to some projects may not run it",
+			"use a token without project: scopes")
+	}
+	return s.engine, noRelease, nil
+}
+
+// agentRecallIdentity hands the project argument of an agent_recall call to the
+// engine as the caller's identity: args.cwd, which the engine resolves to the
+// repository's bank. It never routes the call (KD-8). Callers pass fields that
+// isAgentRecall has already matched, so args is a map.
+func agentRecallIdentity(fields map[string]any) {
+	project, _ := fields["project"].(string)
+	nested := fields["args"].(map[string]any)
+	if cwd, _ := nested["cwd"].(string); cwd == "" && project != "" {
+		nested["cwd"] = project
+	}
 }
 
 // grantedEngine refuses a caller whose grant or org scope does not cover the
@@ -499,7 +542,7 @@ func (s *Server) registerTools() {
 		Name: core.ToolQuery,
 		Description: "Query LeanKG. Empty action routes down the ladder: L1 exact " +
 			"identifier → L2 fuzzy keyword → L3 semantic (vectors). Every answer carries " +
-			"retrieval{rung,reason} + freshness. action=memory searches agent memory (args.command=view with args.path reads one file, =snapshot the MEMORY.md/USER.md core); " +
+			"retrieval{rung,reason} + freshness. action=memory searches agent memory (args.command=view with args.path reads one file, =snapshot the MEMORY.md/USER.md core); args.command=agent_recall ranks the central memory for the caller's repository (args.cwd, args.scope=project|global|all, args.types) and is not routed by project; " +
 			"action=exact|fuzzy|semantic pins a rung; graph verbs (impact/path/callers/callees/context/explain) and session/ontology reads are also available. " +
 			"Leave action empty/search for semantic questions; legacy tool name 'get' is superseded. " + toolGuidance,
 		InputSchema: s.schema(`{
@@ -508,7 +551,7 @@ func (s *Server) registerTools() {
 				"query": {"type": "string", "description": "search text, identifier, or memory search text"},
 				"action": {"type": "string", "enum": ["search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain", "memory", "session", "ontology", "prd", "incidents", "env_conflicts", "service_context", "portfolio", "pattern", "languages", "lsp", "compress", "history", "cochange", "churn"], "description": "empty = ladder router (L0-L3). Git history (after import git): history and cochange take the file path as query; churn ranks files by commit count (args.since = git date). Actions that NEED another argument (they error without it): path → args.to (target qualified name); pattern → args.pattern (AST pattern, e.g. \"func $F\"); lsp → args.lang (server language); service_context and env_conflicts → args.service; portfolio → args.cmd=summary for the T0 manifest, args.action pins each child's action. impact reads its traversal DEPTH from args.depth. ontology reads args.cmd (matches|trace|status|concept_search|feature_flow|traceability); org reads take args.pattern/args.env for filtering."},
 				"limit": {"type": "integer", "description": "max hits for search and the graph verbs (default 10; impact DEPTH comes from args.depth). This is the field those actions read; args.limit applies only to the full-scan tools pattern/lsp, and when both are sent this one wins."},
-				"args": {"type": "object", "description": "action params. scope: search — code|prod|all, the corpus to rank (default is everything, including test fixtures and archived docs; retrieval.scope reports it). weight: search — \"<vector>,<keyword>\" fusion weights, e.g. \"3,1\" trusts the vector arm more, \"1,0\" drops the keyword arm; unset is the engine's default (vector:keyword = 3:1) and retrieval.weight reports it. include_git: search|exact|fuzzy|semantic — true admits git history rows (commit, author, git:file), which a default search hides; history/cochange/churn always read them. cmd: ontology — one of matches|trace|status|concept_search|feature_flow|traceability. command: session — recall|canvas|lessons (node_id for recall). command: memory — session_recall|memories (plus scope/cwd/bank). main: memory — the query to search. depth: impact (traversal depth), path (max hops). to: path (target qualified name). pattern: pattern (AST pattern, e.g. \"func $F\"). lang: lsp (server language). mode/lines/fresh: read. cmd: portfolio (summary selects the T0 manifest); action: portfolio (pins each child's action); tool/response: compress. limit: pattern/lsp — these full-scan tools read args.limit, while search and the graph verbs read the TOP-LEVEL limit; sending both gives the top-level one precedence."},
+				"args": {"type": "object", "description": "action params. scope: search — code|prod|all, the corpus to rank (default is everything, including test fixtures and archived docs; retrieval.scope reports it). weight: search — \"<vector>,<keyword>\" fusion weights, e.g. \"3,1\" trusts the vector arm more, \"1,0\" drops the keyword arm; unset is the engine's default (vector:keyword = 3:1) and retrieval.weight reports it. include_git: search|exact|fuzzy|semantic — true admits git history rows (commit, author, git:file), which a default search hides; history/cochange/churn always read them. cmd: ontology — one of matches|trace|status|concept_search|feature_flow|traceability. command: session — recall|canvas|lessons (node_id for recall). command: memory — session_recall|memories|agent_recall (plus scope/cwd/bank; agent_recall takes cwd, scope=project|global|all and types, and its project argument is the caller's repository). main: memory — the query to search. depth: impact (traversal depth), path (max hops). to: path (target qualified name). pattern: pattern (AST pattern, e.g. \"func $F\"). lang: lsp (server language). mode/lines/fresh: read. cmd: portfolio (summary selects the T0 manifest); action: portfolio (pins each child's action); tool/response: compress. limit: pattern/lsp — these full-scan tools read args.limit, while search and the graph verbs read the TOP-LEVEL limit; sending both gives the top-level one precedence."},
 				"project": {"type": "string", "description": "target project (dir path or name); only meaningful when the server serves multiple projects (LEANKG_PROJECT_DIRS)"}
 			},
 			"required": []
@@ -644,6 +687,9 @@ func (s *Server) handleQuery(ctx context.Context, req *mcp.CallToolRequest) (*mc
 	var fields map[string]any
 	if err := unmarshalArgs(req, &fields); err != nil {
 		return nil, err
+	}
+	if isAgentRecall(req, fields) {
+		agentRecallIdentity(fields)
 	}
 	in, err := core.DecodeQuery(fields)
 	if err != nil {

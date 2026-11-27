@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/auth"
+	"github.com/FreePeak/LeanKG/internal/ccmemory"
 	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/doctor"
@@ -596,7 +597,25 @@ afterSidecars:
 		sort.Strings(summary)
 		log.Printf("languages active: %s", strings.Join(summary, "; "))
 	}
-	engine := core.New(st, core.Options{Memory: mem, Embedder: embedder, ProjectDir: dir, Langs: langReg, Hosted: *hosted})
+	// agent_recall reads the central memory banks through a lazy handle: it
+	// opens only once `leankg memory sync` has built the index, so serve never
+	// creates the central tree. --memory-global hands over its own handle.
+	// Hosted serving wires none: the central root is the operator's personal
+	// Claude Code memory, and a hosted server answers every token holder.
+	var agentMem *ccmemory.Handle
+	if !*hosted {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("agent memory: resolve home: %w", err)
+		}
+		var global *memory.Memory
+		if *memoryGlobal {
+			global = mem
+		}
+		agentMem = ccmemory.NewHandle(home, global)
+		defer agentMem.Close()
+	}
+	engine := core.New(st, core.Options{Memory: mem, Embedder: embedder, ProjectDir: dir, Langs: langReg, Hosted: *hosted, AgentMemory: agentMem})
 	defer engine.Close()
 
 	// Multi-project serving (LEANKG_PROJECT_DIRS): register the extra
