@@ -3,7 +3,6 @@ package memory
 import (
 	"context"
 	"fmt"
-	"time"
 )
 
 // Scoping matrix ported from the Rust src/memory/bank.rs:60-96
@@ -116,36 +115,10 @@ func (m *Memory) FirstTurnMemories(ctx context.Context, scope Scope, cwd, bank, 
 	return text, all, err
 }
 
-// firstTurn is the one place the block is built: it returns the rendered
-// block, how many leading rows it carries, and EVERY row the recall found.
-// Callers that used to receive the capped list get the full one instead,
-// which is why this is one function rather than two (DRY: one render, one
-// inject record, one ranking).
+// firstTurn is InjectBanks over the scope's read banks with the first-turn
+// constants and no filter. It returns the block, how many leading rows it
+// carries, the total, and every row the recall kept (the capped list).
 func (m *Memory) firstTurn(ctx context.Context, scope Scope, cwd, bank, query string) (string, int, int, []Entry, error) {
-	if err := ctx.Err(); err != nil {
-		return "", 0, 0, nil, err
-	}
-	start := time.Now()
-	var banks []string
-	var entries []Entry
-	var total int // rows the recall found, before the block's limit
-	var err error
-	if query == "" {
-		// The cold arm already reads and parses every row of every bank (it
-		// then sorts and slices), so the true total costs nothing extra.
-		// The ranked arm does not: bm25 stops at the limit it was given, and
-		// widening it to count would cost a bigger scan on every prompt.
-		// Honest reporting is per-arm, and each arm says what it knows.
-		banks = m.sessionReadBanks(scope, cwd, bank)
-		entries, total, err = m.recentBanksCounting(banks, RecallLimit)
-	} else {
-		banks, entries, err = m.SessionRecall(ctx, scope, cwd, bank, query, RecallLimit)
-		total = len(entries)
-	}
-	if err != nil {
-		return "", 0, 0, nil, err
-	}
-	text, n := injectRows(entries, RecallLimit, InjectionTokenLimit, total)
-	recordInject(ctx, banks, entries[:n], text, start)
-	return text, n, total, entries, nil
+	text, rows, n, total, err := m.InjectBanks(ctx, m.sessionReadBanks(scope, cwd, bank), query, RecallLimit, InjectionTokenLimit, nil)
+	return text, n, total, rows, err
 }

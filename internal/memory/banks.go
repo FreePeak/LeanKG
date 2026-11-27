@@ -445,20 +445,33 @@ func (m *Memory) RetainReplacing(ctx context.Context, bank string, entries []Ent
 // DeleteDocument removes every row of one document from a bank and reports
 // how many rows went. A missing bank or unknown document deletes nothing.
 func (m *Memory) DeleteDocument(ctx context.Context, bank, documentID string) (int, error) {
+	return m.DeleteDocuments(ctx, bank, []string{documentID})
+}
+
+// DeleteDocuments removes every row whose document id is in ids, with one
+// rewrite of the bank and one delete event carrying the count. Each id
+// matches in both its raw form (a pre-redaction row keeps the id as the
+// client sent it) and its redacted form (a row written since redaction
+// stores the masked id). Blank ids are ignored; an empty list is a no-op.
+func (m *Memory) DeleteDocuments(ctx context.Context, bank string, ids []string) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	if strings.TrimSpace(documentID) == "" {
+	drop := make(map[string]bool, 2*len(ids))
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" {
+			continue
+		}
+		drop[id] = true
+		drop[Redact(id)] = true
+	}
+	if len(drop) == 0 {
 		return 0, nil
 	}
 	start := time.Now()
 	m.bankMu.Lock()
 	defer m.bankMu.Unlock()
-	stored := Redact(documentID) // a row written since redaction stores the redacted id
-	n, err := m.rewriteBankLocked(ctx, bank, func(e Entry) bool {
-		d := entryDocumentID(e)
-		return d == documentID || d == stored // a pre-redaction row keeps the raw id
-	})
+	n, err := m.rewriteBankLocked(ctx, bank, func(e Entry) bool { return drop[entryDocumentID(e)] })
 	if err != nil {
 		return 0, err
 	}
@@ -816,15 +829,16 @@ func (m *Memory) RecallFiltered(ctx context.Context, banks []string, query strin
 // shared), ranked newest-first with stable bank/file order on equal
 // timestamps; empty-content rows are skipped (never recallable).
 func (m *Memory) recentBanks(banks []string, limit int) ([]Entry, error) {
-	rows, _, err := m.recentBanksCounting(banks, limit)
+	rows, _, err := m.recentBanksCounting(banks, limit, nil)
 	return rows, err
 }
 
 // recentBanksCounting is recentBanks that also reports how many rows the
 // banks hold. The cold path already parses every line of every file to sort
 // them, so the count is free — and it is what makes an injection block able
-// to say "22 more memories hidden" instead of silently showing a prefix.
-func (m *Memory) recentBanksCounting(banks []string, limit int) ([]Entry, int, error) {
+// to say "22 more memories hidden" instead of silently showing a prefix. A
+// non-nil keep drops rows before that count and before the limit.
+func (m *Memory) recentBanksCounting(banks []string, limit int, keep func(Entry) bool) ([]Entry, int, error) {
 	var rows []Entry
 	seenIDs := map[string]bool{}
 	for _, bank := range banks {
@@ -846,6 +860,9 @@ func (m *Memory) recentBanksCounting(banks []string, limit int) ([]Entry, int, e
 			if seenIDs[e.ID] || strings.TrimSpace(e.Content) == "" {
 				continue
 			}
+			if keep != nil && !keep(e) {
+				continue
+			}
 			seenIDs[e.ID] = true
 			rows = append(rows, e)
 		}
@@ -856,6 +873,37 @@ func (m *Memory) recentBanksCounting(banks []string, limit int) ([]Entry, int, e
 		rows = rows[:limit]
 	}
 	return redactEntries(rows), total, nil
+}
+
+// InjectBanks is the one place an injection block is built and recorded. With
+// a query it is ranked recall over banks; without one it is the banks' newest
+// rows. keep (nil admits all) filters rows BEFORE the limit, so a rejected row
+// is never rendered and never counted in total. limit <= 0 means RecallLimit.
+// It returns the rendered block, the rows the recall kept (at most limit, the
+// list a caller may report on), how many leading rows the block carries, and
+// the total the recall counted. The ranked arm counts only what the recall
+// returned, as it always has (bm25 stops at its limit); the cold arm counts
+// every eligible row. It records one inject event.
+func (m *Memory) InjectBanks(ctx context.Context, banks []string, query string, limit, tokenBudget int, keep func(Entry) bool) (text string, rows []Entry, injected, total int, err error) {
+	if err := ctx.Err(); err != nil {
+		return "", nil, 0, 0, err
+	}
+	if limit <= 0 {
+		limit = RecallLimit
+	}
+	start := time.Now()
+	if query == "" {
+		rows, total, err = m.recentBanksCounting(banks, limit, keep)
+	} else {
+		rows, err = m.RecallFiltered(ctx, banks, query, limit, keep)
+		total = len(rows)
+	}
+	if err != nil {
+		return "", nil, 0, 0, err
+	}
+	text, injected = injectRows(rows, limit, tokenBudget, total)
+	recordInject(ctx, banks, rows[:injected], text, start)
+	return text, rows, injected, total, nil
 }
 
 // InjectBlock renders ranked recall rows as the <memories>-equivalent
