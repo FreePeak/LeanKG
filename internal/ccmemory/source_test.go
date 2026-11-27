@@ -1,8 +1,11 @@
 package ccmemory
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -115,7 +118,7 @@ func buildFixture(t *testing.T) string {
 
 func TestDiscoverFixture(t *testing.T) {
 	root := buildFixture(t)
-	got, err := Discover(root)
+	got, err := Discover(context.Background(), root)
 	if err != nil {
 		t.Fatalf("Discover error: %v", err)
 	}
@@ -168,7 +171,7 @@ func TestDiscoverFixture(t *testing.T) {
 }
 
 func TestDiscoverMissingRoot(t *testing.T) {
-	got, err := Discover(filepath.Join(t.TempDir(), "does-not-exist"))
+	got, err := Discover(context.Background(), filepath.Join(t.TempDir(), "does-not-exist"))
 	if err != nil {
 		t.Fatalf("Discover error for a missing root: %v", err)
 	}
@@ -210,7 +213,7 @@ func TestDiscoverRecordsSlugsWhoseScanFailed(t *testing.T) {
 	makeUnreadable(t, filepath.Join(root, "-work-unreadable", "memory"))
 	makeUnreadable(t, filepath.Join(root, "-work-hidden"))
 
-	got, err := Discover(root)
+	got, err := Discover(context.Background(), root)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -219,5 +222,67 @@ func TestDiscoverRecordsSlugsWhoseScanFailed(t *testing.T) {
 	}
 	if len(got.Docs) != 1 || got.Docs[0].Slug != "-work-ok" {
 		t.Errorf("docs = %+v, want only the readable project's document", got.Docs)
+	}
+}
+
+// countingContext reports context.Canceled from its cancelAt-th Err call on.
+// Discover checks Err once per project directory and once per file, so calls
+// counts how far a scan got before it stopped. No timing is involved.
+type countingContext struct {
+	context.Context
+	calls, cancelAt int
+}
+
+func (c *countingContext) Err() error {
+	c.calls++
+	if c.calls >= c.cancelAt {
+		return context.Canceled
+	}
+	return nil
+}
+
+// buildManyProjects writes docsEach memory files into each of projects project
+// directories under root and returns the number of files written.
+func buildManyProjects(t *testing.T, root string, projects, docsEach int) int {
+	t.Helper()
+	for p := range projects {
+		for d := range docsEach {
+			writeFile(t, filepath.Join(root, fmt.Sprintf("-work-%03d", p), "memory", fmt.Sprintf("note-%02d.md", d)), "---\ntype: user\n---\nbody\n")
+		}
+	}
+	return projects * docsEach
+}
+
+func TestDiscoverStopsAtCancelledContext(t *testing.T) {
+	root := t.TempDir()
+	total := buildManyProjects(t, root, 40, 5)
+	ctx := &countingContext{Context: context.Background(), cancelAt: 10}
+
+	got, err := Discover(ctx, root)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Discover error = %v, want context.Canceled", err)
+	}
+	if len(got.Docs) != 0 {
+		t.Errorf("a cancelled scan returned %d docs, want none (a partial scan must not look complete)", len(got.Docs))
+	}
+	if ctx.calls > ctx.cancelAt {
+		t.Errorf("Discover checked the context %d times, want it to stop at check %d of %d files", ctx.calls, ctx.cancelAt, total)
+	}
+}
+
+func TestDiscoverExpiredContextReadsNothing(t *testing.T) {
+	root := t.TempDir()
+	buildManyProjects(t, root, 40, 5)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got, err := Discover(ctx, root)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Discover error = %v, want context.Canceled", err)
+	}
+	if len(got.Docs) != 0 || len(got.Skipped) != 0 || len(got.FailedSlugs) != 0 {
+		t.Errorf("an expired context read files: %+v", got)
 	}
 }

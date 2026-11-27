@@ -886,8 +886,9 @@ func (m *Memory) recentBanksCounting(banks []string, limit int, keep func(Entry)
 // list a caller may report on), how many leading rows the block carries, and
 // the total the recall counted. The ranked arm counts only what the recall
 // returned, as it always has (bm25 stops at its limit); the cold arm counts
-// every eligible row. It records one inject event.
-func (m *Memory) InjectBanks(ctx context.Context, banks []string, query string, limit, tokenBudget int, keep func(Entry) bool) (text string, rows []Entry, injected, total int, err error) {
+// every eligible row. render writes one line per row (nil is the full form,
+// "- " and the row content). It records one inject event.
+func (m *Memory) InjectBanks(ctx context.Context, banks []string, query string, limit, tokenBudget int, keep func(Entry) bool, render func(Entry) string) (text string, rows []Entry, injected, total int, err error) {
 	if err := ctx.Err(); err != nil {
 		return "", nil, 0, 0, err
 	}
@@ -904,7 +905,7 @@ func (m *Memory) InjectBanks(ctx context.Context, banks []string, query string, 
 	if err != nil {
 		return "", nil, 0, 0, err
 	}
-	text, injected = injectRows(rows, limit, tokenBudget, total)
+	text, injected = injectRows(rows, limit, tokenBudget, total, render)
 	recordInject(ctx, banks, rows[:injected], text, start)
 	return text, rows, injected, total, nil
 }
@@ -917,18 +918,24 @@ func (m *Memory) InjectBanks(ctx context.Context, banks []string, query string, 
 // (never a truncated half-memory). An empty result returns "" so callers
 // skip the block entirely.
 func InjectBlock(entries []Entry, limit, tokenBudget int) string {
-	text, _ := injectRows(entries, limit, tokenBudget, len(entries))
+	text, _ := injectRows(entries, limit, tokenBudget, len(entries), nil)
 	return text
 }
 
+// fullLine is the default injection line: "- " and the row content.
+func fullLine(e Entry) string { return "- " + e.Content }
+
 // injectRows is InjectBlock that also reports how many leading entries the
-// block carries (the rows telemetry counts as injected).
-func injectRows(entries []Entry, limit, tokenBudget, total int) (string, int) {
+// block carries (the rows telemetry counts as injected). render nil means fullLine.
+func injectRows(entries []Entry, limit, tokenBudget, total int, render func(Entry) string) (string, int) {
 	if limit <= 0 {
 		limit = 8 // OMP recallLimit
 	}
 	if tokenBudget <= 0 {
 		tokenBudget = 5000 // OMP injectionTokenLimit
+	}
+	if render == nil {
+		render = fullLine
 	}
 	var b strings.Builder
 	b.WriteString("<memories>\n")
@@ -938,9 +945,12 @@ func injectRows(entries []Entry, limit, tokenBudget, total int) (string, int) {
 		if n == limit {
 			break
 		}
-		line := "- " + e.Content
+		line := render(e)
 		cost := (len(line) + 1) / 4 // compress.EstimateTokens shape: bytes/4
 		if used+cost > tokenBudget {
+			if n == 0 {
+				continue // an oversize entry must not hide the rows that fit
+			}
 			break
 		}
 		b.WriteString(line)

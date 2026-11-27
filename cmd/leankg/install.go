@@ -10,10 +10,11 @@ import "os"
 
 // InstallOptions tunes Install.
 type InstallOptions struct {
-	HTTP        bool   // advertise a remote HTTP transport instead of stdio
-	URL         string // remote MCP endpoint URL (required when HTTP)
-	Project     string // optional --project escape hatch (stdio only)
-	RegisterCWD bool   // also register the SessionStart hook (claude-code only)
+	HTTP           bool   // advertise a remote HTTP transport instead of stdio
+	URL            string // remote MCP endpoint URL (required when HTTP)
+	Project        string // optional --project escape hatch (stdio only)
+	RegisterCWD    bool   // also register the SessionStart index hook (claude-code only)
+	RegisterMemory bool   // also register the SessionStart memory hook (claude-code only)
 }
 
 // CurrentCommand returns the stdio command path: the current executable when
@@ -26,8 +27,9 @@ func CurrentCommand() string {
 }
 
 // Install writes the leankg MCP entry for target (one of Clients()) under
-// homeDir and, when opts.RegisterCWD is set, registers the Claude Code
-// SessionStart hook. Unknown targets are rejected with the valid set named.
+// homeDir and, when opts.RegisterCWD or opts.RegisterMemory is set, registers
+// the matching Claude Code SessionStart hook. Unknown targets are rejected with
+// the valid set named.
 func Install(homeDir, target string, opts InstallOptions) error {
 	cfg := Config{Mode: "stdio", Exe: CurrentCommand(), Project: opts.Project}
 	if opts.HTTP {
@@ -37,7 +39,12 @@ func Install(homeDir, target string, opts InstallOptions) error {
 		return err
 	}
 	if opts.RegisterCWD {
-		return RegisterCWD(homeDir, target, cfg.Exe)
+		if err := RegisterCWD(homeDir, target, cfg.Exe); err != nil {
+			return err
+		}
+	}
+	if opts.RegisterMemory {
+		return RegisterMemory(homeDir, target, cfg.Exe)
 	}
 	return nil
 }

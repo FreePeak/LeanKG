@@ -521,6 +521,7 @@ func TestWriteClientConfigValidation(t *testing.T) {
 // TestRegisterCWDCreatesHook pins the fresh-settings.json shape.
 func TestRegisterCWDCreatesHook(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "") // settings live under home, whatever the caller exports
 	if err := RegisterCWD(home, ClientClaudeCode, testExe); err != nil {
 		t.Fatal(err)
 	}
@@ -546,6 +547,7 @@ func TestRegisterCWDCreatesHook(t *testing.T) {
 // hook events survive; our hook is appended to SessionStart.
 func TestRegisterCWDMergesExistingHooks(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "") // settings live under home, whatever the caller exports
 	path := filepath.Join(home, ".claude", "settings.json")
 	writeSeed(t, path, `{"model":"opus","hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"echo hi"}]}],"Stop":[{"hooks":[]}]}}`)
 	if err := RegisterCWD(home, ClientClaudeCode, ""); err != nil {
@@ -569,6 +571,7 @@ func TestRegisterCWDMergesExistingHooks(t *testing.T) {
 // no-op.
 func TestRegisterCWDIdempotent(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "") // settings live under home, whatever the caller exports
 	path := filepath.Join(home, ".claude", "settings.json")
 	if err := RegisterCWD(home, ClientClaudeCode, ""); err != nil {
 		t.Fatal(err)
@@ -594,6 +597,7 @@ func TestRegisterCWDIdempotent(t *testing.T) {
 // the current entry; unrelated entries keep their position and content.
 func TestRegisterCWDReplacesLegacyGeneratedEntry(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "") // settings live under home, whatever the caller exports
 	path := filepath.Join(home, ".claude", "settings.json")
 	writeSeed(t, path, `{"hooks":{"SessionStart":[`+
 		`{"matcher":"startup","hooks":[{"type":"command","command":"echo hi"}]},`+
@@ -617,6 +621,7 @@ func TestRegisterCWDReplacesLegacyGeneratedEntry(t *testing.T) {
 // run twice, so the legacy entry goes and the current one stays the only copy.
 func TestRegisterCWDRemovesLegacyWhenCurrentPresent(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "") // settings live under home, whatever the caller exports
 	path := filepath.Join(home, ".claude", "settings.json")
 	writeSeed(t, path, `{"hooks":{"SessionStart":[`+
 		`{"matcher":"startup","hooks":[{"type":"command","command":"echo hi"}]},`+
@@ -641,6 +646,7 @@ func TestRegisterCWDRemovesLegacyWhenCurrentPresent(t *testing.T) {
 // the generated entry is appended after it.
 func TestRegisterCWDKeepsCustomizedEntry(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "") // settings live under home, whatever the caller exports
 	path := filepath.Join(home, ".claude", "settings.json")
 	customised := `{"matcher":"*","hooks":[{"type":"command","command":"\"$HOME/.claude/hooks/freepeak-only\" env X=1 /path/leankg index --hook \"$CLAUDE_PROJECT_DIR\""}]}`
 	writeSeed(t, path, `{"hooks":{"SessionStart":[`+customised+`]}}`)
@@ -666,6 +672,7 @@ func TestRegisterCWDKeepsCustomizedEntry(t *testing.T) {
 // stays in place and the generated entry follows it.
 func TestRegisterCWDKeepsForeignHooksOfGeneratedEntry(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "") // settings live under home, whatever the caller exports
 	path := filepath.Join(home, ".claude", "settings.json")
 	writeSeed(t, path, `{"hooks":{"SessionStart":[{"matcher":"*","hooks":[`+
 		`{"type":"command","command":"/old/bin/leankg index \"$CLAUDE_PROJECT_DIR\""},`+
@@ -726,5 +733,271 @@ func TestWriteClientCodexEmptyExeFallsBack(t *testing.T) {
 	want := "[mcp_servers.leankg]\ncommand = [\"leankg\", \"serve\", \"--stdio\", \"--memory\"]\n"
 	if got != want {
 		t.Fatalf("codex section:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestRegisterMemoryCreatesHook pins the fresh-settings.json shape: one
+// synchronous command hook with timeout 10 and no matcher key.
+func TestRegisterMemoryCreatesHook(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "") // settings live under home, whatever the caller exports
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	got := readJSON(t, filepath.Join(home, ".claude", "settings.json"))
+	want := map[string]any{
+		"hooks": map[string]any{
+			"SessionStart": []any{
+				map[string]any{
+					"hooks": []any{
+						map[string]any{"type": "command", "command": testExe + " memory hook", "timeout": float64(10)},
+					},
+				},
+			},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got  %#v\nwant %#v", got, want)
+	}
+}
+
+// TestRegisterMemoryPreservesSettingsAndIndexHook: unrelated keys, other hook
+// events, and the index hook already present all survive; the memory entry is
+// appended beside the index entry.
+func TestRegisterMemoryPreservesSettingsAndIndexHook(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "") // settings live under home, whatever the caller exports
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeed(t, path, `{"model":"opus","hooks":{"Stop":[{"hooks":[]}]}}`)
+	if err := RegisterCWD(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	got := readJSON(t, path)
+	if got["model"] != "opus" {
+		t.Fatalf("model setting lost: %#v", got)
+	}
+	hooks := got["hooks"].(map[string]any)
+	if _, ok := hooks["Stop"]; !ok {
+		t.Fatalf("Stop hooks lost: %#v", hooks)
+	}
+	ss := hooks["SessionStart"].([]any)
+	if len(ss) != 2 {
+		t.Fatalf("SessionStart entries = %d, want 2 (index + memory): %#v", len(ss), ss)
+	}
+	index := ss[0].(map[string]any)
+	if index["matcher"] != "startup|resume" {
+		t.Fatalf("index entry changed: %#v", index)
+	}
+	memory := ss[1].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	if memory["command"] != testExe+" memory hook" {
+		t.Fatalf("memory command = %v", memory["command"])
+	}
+}
+
+// TestRegisterMemoryIdempotent: a second run leaves the file byte-identical.
+func TestRegisterMemoryIdempotent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "") // settings live under home, whatever the caller exports
+	path := filepath.Join(home, ".claude", "settings.json")
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("second run changed bytes\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+}
+
+// TestRegisterMemoryKeepsForeignSessionStartEntries: a SessionStart entry
+// with a matcher and a foreign command is left as it is.
+func TestRegisterMemoryKeepsForeignSessionStartEntries(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "") // settings live under home, whatever the caller exports
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeed(t, path, `{"hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"echo hi"}]}]}}`)
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	ss := readJSON(t, path)["hooks"].(map[string]any)["SessionStart"].([]any)
+	if len(ss) != 2 {
+		t.Fatalf("SessionStart entries = %d, want 2: %#v", len(ss), ss)
+	}
+	foreign := ss[0].(map[string]any)
+	if foreign["matcher"] != "startup" {
+		t.Fatalf("foreign entry changed: %#v", foreign)
+	}
+}
+
+// TestRegisterMemoryReplacesStaleBinaryPath: an earlier memory entry under a
+// different binary path is recognised by its ` memory hook` suffix and
+// replaced in place, so exactly one memory entry remains.
+func TestRegisterMemoryReplacesStaleBinaryPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "") // settings live under home, whatever the caller exports
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeed(t, path, `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/old/leankg memory hook","timeout":10}]}]}}`)
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	ss := readJSON(t, path)["hooks"].(map[string]any)["SessionStart"].([]any)
+	if len(ss) != 1 {
+		t.Fatalf("SessionStart entries = %d, want 1: %#v", len(ss), ss)
+	}
+	hook := ss[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	if hook["command"] != testExe+" memory hook" {
+		t.Fatalf("command = %v, want %s", hook["command"], testExe+" memory hook")
+	}
+}
+
+// TestRegisterMemoryUnsupportedClient: only claude-code has a hook mechanism.
+func TestRegisterMemoryUnsupportedClient(t *testing.T) {
+	for _, c := range []string{ClientCursor, ClientCodex, ClientGemini, ClientOpencode, ClientOmp} {
+		if err := RegisterMemory(t.TempDir(), c, ""); !errors.Is(err, ErrUnsupportedClient) {
+			t.Fatalf("%s: err = %v, want ErrUnsupportedClient", c, err)
+		}
+	}
+}
+
+// TestRegisterHooksHonorClaudeConfigDir: Claude Code reads its settings from
+// $CLAUDE_CONFIG_DIR, so both hooks land in that directory and not under
+// <home>/.claude, where Claude Code would never look.
+func TestRegisterHooksHonorClaudeConfigDir(t *testing.T) {
+	home := t.TempDir()
+	cfg := filepath.Join(t.TempDir(), "claude-config")
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	if err := RegisterCWD(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	ss := readJSON(t, filepath.Join(cfg, "settings.json"))["hooks"].(map[string]any)["SessionStart"].([]any)
+	if len(ss) != 2 {
+		t.Fatalf("SessionStart entries under CLAUDE_CONFIG_DIR = %d, want 2 (index + memory): %#v", len(ss), ss)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Errorf("settings were written under <home>/.claude (stat err = %v)", err)
+	}
+}
+
+// TestRegisterMemoryKeepsForeignToolWithMemoryHookSuffix: a user's own tool that
+// ends in " memory hook" is not a leankg hook. It survives the add, and it also
+// survives the replacement of a stale leankg entry beside it.
+func TestRegisterMemoryKeepsForeignToolWithMemoryHookSuffix(t *testing.T) {
+	cases := map[string]string{
+		"add": `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/opt/acme/tool memory hook"}]}]}}`,
+		"stale replacement": `{"hooks":{"SessionStart":[` +
+			`{"hooks":[{"type":"command","command":"/opt/acme/tool memory hook"}]},` +
+			`{"hooks":[{"type":"command","command":"/old/leankg memory hook","timeout":10}]}]}}`,
+	}
+	for name, seed := range cases {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("CLAUDE_CONFIG_DIR", "")
+			path := filepath.Join(home, ".claude", "settings.json")
+			writeSeed(t, path, seed)
+			if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+				t.Fatal(err)
+			}
+			ss := readJSON(t, path)["hooks"].(map[string]any)["SessionStart"].([]any)
+			foreign := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "/opt/acme/tool memory hook"}}}
+			if len(ss) != 2 || !reflect.DeepEqual(ss[0], foreign) {
+				t.Fatalf("foreign tool not kept first: %#v", ss)
+			}
+			ours := ss[1].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+			if ours["command"] != testExe+" memory hook" {
+				t.Fatalf("leankg memory command = %v", ours["command"])
+			}
+		})
+	}
+}
+
+// TestRegisterCWDKeepsForeignToolWithIndexHookSuffix: the same rule for the index
+// hook. A foreign ` index --hook "$CLAUDE_PROJECT_DIR"` command is not replaced.
+func TestRegisterCWDKeepsForeignToolWithIndexHookSuffix(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	path := filepath.Join(home, ".claude", "settings.json")
+	foreign := `{"matcher":"*","hooks":[{"type":"command","command":"/opt/acme/tool index --hook \"$CLAUDE_PROJECT_DIR\""}]}`
+	writeSeed(t, path, `{"hooks":{"SessionStart":[`+foreign+`]}}`)
+	if err := RegisterCWD(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	ss := readJSON(t, path)["hooks"].(map[string]any)["SessionStart"].([]any)
+	var kept any
+	if err := json.Unmarshal([]byte(foreign), &kept); err != nil {
+		t.Fatal(err)
+	}
+	if len(ss) != 2 || !reflect.DeepEqual(ss[0], kept) {
+		t.Fatalf("foreign index tool not kept: %#v", ss)
+	}
+}
+
+// TestRegisterMemoryKeepsSettingsFileMode: a rewritten settings file keeps the
+// mode it had, so a 0600 file that may hold env values stays private. A new
+// file keeps the 0644 default.
+func TestRegisterMemoryKeepsSettingsFileMode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeed(t, path, `{"env":{"TOKEN_NAME":"placeholder"}}`)
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("settings mode = %v, want 0600 kept", fi.Mode().Perm())
+	}
+
+	fresh := t.TempDir()
+	if err := RegisterMemory(fresh, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	fi, err = os.Stat(filepath.Join(fresh, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o644 {
+		t.Fatalf("new settings mode = %v, want 0644", fi.Mode().Perm())
+	}
+}
+
+// TestRegisterRejectsNonObjectSettings: settings that are valid JSON but not an
+// object are a clear error, and the file is left byte-identical.
+func TestRegisterRejectsNonObjectSettings(t *testing.T) {
+	cases := map[string]string{"null": "null\n", "array": "[]\n", "string": "\"text\"\n", "number": "42\n"}
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("CLAUDE_CONFIG_DIR", "")
+			path := filepath.Join(home, ".claude", "settings.json")
+			writeSeed(t, path, content)
+			err := RegisterMemory(home, ClientClaudeCode, testExe)
+			if err == nil || !strings.Contains(err.Error(), "settings file is not a JSON object") {
+				t.Fatalf("err = %v, want the settings file is not a JSON object error", err)
+			}
+			if got, _ := os.ReadFile(path); string(got) != content {
+				t.Fatalf("settings changed to %q, want %q unchanged", got, content)
+			}
+		})
 	}
 }

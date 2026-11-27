@@ -28,12 +28,19 @@ func New() sessionlink.Adapter { return adapter{} }
 
 func (adapter) Client() string { return clientName }
 
+// ConfigDir is the Claude Code config directory: $CLAUDE_CONFIG_DIR when set,
+// else <home>/.claude. Claude Code keeps its projects and settings.json there,
+// so every reader or writer of either goes through this one function.
+func ConfigDir(home string) string {
+	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
+		return d
+	}
+	return filepath.Join(home, ".claude")
+}
+
 // ProjectsRoot is the projects directory under the configured Claude config dir.
 func ProjectsRoot(home string) string {
-	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
-		return filepath.Join(d, "projects")
-	}
-	return filepath.Join(home, ".claude", "projects")
+	return filepath.Join(ConfigDir(home), "projects")
 }
 
 func (adapter) Detect(home string) bool {

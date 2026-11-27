@@ -491,6 +491,20 @@ func closeTelemetry() {
 	closeTelemetryWithin(telemetryCloseBudget, os.Stderr)
 }
 
+// telemetryFlushFloor is the least a flush waits when the run that owns it has
+// already used its whole deadline.
+const telemetryFlushFloor = 100 * time.Millisecond
+
+// closeTelemetryBefore is closeTelemetry for a run with one wall-clock deadline:
+// the flush gets the time left before deadline, never less than telemetryFlushFloor.
+func closeTelemetryBefore(deadline time.Time, w io.Writer) {
+	budget := time.Until(deadline)
+	if budget < telemetryFlushFloor {
+		budget = telemetryFlushFloor
+	}
+	closeTelemetryWithin(budget, w)
+}
+
 // closeTelemetryWithin runs the close on its own goroutine and waits at most
 // budget. A close still running at the budget is abandoned, and one line naming
 // it is written to w.

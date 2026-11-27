@@ -109,3 +109,23 @@ func TestCloseTelemetryQuietWhenFlushFinishes(t *testing.T) {
 		t.Fatalf("stderr = %q, want nothing when the flush finishes", out.String())
 	}
 }
+
+// TestCloseTelemetryBeforeWaitsOnlyTheFloorWhenDeadlinePassed pins the shared
+// budget: a run that has used its deadline still gives a blocked flush the
+// floor, and the abandon line names that floor.
+func TestCloseTelemetryBeforeWaitsOnlyTheFloorWhenDeadlinePassed(t *testing.T) {
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+	telemetrySinks.install(blockingRecorder{block: block})
+	t.Cleanup(func() { telemetrySinks.install(telemetry.Nop{}) })
+
+	var out bytes.Buffer
+	start := time.Now()
+	closeTelemetryBefore(time.Now().Add(-time.Second), &out)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("flush waited %v past a passed deadline, want about the %v floor", elapsed, telemetryFlushFloor)
+	}
+	if !strings.Contains(out.String(), "within "+telemetryFlushFloor.String()) {
+		t.Errorf("stderr = %q, want the abandon line naming the %v floor", out.String(), telemetryFlushFloor)
+	}
+}

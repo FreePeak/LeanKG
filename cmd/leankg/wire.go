@@ -148,11 +148,15 @@ func cmdInstall(ctx context.Context, args []string) error {
 	url := fs.String("url", "", "remote MCP URL (with --http)")
 	project := fs.String("project", "", "explicit project path (stdio escape hatch)")
 	registerCWD := fs.Bool("register-cwd", false, "write a session-start hook running `leankg index --hook <project>` (claude-code)")
+	registerMemory := fs.Bool("register-memory", false, "write a session-start hook running `leankg memory hook` (claude-code)")
 	if _, err := parseInterspersed("install", fs, args, 0); err != nil {
 		return err
 	}
 	if *target == "" {
 		return fmt.Errorf("install requires --target (%s)", strings.Join(Clients(), "|"))
+	}
+	if *registerMemory && *target != ClientClaudeCode {
+		return fmt.Errorf("register-memory for %s: %w", *target, ErrUnsupportedClient)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -169,7 +173,7 @@ func cmdInstall(ctx context.Context, args []string) error {
 		cfg.Mode = "stdio"
 		cfg.Project = *project
 	}
-	opts := InstallOptions{HTTP: *httpMode, URL: cfg.URL, Project: *project, RegisterCWD: *registerCWD}
+	opts := InstallOptions{HTTP: *httpMode, URL: cfg.URL, Project: *project, RegisterCWD: *registerCWD, RegisterMemory: *registerMemory}
 	if err := Install(home, *target, opts); err != nil {
 		return err
 	}

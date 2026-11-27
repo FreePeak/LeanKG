@@ -776,6 +776,36 @@ func TestApplyCancelledContextWritesNothing(t *testing.T) {
 	}
 }
 
+// TestApplyCancelledMidScanWritesAndDeletesNothing cancels partway through the
+// file scan of a run that would otherwise delete one row and upsert another.
+// The run must fail, and the rows and bank files must stay as they were.
+func TestApplyCancelledMidScanWritesAndDeletesNothing(t *testing.T) {
+	projects, mem := applySetup(t)
+	runSync(t, mem, syncOpts(projects, mem))
+	if err := os.Remove(memFile(projects, "-work-alpha", "user-role.md")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, memFile(projects, "-work-beta", "deploy-window.md"), "---\nname: deploy-window\ndescription: Changed.\ntype: project\n---\nChanged body.\n")
+	rowsBefore, err := actualSet(mem, map[string]string{}, map[Key]string{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	banksBefore := snapshotDir(t, filepath.Join(mem.Root(), "banks"))
+
+	ctx := &countingContext{Context: context.Background(), cancelAt: 3}
+	_, err = Sync(ctx, mem, syncOpts(projects, mem))
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Sync error = %v, want context.Canceled", err)
+	}
+	if rowsAfter, _ := actualSet(mem, map[string]string{}, map[Key]string{}, ""); !reflect.DeepEqual(rowsAfter, rowsBefore) {
+		t.Errorf("rows changed by a cancelled run:\nbefore %v\nafter  %v", rowsBefore, rowsAfter)
+	}
+	if banksAfter := snapshotDir(t, filepath.Join(mem.Root(), "banks")); !reflect.DeepEqual(banksAfter, banksBefore) {
+		t.Errorf("bank files changed by a cancelled run")
+	}
+}
+
 // TestApplyPostRunCompactionLeavesForeignBankAlone runs the steps a real memory
 // verb runs: sync, migrate, then the post-run compaction limited to the central
 // prefix. A bank outside that prefix must stay byte-identical.

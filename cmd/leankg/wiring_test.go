@@ -2,7 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"flag"
 	"io"
 	"net"
 	"net/http"
@@ -487,4 +491,98 @@ func TestTelemetrySinksAreRaceFree(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+// runInstallVerb runs the install verb in-process with HOME pinned to a temp
+// dir, so the real ~/.claude is never touched.
+func runInstallVerb(t *testing.T, args ...string) (home string, err error) {
+	t.Helper()
+	home = t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	return home, cmdInstall(context.Background(), args)
+}
+
+// TestInstallVerbRegisterMemoryWritesHook: --register-memory on claude-code
+// writes one SessionStart memory hook (timeout 10, no matcher), and a second
+// run leaves settings.json byte-identical.
+func TestInstallVerbRegisterMemoryWritesHook(t *testing.T) {
+	home, err := runInstallVerb(t, "--target", "claude-code", "--register-memory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, ".claude", "settings.json")
+	settings := readJSON(t, path)
+	ss := settings["hooks"].(map[string]any)["SessionStart"].([]any)
+	if len(ss) != 1 {
+		t.Fatalf("SessionStart entries = %d, want 1: %#v", len(ss), ss)
+	}
+	group := ss[0].(map[string]any)
+	if _, ok := group["matcher"]; ok {
+		t.Fatalf("group has matcher %v, want none", group["matcher"])
+	}
+	hook := group["hooks"].([]any)[0].(map[string]any)
+	cmd, _ := hook["command"].(string)
+	if !strings.HasSuffix(cmd, " memory hook") {
+		t.Fatalf("command = %q, want suffix %q", cmd, " memory hook")
+	}
+	if hook["timeout"] != float64(10) {
+		t.Fatalf("timeout = %v, want 10", hook["timeout"])
+	}
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runInstallVerb(t, "--target", "claude-code", "--register-memory"); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatalf("second run changed settings.json:\nfirst:  %s\nsecond: %s", first, second)
+	}
+}
+
+// TestInstallVerbRegisterMemoryRejectsOtherTargets: --register-memory with a
+// non-claude target returns ErrUnsupportedClient before any file is written.
+func TestInstallVerbRegisterMemoryRejectsOtherTargets(t *testing.T) {
+	for _, target := range []string{"cursor", "codex", "gemini", "opencode", "omp", "xdev"} {
+		home, err := runInstallVerb(t, "--target", target, "--register-memory")
+		if !errors.Is(err, ErrUnsupportedClient) {
+			t.Fatalf("%s: err = %v, want ErrUnsupportedClient", target, err)
+		}
+		entries, rerr := os.ReadDir(home)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("%s: wrote %d entries under HOME, want none", target, len(entries))
+		}
+	}
+}
+
+// TestInstallVerbRegisterMemoryUsage: the install flag help lists
+// --register-memory next to --register-cwd.
+func TestInstallVerbRegisterMemoryUsage(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stderr
+	os.Stderr = w
+	_, runErr := runInstallVerb(t, "--help")
+	os.Stderr = saved
+	w.Close()
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(runErr, flag.ErrHelp) {
+		t.Fatalf("err = %v, want flag.ErrHelp", runErr)
+	}
+	if !strings.Contains(buf.String(), "-register-memory") {
+		t.Fatalf("usage lacks -register-memory:\n%s", buf.String())
+	}
 }

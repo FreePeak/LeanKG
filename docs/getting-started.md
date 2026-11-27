@@ -135,6 +135,14 @@ The full variable set, the OpenAI-compatible provider and the offline bulk
 path are in [Embeddings](embedding.md). Every vector writer is model-stamp
 guarded, so changing the model fails loudly instead of mixing vector spaces.
 
+## Share memory across repositories
+
+Claude Code's per-repository memory can be copied into one central store, so
+preferences saved in one repository reach sessions in the others. After the
+client is wired, see [Central agent memory](central-agent-memory.md) for the
+one-time setup (`leankg memory migrate`, then
+`leankg install --target claude-code --register-memory`) and for the rollback.
+
 ## Verify a deployment
 
 ```bash

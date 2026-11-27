@@ -141,7 +141,7 @@ func TestInjectBanksColdFilterBeforeLimit(t *testing.T) {
 	even := map[string]bool{"r00": true, "r02": true, "r04": true, "r06": true, "r08": true}
 
 	text, rows, injected, total, err := m.InjectBanks(context.Background(), []string{"probe"}, "", 3, 0,
-		func(e Entry) bool { return even[e.ID] })
+		func(e Entry) bool { return even[e.ID] }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestInjectBanksRankedFilterBeforeLimit(t *testing.T) {
 	reject := map[string]bool{"r08": true, "r09": true}
 
 	text, rows, injected, _, err := m.InjectBanks(context.Background(), []string{"probe"}, "vector index", 2, 0,
-		func(e Entry) bool { return !reject[e.ID] })
+		func(e Entry) bool { return !reject[e.ID] }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestInjectBanksRejectedRowsNeverRendered(t *testing.T) {
 	})
 
 	text, rows, injected, total, err := m.InjectBanks(context.Background(), []string{"probe"}, "", 8, 0,
-		func(e Entry) bool { return !strings.Contains(e.Content, "SECRET") })
+		func(e Entry) bool { return !strings.Contains(e.Content, "SECRET") }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestInjectBanksRecordsOneInjectEvent(t *testing.T) {
 	m := openTest(t)
 	mustRetain(t, m, "probe", fixtureRows(false))
 
-	_, _, injected, _, err := m.InjectBanks(identityCtx(), []string{"probe"}, "", 3, 0, nil)
+	_, _, injected, _, err := m.InjectBanks(identityCtx(), []string{"probe"}, "", 3, 0, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,10 +236,49 @@ func TestInjectBanksCancelledContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, _, _, _, err := m.InjectBanks(ctx, []string{"probe"}, "", 3, 0, nil); err != context.Canceled {
+	if _, _, _, _, err := m.InjectBanks(ctx, []string{"probe"}, "", 3, 0, nil, nil); err != context.Canceled {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 	if evs := verbEvents(rec.memEvents(), "inject"); len(evs) != 0 {
 		t.Fatalf("cancelled inject recorded events: %+v", evs)
+	}
+}
+
+// TestInjectBanksOversizeNewestRowDoesNotSuppressBlock: the newest row is over
+// the token budget. The block still carries the older row that fits, instead of
+// breaking at the first entry and returning "" for the whole block.
+func TestInjectBanksOversizeNewestRowDoesNotSuppressBlock(t *testing.T) {
+	m := openTest(t)
+	mustRetain(t, m, "probe", []Entry{
+		{ID: "small-old", Content: "small older note", Timestamp: 1},
+		{ID: "huge-new", Content: strings.Repeat("h", 3000), Timestamp: 2},
+	})
+
+	text, _, injected, total, err := m.InjectBanks(context.Background(), []string{"probe"}, "", 8, 100, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if injected != 1 || total != 2 {
+		t.Fatalf("injected=%d total=%d, want 1 and 2", injected, total)
+	}
+	if !strings.Contains(text, "- small older note\n") || strings.Contains(text, "hhhh") {
+		t.Fatalf("block = %q, want the fitting older row and not the oversize one", text)
+	}
+}
+
+// TestInjectBanksRenderOptionReplacesRowLine: the render option decides each
+// line of the block, and the limit and the hidden-count marker still apply.
+func TestInjectBanksRenderOptionReplacesRowLine(t *testing.T) {
+	m := openTest(t)
+	mustRetain(t, m, "probe", fixtureRows(true))
+
+	short := func(e Entry) string { return "* " + e.ID }
+	text, rows, injected, total, err := m.InjectBanks(context.Background(), []string{"probe"}, "", 3, 0, nil, short)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "<memories>\n* r09\n* r08\n* r07\n\n<!-- 7 more memories hidden by the injection budget of 3 entries / 5000 tokens -->\n</memories>"
+	if text != want || injected != 3 || total != 10 || len(rows) != 3 {
+		t.Fatalf("text = %q injected=%d total=%d rows=%d, want %q with 3, 10, 3", text, injected, total, len(rows), want)
 	}
 }

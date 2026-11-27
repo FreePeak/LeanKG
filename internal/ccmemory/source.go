@@ -4,6 +4,7 @@
 package ccmemory
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -102,7 +103,15 @@ func memoryDirOf(projectsRoot, slug string) string {
 // and the scan continues. A memory directory that cannot be stat'ed or listed
 // is recorded in Skipped and FailedSlugs. A project with no memory directory
 // is neither. A missing root sets RootMissing and is not an error.
-func Discover(root string) (Discovery, error) {
+//
+// ctx is checked before the scan and before each project directory and each
+// file. A cancelled ctx ends the scan with ctx.Err() and no partial Discovery:
+// a scan that stopped early says nothing about the files it did not reach, so
+// the caller must not treat it as complete.
+func Discover(ctx context.Context, root string) (Discovery, error) {
+	if err := ctx.Err(); err != nil {
+		return Discovery{}, err
+	}
 	var d Discovery
 	slugs, err := os.ReadDir(root)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -117,6 +126,9 @@ func Discover(root string) (Discovery, error) {
 		return d, err
 	}
 	for _, s := range slugs {
+		if err := ctx.Err(); err != nil {
+			return Discovery{}, err
+		}
 		memDir := memoryDirOf(root, s.Name())
 		fi, err := os.Stat(memDir)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -132,6 +144,9 @@ func Discover(root string) (Discovery, error) {
 			continue
 		}
 		for _, f := range files {
+			if err := ctx.Err(); err != nil {
+				return Discovery{}, err
+			}
 			name := f.Name()
 			if !strings.HasSuffix(name, ".md") || name == memoryIndex {
 				continue

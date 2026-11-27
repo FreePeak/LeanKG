@@ -119,6 +119,6 @@ func (m *Memory) FirstTurnMemories(ctx context.Context, scope Scope, cwd, bank, 
 // constants and no filter. It returns the block, how many leading rows it
 // carries, the total, and every row the recall kept (the capped list).
 func (m *Memory) firstTurn(ctx context.Context, scope Scope, cwd, bank, query string) (string, int, int, []Entry, error) {
-	text, rows, n, total, err := m.InjectBanks(ctx, m.sessionReadBanks(scope, cwd, bank), query, RecallLimit, InjectionTokenLimit, nil)
+	text, rows, n, total, err := m.InjectBanks(ctx, m.sessionReadBanks(scope, cwd, bank), query, RecallLimit, InjectionTokenLimit, nil, nil)
 	return text, n, total, rows, err
 }
