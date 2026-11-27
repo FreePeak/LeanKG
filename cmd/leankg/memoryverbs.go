@@ -187,6 +187,9 @@ func printMemorySyncSummary(res ccmemory.SyncResult, dryRun bool) {
 	if res.DeletesWithheld {
 		fmt.Println("  WARNING: deletes withheld; the projects root is missing or holds no memories while central rows exist. Use --rebuild to clear them.")
 	}
+	if len(res.FailedProjects) > 0 {
+		fmt.Printf("  WARNING: scan failed for %s; their rows were kept.\n", strings.Join(res.FailedProjects, ", "))
+	}
 	for _, b := range res.Banks {
 		project := b.Project
 		if project == "" {

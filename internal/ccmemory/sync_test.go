@@ -809,3 +809,61 @@ func TestApplyPostRunCompactionLeavesForeignBankAlone(t *testing.T) {
 		t.Fatalf("post-run compaction rewrote a foreign bank:\nbefore: %q\nafter:  %q", before, after)
 	}
 }
+
+// ccRowCount counts the rows of every cc- bank.
+func ccRowCount(t *testing.T, mem *memory.Memory) int {
+	t.Helper()
+	banks, err := mem.Banks()
+	if err != nil {
+		t.Fatalf("Banks: %v", err)
+	}
+	n := 0
+	for _, bank := range banks {
+		if strings.HasPrefix(bank, CentralBankPrefix) {
+			n += len(bankRows(t, mem, bank))
+		}
+	}
+	return n
+}
+
+// TestApplyUnreadableProjectKeepsItsRows makes one project's memory directory
+// unreadable after a sync. Its rows are not in the desired set, but the scan
+// failed, so they must survive the next sync and migrate must not verify.
+func TestApplyUnreadableProjectKeepsItsRows(t *testing.T) {
+	projects, mem := applySetup(t)
+	runSync(t, mem, syncOpts(projects, mem))
+	before := ccRowCount(t, mem)
+	restore := makeUnreadable(t, memoryDirOf(projects, "-work-beta"))
+
+	res := runSync(t, mem, syncOpts(projects, mem))
+	if res.Deleted != 0 || !res.DeletesWithheld {
+		t.Fatalf("sync with an unreadable project: deleted %d withheld %v, want 0 and true", res.Deleted, res.DeletesWithheld)
+	}
+	if !slices.Contains(res.FailedProjects, "-work-beta") {
+		t.Errorf("FailedProjects = %v, want -work-beta", res.FailedProjects)
+	}
+	if after := ccRowCount(t, mem); after != before {
+		t.Errorf("rows after sync = %d, want %d kept", after, before)
+	}
+
+	mig := runMigrate(t, mem, migrateOpts(projects, mem))
+	if mig.Verified {
+		t.Fatal("migrate verified with a project whose scan failed")
+	}
+	if !slices.ContainsFunc(mig.Mismatches, func(m Mismatch) bool {
+		return m.Bank == ProjectBank("-work-beta") && m.Reason == mismatchScanFailed
+	}) {
+		t.Errorf("mismatches = %v, want a scan_failed entry for -work-beta", mig.Mismatches)
+	}
+	if after := ccRowCount(t, mem); after != before {
+		t.Errorf("migrate rows = %d, want %d kept", after, before)
+	}
+
+	restore()
+	if res := runSync(t, mem, syncOpts(projects, mem)); res.DeletesWithheld || res.Deleted != 0 || len(res.FailedProjects) != 0 {
+		t.Errorf("sync after restoring permissions: %+v, want a clean run", res)
+	}
+	if mig := runMigrate(t, mem, migrateOpts(projects, mem)); !mig.Verified {
+		t.Errorf("migrate after restoring permissions: verified=false mismatches %v", mig.Mismatches)
+	}
+}

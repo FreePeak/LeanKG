@@ -117,6 +117,7 @@ type SyncResult struct {
 	Deleted         int        `json:"deleted"`
 	Skipped         int        `json:"skipped"`
 	DeletesWithheld bool       `json:"deletes_withheld"`
+	FailedProjects  []string   `json:"-"` // human summary only; JSON shows deletes_withheld and skipped
 	Banks           []SyncBank `json:"banks"`
 }
 
@@ -182,17 +183,19 @@ func syncPass(ctx context.Context, mem *memory.Memory, opts SyncOptions, after f
 	disc = scopeDiscovery(disc, opts.Projects, opts.OnlySlug)
 	projectOf := map[string]string{}
 	hashes, docs := desiredSet(disc.Docs, projectOf)
-	actual, err := actualSet(mem, projectOf, opts.OnlySlug)
+	rowSlug := map[Key]string{}
+	actual, err := actualSet(mem, projectOf, rowSlug, opts.OnlySlug)
 	if err != nil {
 		return res, syncState{}, err
 	}
-	plan := BuildPlan(hashes, actual, opts.Rebuild)
+	plan := withholdFailed(BuildPlan(hashes, actual, opts.Rebuild), rowSlug, disc.FailedSlugs)
 
 	res.Documents = len(disc.Docs)
 	res.Upserted = len(plan.Upserts)
 	res.Deleted = len(plan.Deletes)
 	res.Skipped = len(disc.Skipped)
 	res.DeletesWithheld = plan.DeletesWithheld
+	res.FailedProjects = append([]string{}, disc.FailedSlugs...)
 	res.Banks = bankSummary(actual, plan, projectOf)
 	st := syncState{disc: disc, desired: hashes, projectOf: projectOf}
 	if opts.DryRun {
@@ -219,6 +222,11 @@ func scopeDiscovery(disc Discovery, projectsRoot, slug string) Discovery {
 	for _, d := range disc.Docs {
 		if d.Slug == slug {
 			scoped.Docs = append(scoped.Docs, d)
+		}
+	}
+	for _, s := range disc.FailedSlugs {
+		if s == slug {
+			scoped.FailedSlugs = append(scoped.FailedSlugs, s)
 		}
 	}
 	for _, s := range disc.Skipped {
@@ -271,7 +279,8 @@ func desiredSet(docs []Doc, projectOf map[string]string) (map[Key]string, map[Ke
 // actualSet reads every row of every cc- bank. A row without a document id was
 // not written by sync and is left out of the diff. When onlySlug is set, rows
 // of other projects are left out too, so a scoped run never plans their deletion.
-func actualSet(mem *memory.Memory, projectOf map[string]string, onlySlug string) (map[Key]string, error) {
+// rowSlug receives the project slug stored on each row it returns.
+func actualSet(mem *memory.Memory, projectOf map[string]string, rowSlug map[Key]string, onlySlug string) (map[Key]string, error) {
 	banks, err := mem.Banks()
 	if err != nil {
 		return nil, err
@@ -297,11 +306,47 @@ func actualSet(mem *memory.Memory, projectOf map[string]string, onlySlug string)
 				continue
 			}
 			hash, _ := row.Metadata["source_hash"].(string)
-			actual[Key{Bank: bank, DocID: id}] = hash
+			key := Key{Bank: bank, DocID: id}
+			actual[key] = hash
+			rowSlug[key] = slug
 			noteProject(projectOf, bank, slug)
 		}
 	}
 	return actual, nil
+}
+
+// failedRows returns the keys of the rows that belong to a project whose scan
+// failed. Rows store the slug masked by memory.Redact, so the comparison is made
+// in that form, as the OnlySlug scope is.
+func failedRows(rowSlug map[Key]string, failed []string) map[Key]bool {
+	masked := make(map[string]bool, len(failed))
+	for _, slug := range failed {
+		masked[memory.Redact(slug)] = true
+	}
+	out := map[Key]bool{}
+	for key, slug := range rowSlug {
+		if masked[slug] {
+			out[key] = true
+		}
+	}
+	return out
+}
+
+// withholdFailed drops from plan.Deletes every row of a project whose scan
+// failed this run. The scan did not see those documents, so their absence says
+// nothing about them: the rows stay and the plan reports deletes withheld.
+func withholdFailed(plan Plan, rowSlug map[Key]string, failed []string) Plan {
+	held := failedRows(rowSlug, failed)
+	kept := plan.Deletes[:0]
+	for _, key := range plan.Deletes {
+		if held[key] {
+			plan.DeletesWithheld = true
+			continue
+		}
+		kept = append(kept, key)
+	}
+	plan.Deletes = kept
+	return plan
 }
 
 // noteProject records the project slug a project bank serves. The global bank
