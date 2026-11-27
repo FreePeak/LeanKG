@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"io"
 	"os"
@@ -613,5 +614,110 @@ func TestMemoryMigrateUnknownProjectExitsOne(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "no memory found for project -work-typo") {
 		t.Fatalf("stderr lacks the unknown-project message:\n%s", stderr)
+	}
+}
+
+// seedBankFixtures writes two bank files as JSONL, the way a bank written by
+// other tools looks. other-bank is a user's own bank: it holds a duplicate row
+// and a row that redaction rewrites (it names the test HOME). cc-global holds a
+// duplicate row that the post-run compaction must collapse. It returns the path
+// of other-bank.
+func seedBankFixtures(t *testing.T, central string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(central, "banks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	row := func(id, content string, ts int64) string {
+		b, err := json.Marshal(memory.Entry{ID: id, Content: content, Timestamp: ts})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b) + "\n"
+	}
+	foreign := filepath.Join(central, "banks", "other-bank.jsonl")
+	own := row("own-1", "team wiki index", 1) + row("own-2", "team wiki index", 2) +
+		row("own-3", "notes live in "+os.Getenv("HOME")+"/notes", 3)
+	if err := os.WriteFile(foreign, []byte(own), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cc := row("", "shared note", 1) + row("", "shared note", 2)
+	if err := os.WriteFile(filepath.Join(central, "banks", ccmemory.GlobalBank+".jsonl"), []byte(cc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return foreign
+}
+
+// readFileString returns the file's contents, failing the test on error.
+func readFileString(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// ccRowLines lists the sync-written rows (those with a document id) of the cc-
+// banks under central. The doc-less compaction probe rows are left out.
+func ccRowLines(t *testing.T, central string) []string {
+	t.Helper()
+	var out []string
+	for _, line := range bankRows(t, central) {
+		if strings.HasPrefix(line, "cc-") && len(strings.Fields(line)) == 3 {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func TestMemorySyncLeavesForeignBankByteIdentical(t *testing.T) {
+	central, projects := memorySyncEnv(t)
+	seedMemoryFixture(t, projects)
+	foreign := seedBankFixtures(t, central)
+	before := sha256.Sum256([]byte(readFileString(t, foreign)))
+
+	if code, out := runMemorySync(t, "--dry-run", "--json"); code != 0 {
+		t.Fatalf("dry-run exit = %d, want 0\n%s", code, out)
+	}
+	if after := sha256.Sum256([]byte(readFileString(t, foreign))); after != before {
+		t.Fatalf("dry run rewrote other-bank")
+	}
+
+	if code, out := runMemorySync(t, "--json"); code != 0 {
+		t.Fatalf("sync exit = %d, want 0\n%s", code, out)
+	}
+	if after := sha256.Sum256([]byte(readFileString(t, foreign))); after != before {
+		t.Fatalf("sync rewrote other-bank: sha256 %x, want %x", after, before)
+	}
+	if rows := ccRowLines(t, central); len(rows) != 3 {
+		t.Fatalf("cc- rows after sync = %d, want 3: %v", len(rows), rows)
+	}
+	if n := strings.Count(readFileString(t, filepath.Join(central, "banks", ccmemory.GlobalBank+".jsonl")), "shared note"); n != 1 {
+		t.Fatalf("cc-global holds %d shared-note rows after sync, want 1 (compaction ran on cc- banks)", n)
+	}
+}
+
+func TestMemoryMigrateLeavesForeignBankByteIdentical(t *testing.T) {
+	central, projects := memorySyncEnv(t)
+	seedMemoryFixture(t, projects)
+	foreign := seedBankFixtures(t, central)
+	before := sha256.Sum256([]byte(readFileString(t, foreign)))
+
+	if code, out := runMemoryMigrate(t, "--dry-run", "--json"); code != 0 {
+		t.Fatalf("dry-run exit = %d, want 0\n%s", code, out)
+	}
+	if after := sha256.Sum256([]byte(readFileString(t, foreign))); after != before {
+		t.Fatalf("migrate dry run rewrote other-bank")
+	}
+
+	code, out := runMemoryMigrate(t, "--json")
+	if code != 0 || !decodeMigrateResult(t, out).Verified {
+		t.Fatalf("migrate exit = %d, want 0 and verified\n%s", code, out)
+	}
+	if after := sha256.Sum256([]byte(readFileString(t, foreign))); after != before {
+		t.Fatalf("migrate rewrote other-bank: sha256 %x, want %x", after, before)
+	}
+	if rows := ccRowLines(t, central); len(rows) != 3 {
+		t.Fatalf("cc- rows after migrate = %d, want 3: %v", len(rows), rows)
 	}
 }

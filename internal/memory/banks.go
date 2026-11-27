@@ -584,10 +584,10 @@ func writeBankFile(path, content string) error {
 	return nil
 }
 
-// compactBanks rewrites every bank file under the memory root with its
-// duplicate rows collapsed. Callers hold no lock: each bank is compacted
-// under bankMu.
-func (m *Memory) compactBanks(ctx context.Context) error {
+// compactBanks rewrites every bank file under the memory root whose name starts
+// with prefix (every bank when prefix is empty) with its duplicate rows
+// collapsed. Callers hold no lock: each bank is compacted under bankMu.
+func (m *Memory) compactBanks(ctx context.Context, prefix string) error {
 	banks, err := os.ReadDir(filepath.Join(m.root, "banks"))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -603,6 +603,9 @@ func (m *Memory) compactBanks(ctx context.Context) error {
 			continue
 		}
 		bank := strings.TrimSuffix(b.Name(), ".jsonl")
+		if !strings.HasPrefix(bank, prefix) {
+			continue
+		}
 		m.bankMu.Lock()
 		_, err := m.compactBankLocked(ctx, bank)
 		m.bankMu.Unlock()

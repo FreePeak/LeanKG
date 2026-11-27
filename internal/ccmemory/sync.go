@@ -16,8 +16,8 @@ import (
 	"github.com/FreePeak/LeanKG/internal/memory"
 )
 
-// centralBankPrefix marks the only banks sync may ever plan writes against.
-const centralBankPrefix = "cc-"
+// CentralBankPrefix marks the only banks sync may ever plan writes against.
+const CentralBankPrefix = "cc-"
 
 // Key identifies one central memory row: the bank it lives in and its document id.
 type Key struct {
@@ -67,7 +67,7 @@ func BuildPlan(desired, actual map[Key]string, rebuild bool) Plan {
 func centralOnly(actual map[Key]string) map[Key]string {
 	out := make(map[Key]string, len(actual))
 	for key, hash := range actual {
-		if strings.HasPrefix(key.Bank, centralBankPrefix) {
+		if strings.HasPrefix(key.Bank, CentralBankPrefix) {
 			out[key] = hash
 		}
 	}
@@ -280,7 +280,7 @@ func actualSet(mem *memory.Memory, projectOf map[string]string, onlySlug string)
 	// Rows store the slug masked by memory.Redact, so the scope is matched in that form.
 	scope := memory.Redact(onlySlug)
 	for _, bank := range banks {
-		if !strings.HasPrefix(bank, centralBankPrefix) {
+		if !strings.HasPrefix(bank, CentralBankPrefix) {
 			continue
 		}
 		rows, _, err := mem.List(bank, 0, 0)

@@ -174,7 +174,7 @@ func runOnCentral(ctx context.Context, home string, dryRun bool, run func(*memor
 	if err := run(mem); err != nil || dryRun {
 		return central, err
 	}
-	return central, mem.Compact(ctx)
+	return central, mem.CompactPrefix(ctx, ccmemory.CentralBankPrefix)
 }
 
 func printMemorySyncSummary(res ccmemory.SyncResult, dryRun bool) {
