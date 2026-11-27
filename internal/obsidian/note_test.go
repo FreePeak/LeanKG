@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/mdmeta"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -255,7 +256,7 @@ func TestPushWritesNotesForStoreElements(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read note: %v", err)
 	}
-	meta, _ := splitFrontmatter(string(content))
+	meta, _ := mdmeta.SplitFrontmatter(string(content))
 	for _, key := range []string{"created", "updated"} {
 		if v := meta[key]; len(v) != len("2026-09-12T10:00:00Z") || !strings.HasSuffix(v, "Z") {
 			t.Fatalf("%s = %q, want an RFC3339 UTC stamp", key, v)
