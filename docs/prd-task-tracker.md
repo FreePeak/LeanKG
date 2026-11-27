@@ -85,6 +85,7 @@ Plan, decisions and task breakdown: [`docs/plan-central-agent-memory.md`](plan-c
 | CAM-09 | Sync plan (pure diff) | **TODO** | Plan §12 (CAM-09); module `cc-sync` |
 | CAM-10 | Sync apply against a real memory root | **TODO** | Plan §12 (CAM-10); module `cc-sync` |
 | CAM-11 | `leankg memory sync` | **TODO** | Plan §12 (CAM-11); module `cc-sync` |
+| CAM-20 | `leankg memory migrate` (one verified, idempotent, non-destructive run) | **TODO** | Plan §12 (CAM-20); module `cc-sync` |
 | CAM-12 | Scoped recall function | **TODO** | Plan §12 (CAM-12); module `agent-recall` |
 | CAM-13 | `agent_recall` in the core dispatcher | **TODO** | Plan §12 (CAM-13); module `agent-recall` |
 | CAM-14 | MCP routing, schema text and serve wiring | **TODO** | Plan §12 (CAM-14); module `agent-recall` |

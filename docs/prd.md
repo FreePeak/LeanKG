@@ -10,9 +10,9 @@
 
 ## Changelog
 
-### central-agent-memory - memories shared across repositories, derived from Claude Code's files (CAM-00..CAM-19) (2026-11-27)
+### central-agent-memory - memories shared across repositories, derived from Claude Code's files (CAM-00..CAM-20) (2026-11-27)
 
-**Requirement (CAM-00..CAM-19).** A `user` or `feedback` memory written in one repository is recallable from, and injected into, a session in any other repository. `project` and `reference` memories stay repository-scoped unless a caller asks for all memories. Claude Code's memory files stay canonical: LeanKG keeps a derived, one-way, idempotent copy in `cc-` banks, synced at `SessionStart`. The hook fails open, a deny-list masks secrets and user-listed patterns before any store write, and the MCP surface stays at four tools. Plan, decisions and task breakdown: `docs/plan-central-agent-memory.md`.
+**Requirement (CAM-00..CAM-20).** A `user` or `feedback` memory written in one repository is recallable from, and injected into, a session in any other repository. `project` and `reference` memories stay repository-scoped unless a caller asks for all memories. Claude Code's memory files stay canonical: LeanKG keeps a derived, one-way, idempotent copy in `cc-` banks, synced at `SessionStart`. The hook fails open, a deny-list masks secrets and user-listed patterns before any store write, and the MCP surface stays at four tools. Plan, decisions and task breakdown: `docs/plan-central-agent-memory.md`.
 
 **Status.** Planned; no code yet. Assumptions A2 and A3 are verified on a real install (2026-11-27); A6 is not. Tracker rows are in `docs/prd-task-tracker.md` under `central-agent-memory`.
 

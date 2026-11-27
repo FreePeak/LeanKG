@@ -3,7 +3,7 @@
 **Status:** Draft
 **Date:** 2026-11-27
 **Owner:** maintainer
-**Tracks:** `CAM-00..CAM-19` (rows to be added to `docs/prd-task-tracker.md` by CAM-01; the prefix does not occur under `docs/` today)
+**Tracks:** `CAM-00..CAM-20` (rows to be added to `docs/prd-task-tracker.md` by CAM-01; the prefix does not occur under `docs/` today)
 **Evidence pin:** every `file:line` below was read first-hand from the checkout of `origin/main` reported as commit `15221142` (the commit id itself is UNVERIFIED by this document; re-pin if `main` has moved).
 
 This is the working plan for one wave. When the wave lands, its outcome moves into the PRD changelog and this file is archived under `docs/archive/` (same convention as `docs/plan-dashboard.md:6`).
@@ -31,6 +31,7 @@ Claude Code keeps auto-memory per repository under `~/.claude/projects/<project-
 | G4 | A session start never fails or stalls because LeanKG is absent, slow or broken. |
 | G5 | Secrets and user-listed patterns never reach the central store. |
 | G6 | The MCP surface stays at exactly four tools. |
+| G7 | A developer can migrate all existing Claude Code memory into LeanKG in one verified, idempotent, non-destructive command (`leankg memory migrate`). |
 
 ### 1.4 Non-goals
 
@@ -173,7 +174,7 @@ See section 6.7. Not built until OQ-1 is answered.
 | `cc-source` | Locate Claude Code memory directories, parse one file into a document, derive project keys, bank names and document ids. Pure, no writes. | none |
 | `mem-scrub` | User deny-list applied inside the memory layer's redaction function. | none |
 | `mem-bank-ops` | Two small extensions of the memory package: batch document delete, and an injection entry point that takes explicit banks, a filter and a budget. | none |
-| `cc-sync` | Diff source documents against the central banks and apply the result; cross-process lock; `leankg memory sync`. | `cc-source`, `mem-scrub`, `mem-bank-ops` |
+| `cc-sync` | Diff source documents against the central banks and apply the result; cross-process lock; `leankg memory sync`; `leankg memory migrate` (one verified sync run, section 6.4a). | `cc-source`, `mem-scrub`, `mem-bank-ops` |
 | `agent-recall` | Scoped, ranked recall over the central banks; the `agent_recall` MCP command; `leankg memory recall`; central-root handle for the server. | `cc-source`, `mem-bank-ops` |
 | `cc-hook` | `leankg memory hook` (bounded sync, then injection, always exit 0); hook registration; telemetry from the CLI paths. | `cc-sync`, `mem-bank-ops` |
 | `team-store` (gated on OQ-1) | Store-backed memory table on both engines, owner column, remote push. | `cc-sync`, `agent-recall` |
@@ -329,6 +330,31 @@ JSON result: `{"root", "projects", "documents", "upserted", "deleted", "skipped"
 | Lock held (hook mode) | Sync step skipped; injection proceeds from the stored rows. |
 | Embedding provider absent | Irrelevant: sync never embeds. Vectors are created lazily at recall. |
 | Crash mid-run | Bank rewrites are temp-file-then-rename (`banks.go:560-572`); the next run re-plans from the files. |
+
+### 6.4a `leankg memory migrate`
+
+**Scope.** One explicit, verified run that moves all existing Claude Code memory into the central file-backed memory root. It is a thin wrapper over the section 6.4 sync apply: same code path, no second implementation.
+
+**Storage meaning.** "Storage" here is the central file-backed memory root (KD-2). Migrating into a Postgres-backed table remains the gated `team-store` scope (section 6.7).
+
+**CLI.**
+
+`leankg memory migrate [--project SLUG] [--dry-run] [--json]`
+
+**Steps.**
+
+1. Inventory: projects found, files per kind, how many documents go to `cc-global` and how many to project banks, and skipped files with reasons (over 64 KiB, symlink leaving the root, unreadable).
+2. Apply through the sync path. It honours the deny-list and the withheld-deletes rule, and it never deletes on a missing or empty scan. `--project SLUG` limits the run to one project slug.
+3. Verify: for every bank, rows equal the desired documents. Any mismatch exits 1 and is listed.
+4. Report the inventory, the slug-to-bank map and the verification result.
+
+**Behavior rules.**
+
+- Source files are never modified.
+- Re-running is idempotent and produces the same result as a normal `leankg memory sync`.
+- `--dry-run` prints the inventory and the plan and writes nothing.
+
+**JSON result.** `{"root","projects":[{"slug","bank","files","global","skipped"}],"documents","upserted","skipped","verified":true|false,"mismatches":[]}`. Exit 0 when verified, 1 otherwise.
 
 ### 6.5 `agent-recall`
 
@@ -502,8 +528,9 @@ All paths are placeholders.
 1. Build or install the binary: `<leankg-binary>`.
 2. First sync: `<leankg-binary> memory sync`. This creates `~/.leankg/memory` if needed.
 3. Optional deny-list: create `~/.leankg/memory/scrub.txt`, one regular expression per line.
-4. Register the hook: `<leankg-binary> install --target claude --register-memory`, or add the snippet in 7.2 by hand.
-5. Optional, for on-demand recall: register the MCP server (7.4).
+4. Migrate existing memory: `<leankg-binary> memory migrate --dry-run`, then `<leankg-binary> memory migrate`. Run it after the deny-list so secrets are masked on the way in.
+5. Register the hook: `<leankg-binary> install --target claude --register-memory`, or add the snippet in 7.2 by hand.
+6. Optional, for on-demand recall: register the MCP server (7.4).
 
 ### 7.2 Hook snippet (`~/.claude/settings.json`)
 
@@ -730,6 +757,12 @@ Slices are ordered. Each is one commit. CAM-00 has no code.
   - Verify: `go test ./cmd/leankg/ -run TestMemorySync -count=1`
   - Files: `cmd/leankg/memoryverbs.go`, `cmd/leankg/memoryverbs_test.go`, `cmd/leankg/main.go`
 
+- [ ] Task: CAM-20 `leankg memory migrate`
+  - Module: `cc-sync`
+  - Acceptance: `--dry-run` writes nothing and prints the inventory; a real run produces rows equal to the files of each bank and `verified` is true; `--project` limits the scope to one slug; a planted mismatch (a test hook that removes one row) gives exit 1 and lists the mismatch; the source tree bytes are unchanged before and after; a second run changes nothing; the run works with the deny-list present.
+  - Verify: `go test ./cmd/leankg/ -run TestMemoryMigrate -count=1`
+  - Files: `cmd/leankg/memoryverbs.go`, `cmd/leankg/memoryverbs_test.go`, `internal/ccmemory/migrate.go`, `internal/ccmemory/migrate_test.go`
+
 - [ ] Task: CAM-12 Scoped recall function
   - Module: `agent-recall`
   - Acceptance: from repository B, a `feedback` memory written in repository A is returned under `project` and `global`; A's `project` memory is returned only under `all`; `types` narrows before the limit; two identical global memories from two repositories are returned once; an unknown scope or type is an error naming the valid values; a caller with no project bank gets global rows and an empty `project`.
@@ -816,7 +849,7 @@ Gated, not to be started before OQ-1 is answered: `team-store` slices (migration
 ### 13.3 Rollout and migration
 
 1. Everything is opt-in: no behavior changes until the user runs the sync or registers the hook.
-2. Order: land CAM-02 to CAM-11 (sync usable by hand), then CAM-12 to CAM-15 (recall), then CAM-16 to CAM-18 (hook).
+2. Order: land CAM-02 to CAM-11 (sync usable by hand) and CAM-20 (migrate) in the same sync wave, right after CAM-11; then CAM-12 to CAM-15 (recall), then CAM-16 to CAM-18 (hook).
 3. No data migration. The first sync is the initial load.
 4. Rollback: remove the hook entry from `~/.claude/settings.json`; optionally delete the `cc-` bank files under the central root. Claude Code's files are never touched.
 5. Upgrades that change the row format bump the render version inside `source_hash`, so the next sync rewrites every row with no manual step.
