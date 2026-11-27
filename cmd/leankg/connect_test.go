@@ -728,3 +728,133 @@ func TestWriteClientCodexEmptyExeFallsBack(t *testing.T) {
 		t.Fatalf("codex section:\ngot:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+// TestRegisterMemoryCreatesHook pins the fresh-settings.json shape: one
+// synchronous command hook with timeout 10 and no matcher key.
+func TestRegisterMemoryCreatesHook(t *testing.T) {
+	home := t.TempDir()
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	got := readJSON(t, filepath.Join(home, ".claude", "settings.json"))
+	want := map[string]any{
+		"hooks": map[string]any{
+			"SessionStart": []any{
+				map[string]any{
+					"hooks": []any{
+						map[string]any{"type": "command", "command": testExe + " memory hook", "timeout": float64(10)},
+					},
+				},
+			},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got  %#v\nwant %#v", got, want)
+	}
+}
+
+// TestRegisterMemoryPreservesSettingsAndIndexHook: unrelated keys, other hook
+// events, and the index hook already present all survive; the memory entry is
+// appended beside the index entry.
+func TestRegisterMemoryPreservesSettingsAndIndexHook(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeed(t, path, `{"model":"opus","hooks":{"Stop":[{"hooks":[]}]}}`)
+	if err := RegisterCWD(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	got := readJSON(t, path)
+	if got["model"] != "opus" {
+		t.Fatalf("model setting lost: %#v", got)
+	}
+	hooks := got["hooks"].(map[string]any)
+	if _, ok := hooks["Stop"]; !ok {
+		t.Fatalf("Stop hooks lost: %#v", hooks)
+	}
+	ss := hooks["SessionStart"].([]any)
+	if len(ss) != 2 {
+		t.Fatalf("SessionStart entries = %d, want 2 (index + memory): %#v", len(ss), ss)
+	}
+	index := ss[0].(map[string]any)
+	if index["matcher"] != "startup|resume" {
+		t.Fatalf("index entry changed: %#v", index)
+	}
+	memory := ss[1].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	if memory["command"] != testExe+" memory hook" {
+		t.Fatalf("memory command = %v", memory["command"])
+	}
+}
+
+// TestRegisterMemoryIdempotent: a second run leaves the file byte-identical.
+func TestRegisterMemoryIdempotent(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("second run changed bytes\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+}
+
+// TestRegisterMemoryKeepsForeignSessionStartEntries: a SessionStart entry
+// with a matcher and a foreign command is left as it is.
+func TestRegisterMemoryKeepsForeignSessionStartEntries(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeed(t, path, `{"hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"echo hi"}]}]}}`)
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	ss := readJSON(t, path)["hooks"].(map[string]any)["SessionStart"].([]any)
+	if len(ss) != 2 {
+		t.Fatalf("SessionStart entries = %d, want 2: %#v", len(ss), ss)
+	}
+	foreign := ss[0].(map[string]any)
+	if foreign["matcher"] != "startup" {
+		t.Fatalf("foreign entry changed: %#v", foreign)
+	}
+}
+
+// TestRegisterMemoryReplacesStaleBinaryPath: an earlier memory entry under a
+// different binary path is recognised by its ` memory hook` suffix and
+// replaced in place, so exactly one memory entry remains.
+func TestRegisterMemoryReplacesStaleBinaryPath(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeed(t, path, `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/old/leankg memory hook","timeout":10}]}]}}`)
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	ss := readJSON(t, path)["hooks"].(map[string]any)["SessionStart"].([]any)
+	if len(ss) != 1 {
+		t.Fatalf("SessionStart entries = %d, want 1: %#v", len(ss), ss)
+	}
+	hook := ss[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	if hook["command"] != testExe+" memory hook" {
+		t.Fatalf("command = %v, want %s", hook["command"], testExe+" memory hook")
+	}
+}
+
+// TestRegisterMemoryUnsupportedClient: only claude-code has a hook mechanism.
+func TestRegisterMemoryUnsupportedClient(t *testing.T) {
+	for _, c := range []string{ClientCursor, ClientCodex, ClientGemini, ClientOpencode, ClientOmp} {
+		if err := RegisterMemory(t.TempDir(), c, ""); !errors.Is(err, ErrUnsupportedClient) {
+			t.Fatalf("%s: err = %v, want ErrUnsupportedClient", c, err)
+		}
+	}
+}

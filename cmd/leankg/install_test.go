@@ -275,3 +275,57 @@ func TestInstallXdevAllModes(t *testing.T) {
 		})
 	}
 }
+
+// TestInstallRegisterMemoryWritesHook: --register-memory chains the memory
+// SessionStart hook after the MCP config write, with HOME and CLAUDE_CONFIG_DIR
+// pinned to temp dirs so the real ~/.claude/settings.json is never touched.
+func TestInstallRegisterMemoryWritesHook(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	if err := Install(home, ClientClaudeCode, InstallOptions{RegisterMemory: true}); err != nil {
+		t.Fatal(err)
+	}
+	settings := readJSON(t, filepath.Join(home, ".claude", "settings.json"))
+	ss := settings["hooks"].(map[string]any)["SessionStart"].([]any)
+	if len(ss) != 1 {
+		t.Fatalf("SessionStart entries = %d, want 1: %#v", len(ss), ss)
+	}
+	hook := ss[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	if hook["command"] != CurrentCommand()+" memory hook" {
+		t.Fatalf("command = %v, want %s", hook["command"], CurrentCommand()+" memory hook")
+	}
+}
+
+// TestInstallRegisterMemoryUnsupported: --register-memory on a client without
+// a hook mechanism surfaces ErrUnsupportedClient after the config write.
+func TestInstallRegisterMemoryUnsupported(t *testing.T) {
+	err := Install(t.TempDir(), ClientCursor, InstallOptions{RegisterMemory: true})
+	if err == nil || !strings.Contains(err.Error(), ErrUnsupportedClient.Error()) {
+		t.Fatalf("err = %v, want ErrUnsupportedClient", err)
+	}
+}
+
+// TestInstallRegisterMemoryIdempotent: a second install run leaves the
+// settings file byte-identical.
+func TestInstallRegisterMemoryIdempotent(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	if err := Install(home, ClientClaudeCode, InstallOptions{RegisterMemory: true}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Install(home, ClientClaudeCode, InstallOptions{RegisterMemory: true}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("re-run changed bytes\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+}
