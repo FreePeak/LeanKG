@@ -59,11 +59,11 @@ func ResolveHookDir(stdin []byte, projectDir, wd string) string {
 	return filepath.Clean(wd)
 }
 
-// RunHook is one SessionStart run (plan 6.6). It syncs the cc- banks when that
-// is due and the lock is free, then writes the cross-repository block for
-// opts.CallerDir to opts.Stdout. Nothing is written to stdout unless there is a
-// block. Each failure is one line on opts.Stderr and the run goes on, so the
-// caller always exits 0.
+// RunHook is one SessionStart run (plan 6.6). It syncs the cc- banks at every
+// session start, unless another sync holds the lock, then writes the
+// cross-repository block for opts.CallerDir to opts.Stdout. Nothing is written to
+// stdout unless there is a block. Each failure is one line on opts.Stderr and the
+// run goes on, so the caller always exits 0.
 func RunHook(ctx context.Context, opts HookOptions) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -101,8 +101,9 @@ func RunHook(ctx context.Context, opts HookOptions) {
 	}
 }
 
-// syncForHook runs the sync step when it is due and returns the central memory
-// it opened, or nil when it opened none. A sync problem is printed here and the
+// syncForHook runs the sync step at every session start, with hookSyncBudget
+// checked between banks, and returns the central memory it opened, or nil when
+// it opened none. A sync problem is printed here and the
 // run goes on from the stored rows. Only a failure to open the central memory
 // is returned, because the injection cannot read it either.
 func syncForHook(ctx context.Context, opts HookOptions) (*memory.Memory, error) {

@@ -186,7 +186,7 @@ It waits for a sync that is already running.
 
 | Flag | Meaning |
 | --- | --- |
-| `--dry-run` | Print the plan; write nothing. Does not create the central root. |
+| `--dry-run` | Print the plan; change no bank. On a missing central root it works in a temporary directory that it removes, so the root is not created. |
 | `--rebuild` | Delete every `cc-` row, then sync from scratch. The only way to delete when the scan is empty. |
 | `--json` | Print the result as JSON. |
 
@@ -214,9 +214,9 @@ an unreadable central root).
 
 ### memory migrate
 
-One explicit run that moves all existing Claude Code memory into the central
-root. It runs the same apply path as `memory sync`, then verifies that every
-bank holds exactly the desired rows.
+One explicit run that copies all existing Claude Code memory into the central
+root. The Claude Code files are read, never modified. It runs the same apply path
+as `memory sync`, then verifies that every bank holds exactly the desired rows.
 
 | Flag | Meaning |
 | --- | --- |
@@ -278,7 +278,7 @@ JSON result (also the `agent_recall` result shape):
 Exit codes: 0 on success (including no match), 2 when no query is given (the
 usage error), 1 on other errors. An unknown `--scope` exits 1 and lists the
 valid scopes. When the central root has no index yet, it exits 1 with
-`run leankg memory sync once`.
+`` run `leankg memory sync` once ``.
 
 ### memory hook
 
@@ -286,22 +286,25 @@ The `SessionStart` hook. It reads the hook JSON on stdin (`cwd` is used; stdin
 is waited for at most 500 ms). Without a usable `cwd` it falls back to
 `CLAUDE_PROJECT_DIR`, then to the working directory.
 
-1. Sync the `cc-` banks when due. The sync takes a non-waiting lock; when another
-   sync holds it, the sync step is skipped and the stored rows are used.
+1. Sync the `cc-` banks at every session start. The sync takes a non-waiting
+   lock; when another sync holds it, the sync step is skipped and the stored rows
+   are used. The sync has a 2 s budget, checked between banks.
 2. Print the cross-repository block for the caller: one context line, the
-   newest `user` and `feedback` memories saved by other repositories (at most 8
-   entries and about 1,500 tokens), and one hint line that names `args.cwd`.
+   newest `user` and `feedback` memories saved by other repositories as one line
+   each (at most 30 lines and about 1,500 tokens), and one hint line that names
+   `args.cwd`.
 
 Nothing is printed when there is nothing to inject. The process always exits 0.
-Each failure is one line on stderr. The run has a 3 s deadline inside the
-process; `settings.json` allows 10 s.
+A failure writes at most a couple of lines on stderr. The run has a 3 s deadline
+inside the process; `settings.json` allows 10 s.
 
 ### install --register-memory
 
 `leankg install --target claude-code --register-memory` writes the leankg MCP
 entry (as `install` always does) and merges one `SessionStart` command hook
-(`<leankg-binary> memory hook`, `timeout` 10, no matcher) into
-`~/.claude/settings.json`. Other hooks are preserved, and a second run changes
+(`<leankg-binary> memory hook`, `timeout` 10, no matcher) into the Claude Code
+settings file: `$CLAUDE_CONFIG_DIR/settings.json` when `CLAUDE_CONFIG_DIR` is
+set, else `~/.claude/settings.json`. Other hooks are preserved, and a second run changes
 nothing. Only `claude-code` accepts the flag; any other target fails with an
 error before anything is written. The target name is `claude-code`, not
 `claude`, which the command rejects as unknown.
@@ -309,10 +312,11 @@ error before anything is written. The target name is `claude-code`, not
 ### Safety
 
 - The memory verbs read `~/.claude/projects` and write only under the central
-  root `~/.leankg/memory` (`GlobalRoot`). They never write into `~/.claude`.
-- `install --register-memory` writes exactly one hook entry into
-  `~/.claude/settings.json`, and the MCP entry that `install` always writes
-  into `~/.claude.json`.
+  root `~/.leankg/memory` (`GlobalRoot`). A dry run on a missing central root
+  writes only to a temporary directory it removes. They never write into `~/.claude`.
+- `install --register-memory` writes exactly one hook entry into the Claude Code
+  settings file (`$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json`),
+  and the MCP entry that `install` always writes into `~/.claude.json`.
 - Deletes are withheld when the projects root is missing or holds no memory
   files while central rows exist. The run reports `deletes_withheld: true` and
   deletes nothing. `--rebuild` is the only way to clear those rows.
