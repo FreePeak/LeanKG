@@ -310,6 +310,7 @@ func TestInstallRegisterMemoryUnsupported(t *testing.T) {
 // settings file byte-identical.
 func TestInstallRegisterMemoryIdempotent(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	path := filepath.Join(home, ".claude", "settings.json")
 	if err := Install(home, ClientClaudeCode, InstallOptions{RegisterMemory: true}); err != nil {
 		t.Fatal(err)
@@ -327,5 +328,21 @@ func TestInstallRegisterMemoryIdempotent(t *testing.T) {
 	}
 	if string(first) != string(second) {
 		t.Fatalf("re-run changed bytes\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+}
+
+// TestInstallRegisterMemoryRejectsNonObjectSettings: the install path reports the
+// settings error and leaves the settings file byte-identical.
+func TestInstallRegisterMemoryRejectsNonObjectSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeed(t, path, "null\n")
+	err := Install(home, ClientClaudeCode, InstallOptions{RegisterMemory: true})
+	if err == nil || !strings.Contains(err.Error(), "settings file is not a JSON object") {
+		t.Fatalf("err = %v, want the settings file is not a JSON object error", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "null\n" {
+		t.Fatalf("settings changed to %q", got)
 	}
 }

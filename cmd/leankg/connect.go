@@ -21,6 +21,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/FreePeak/LeanKG/internal/sessionlink/claudecode"
 )
 
 // serverKey is the key this tool owns inside a client's MCP server map.
@@ -248,7 +250,8 @@ func absolutize(p string) string {
 
 // readJSONConfig reads a JSON config; a missing file reads as an empty map
 // so a fresh machine gets a minimal valid config. Existing-but-invalid JSON
-// is an error — a broken user config is never clobbered silently.
+// is an error — a broken user config is never clobbered silently — and so is
+// valid JSON that is not an object (null, an array, a scalar).
 func readJSONConfig(path string) (map[string]any, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -257,9 +260,13 @@ func readJSONConfig(path string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var root map[string]any
-	if err := json.Unmarshal(data, &root); err != nil {
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
 		return nil, fmt.Errorf("%s: not valid JSON: %w", path, err)
+	}
+	root, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s: settings file is not a JSON object", path)
 	}
 	return root, nil
 }
@@ -296,11 +303,16 @@ func writeJSONFile(path string, root map[string]any) error {
 	return atomicWrite(path, buf.Bytes())
 }
 
-// atomicWrite writes data via a temp sibling then renames over path.
+// atomicWrite writes data via a temp sibling then renames over path. A file that
+// already exists keeps its mode; a new file gets 0644.
 func atomicWrite(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
+	}
+	mode := os.FileMode(0o644)
+	if fi, err := os.Stat(path); err == nil {
+		mode = fi.Mode().Perm()
 	}
 	tmp, err := os.CreateTemp(dir, ".leankg-*")
 	if err != nil {
@@ -316,7 +328,7 @@ func atomicWrite(path string, data []byte) error {
 		os.Remove(name)
 		return err
 	}
-	if err := os.Chmod(name, 0o644); err != nil {
+	if err := os.Chmod(name, mode); err != nil {
 		os.Remove(name)
 		return err
 	}
@@ -468,19 +480,30 @@ func hookCommand(exe string) string {
 
 // owns reports whether cmd is a hook this spec manages: the command it writes
 // now (also when the executable path holds whitespace), or a generated command
-// in any suffix form. An executable token with no whitespace followed by a
-// suffix is generated; anything with extra tokens is user-customised and never
-// matched.
+// in any suffix form. A generated command names the leankg binary: a
+// whitespace-free executable whose base name is leankg (or leankg.exe) followed
+// by a suffix. Anything else, including another tool's ` memory hook`, is the
+// user's own wiring and is never matched.
 func (h sessionHook) owns(cmd, command string) bool {
 	if cmd == command {
 		return true
 	}
 	for _, suffix := range h.suffixes {
-		if exe, ok := strings.CutSuffix(cmd, suffix); ok && exe != "" && !strings.ContainsAny(exe, " \t\r\n") {
+		if exe, ok := strings.CutSuffix(cmd, suffix); ok && isLeankgBinary(exe) {
 			return true
 		}
 	}
 	return false
+}
+
+// isLeankgBinary reports whether exe is a whitespace-free path whose base name
+// is leankg or leankg.exe.
+func isLeankgBinary(exe string) bool {
+	if exe == "" || strings.ContainsAny(exe, " \t\r\n") {
+		return false
+	}
+	base := filepath.Base(exe)
+	return base == "leankg" || base == "leankg.exe"
 }
 
 // entry is the SessionStart entry the spec writes for exe.
@@ -571,7 +594,8 @@ func (h sessionHook) withoutOwned(obj map[string]any, command string) (map[strin
 }
 
 // registerSessionHook is the one SessionStart merge both hooks use. It
-// merges-or-creates h under hooks.SessionStart in <homeDir>/.claude/settings.json,
+// merges-or-creates h under hooks.SessionStart in the Claude Code settings.json
+// (claudecode.ConfigDir: $CLAUDE_CONFIG_DIR, else <homeDir>/.claude),
 // preserving every other hook and setting. Idempotent: when that entry is
 // already the only managed hook present the file is left untouched. Generated
 // entries (the current or a legacy command form, duplicates included) are
@@ -584,7 +608,7 @@ func registerSessionHook(homeDir, client, label string, h sessionHook, exe strin
 	if client != ClientClaudeCode {
 		return fmt.Errorf("%s for %s: %w", label, client, ErrUnsupportedClient)
 	}
-	path := filepath.Join(homeDir, ".claude", "settings.json")
+	path := filepath.Join(claudecode.ConfigDir(homeDir), "settings.json")
 	root, err := readJSONConfig(path)
 	if err != nil {
 		return err
