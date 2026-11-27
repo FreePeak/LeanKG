@@ -87,7 +87,7 @@ func Recall(ctx context.Context, mem *memory.Memory, req RecallRequest) (RecallR
 	if err != nil {
 		return RecallResult{}, err
 	}
-	central := slices.DeleteFunc(all, func(b string) bool { return !strings.HasPrefix(b, centralBankPrefix) })
+	central := slices.DeleteFunc(all, func(b string) bool { return !strings.HasPrefix(b, CentralBankPrefix) })
 	if len(central) == 0 {
 		return RecallResult{}, errors.New("ccmemory: recall: no central memory banks; run `leankg memory sync` first")
 	}

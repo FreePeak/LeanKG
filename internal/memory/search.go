@@ -211,7 +211,10 @@ type SpaceReport struct {
 //
 // Safe on a live memory: it takes this handle's own write connection (one per
 // Memory, MaxOpenConns(1)) and no other.
-func (m *Memory) Compact(ctx context.Context) error {
+//
+// Only the bank files whose name starts with prefix are rewritten; an empty
+// prefix rewrites every bank. The index work is the same either way.
+func (m *Memory) CompactPrefix(ctx context.Context, prefix string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -237,7 +240,7 @@ func (m *Memory) Compact(ctx context.Context) error {
 	// forever (measured: the live bank grew ~88.6 KB/day, ~45 rows/day,
 	// 448 rows for 304 distinct bodies), so the bank files are rewritten
 	// here too — crash-safely, and with no row lost.
-	if err := m.compactBanks(ctx); err != nil {
+	if err := m.compactBanks(ctx, prefix); err != nil {
 		return fmt.Errorf("memory: compact banks: %w", err)
 	}
 	// The stale vector collections go with them: a collection under a model
@@ -251,6 +254,11 @@ func (m *Memory) Compact(ctx context.Context) error {
 		return fmt.Errorf("memory: wal_checkpoint(TRUNCATE): %w", err)
 	}
 	return nil
+}
+
+// Compact is CompactPrefix over every bank: the maintenance sweep's pass.
+func (m *Memory) Compact(ctx context.Context) error {
+	return m.CompactPrefix(ctx, "")
 }
 
 // Space reports the FTS side index's footprint. Like store.Space it is a

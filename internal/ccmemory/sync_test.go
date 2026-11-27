@@ -775,3 +775,37 @@ func TestApplyCancelledContextWritesNothing(t *testing.T) {
 		t.Errorf("a cancelled run wrote banks: %v", banks)
 	}
 }
+
+// TestApplyPostRunCompactionLeavesForeignBankAlone runs the steps a real memory
+// verb runs: sync, migrate, then the post-run compaction limited to the central
+// prefix. A bank outside that prefix must stay byte-identical.
+func TestApplyPostRunCompactionLeavesForeignBankAlone(t *testing.T) {
+	projects, mem := applySetup(t)
+	foreign := filepath.Join(mem.Root(), "banks", "other-bank.jsonl")
+	if err := os.MkdirAll(filepath.Dir(foreign), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home := os.Getenv("HOME")
+	before := `{"id":"own-1","content":"team wiki index","timestamp":1}` + "\n" +
+		`{"id":"own-2","content":"team wiki index","timestamp":2}` + "\n" +
+		`{"id":"own-3","content":"notes live in ` + home + `/notes","timestamp":3}` + "\n"
+	if err := os.WriteFile(foreign, []byte(before), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runSync(t, mem, syncOpts(projects, mem))
+	if res := runMigrate(t, mem, migrateOpts(projects, mem)); !res.Verified {
+		t.Fatalf("Migrate did not verify: %+v", res.Mismatches)
+	}
+	if err := mem.CompactPrefix(context.Background(), CentralBankPrefix); err != nil {
+		t.Fatalf("CompactPrefix: %v", err)
+	}
+
+	after, err := os.ReadFile(foreign)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != before {
+		t.Fatalf("post-run compaction rewrote a foreign bank:\nbefore: %q\nafter:  %q", before, after)
+	}
+}
