@@ -144,12 +144,27 @@ const renderVersion = "cc-row-v1"
 const claudeCodeSource = "claude-code-memory"
 
 // Sync makes the cc- banks under mem equal to the memory files under
-// opts.Projects. It takes the sync lock, installs the deny-list, plans against
+// opts.Projects. It installs the deny-list, takes the sync lock, plans against
 // the stored rows and applies one retain and one delete per bank. A cancelled
 // ctx stops between banks; each bank's batch is complete or absent.
 func Sync(ctx context.Context, mem *memory.Memory, opts SyncOptions) (SyncResult, error) {
+	if err := installDenyList(opts.CentralRoot); err != nil {
+		return SyncResult{Root: opts.CentralRoot, Projects: opts.Projects}, err
+	}
 	res, _, err := syncPass(ctx, mem, opts, nil)
 	return res, err
+}
+
+// installDenyList loads the central deny-list and installs it process-wide.
+// Every read and write of a sync or migrate run is masked by it, so the callers
+// install it before they read the central root.
+func installDenyList(central string) error {
+	patterns, digest, err := memory.LoadScrubFile(filepath.Join(central, scrubFile))
+	if err != nil {
+		return err
+	}
+	memory.SetScrubPatterns(patterns, digest)
+	return nil
 }
 
 // syncState is what one sync pass read: the discovery limited to the scope,
@@ -160,8 +175,9 @@ type syncState struct {
 	projectOf map[string]string
 }
 
-// syncPass is Sync. Once the plan is applied it compacts the cc- banks and then
-// runs after, when not nil, both under the lock and not on a dry run.
+// syncPass is Sync, without the deny-list install, which the caller has done.
+// Once the plan is applied it compacts the cc- banks and then runs after, when
+// not nil, both under the lock and not on a dry run.
 func syncPass(ctx context.Context, mem *memory.Memory, opts SyncOptions, after func(syncState) error) (SyncResult, syncState, error) {
 	res := SyncResult{Root: opts.CentralRoot, Projects: opts.Projects}
 	if err := ctx.Err(); err != nil {
@@ -175,12 +191,6 @@ func syncPass(ctx context.Context, mem *memory.Memory, opts SyncOptions, after f
 		}
 		defer release()
 	}
-
-	patterns, digest, err := memory.LoadScrubFile(filepath.Join(opts.CentralRoot, scrubFile))
-	if err != nil {
-		return res, syncState{}, err
-	}
-	memory.SetScrubPatterns(patterns, digest)
 
 	disc, err := Discover(opts.Projects)
 	if err != nil {

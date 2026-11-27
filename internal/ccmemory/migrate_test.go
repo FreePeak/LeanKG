@@ -243,3 +243,40 @@ func TestMigrateVerifyRowsReportsMissingExtraAndHashMismatch(t *testing.T) {
 		})
 	}
 }
+
+// TestMigrateDeniedSlugWithoutMemoryDirIsNotMistyped: a project whose slug holds
+// a deny-listed term keeps its rows, masked, after its memory directory is gone.
+// The scope check must compare the masked slug, so the run proceeds and withholds
+// its deletes instead of reporting the slug as mistyped.
+func TestMigrateDeniedSlugWithoutMemoryDirIsNotMistyped(t *testing.T) {
+	projects, mem := applySetup(t)
+	const term = "SERVICE_DNS_PLACEHOLDER"
+	slug := "-work-" + term
+	writeFile(t, filepath.Join(mem.Root(), scrubFile), "SERVICE_DNS_PLACE[H]OLDER\n")
+	writeFile(t, memFile(projects, slug, "a.md"), "---\nname: a\ndescription: b\n---\nBody.\n")
+	runSync(t, mem, syncOpts(projects, mem))
+	before := ccRowCount(t, mem)
+	if err := os.RemoveAll(filepath.Join(projects, slug)); err != nil {
+		t.Fatal(err)
+	}
+	// A fresh CLI process has no deny-list installed when migrate starts; the
+	// sync above left one behind in this process, so reset it.
+	_, digest, err := memory.LoadScrubFile(filepath.Join(t.TempDir(), "absent.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	memory.SetScrubPatterns(nil, digest)
+
+	opts := migrateOpts(projects, mem)
+	opts.OnlySlug = slug
+	res, err := Migrate(context.Background(), mem, opts)
+	if err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if !res.DeletesWithheld || res.Deleted != 0 {
+		t.Errorf("migrate = withheld %v deleted %d, want withheld true and 0 deleted", res.DeletesWithheld, res.Deleted)
+	}
+	if after := ccRowCount(t, mem); after != before {
+		t.Errorf("rows = %d, want %d kept", after, before)
+	}
+}

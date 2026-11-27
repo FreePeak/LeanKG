@@ -114,6 +114,9 @@ type MigrateResult struct {
 // still under the sync lock, reads the cc- rows back and compares them with the
 // desired set. A dry run plans only: nothing is applied and nothing is verified.
 func Migrate(ctx context.Context, mem *memory.Memory, opts SyncOptions) (MigrateResult, error) {
+	if err := installDenyList(opts.CentralRoot); err != nil {
+		return MigrateResult{}, err
+	}
 	if err := requireSlugMemory(mem, opts); err != nil {
 		return MigrateResult{}, err
 	}
