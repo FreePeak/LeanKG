@@ -34,3 +34,11 @@ make dual-engine     # sqlite + live-PostgreSQL acceptance gate
 - `.gitignore` gotcha: `internal/tstree/**` holds vendored generated C grammars
   and `proto/` is invisible to a global ignore pattern — check
   `git status --ignored` before concluding a file is committed.
+
+## pgvector test fixture: stop it when done
+
+- Any work that starts the fixture (`make dual-engine`, the PG store tests, any `LEANKG_DB_ENGINE=postgres` run) must stop it afterwards.
+- From the repo root: `docker compose -f scripts/pgvector.compose.yml down`.
+- The container is `leankg-pg-500mb` on host port 5433; the data volume `leankg-pgdata-500mb` survives `down`. Add `-v` only when a clean database is wanted.
+- CI jobs and scripts that start it must tear it down in the same unit of work (see `.github/workflows/ci.yml`).
+- Confirm with `docker ps --filter name=leankg-pg-500mb` (nothing listed) before calling the task done.
