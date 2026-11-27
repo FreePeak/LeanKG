@@ -1,0 +1,617 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/FreePeak/LeanKG/internal/ccmemory"
+	"github.com/FreePeak/LeanKG/internal/flock"
+	"github.com/FreePeak/LeanKG/internal/memory"
+)
+
+// memorySyncEnv points HOME and CLAUDE_CONFIG_DIR at a fresh temp tree, so no
+// test reads or writes the real ~/.claude or ~/.leankg. It returns the central
+// memory root and the Claude Code projects root under that tree.
+func memorySyncEnv(t *testing.T) (central, projects string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	return filepath.Join(home, ".leankg", "memory"), filepath.Join(home, ".claude", "projects")
+}
+
+// writeMemoryDoc writes one Claude Code memory file under projects/<slug>/memory.
+func writeMemoryDoc(t *testing.T, projects, slug, file, kind, body string) {
+	t.Helper()
+	dir := filepath.Join(projects, slug, "memory")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "---\nname: " + strings.TrimSuffix(file, ".md") + "\ndescription: fixture\ntype: " + kind + "\n---\n" + body + "\n"
+	if err := os.WriteFile(filepath.Join(dir, file), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// seedMemoryFixture writes three valid memories (a user note in the global
+// bank, a project note and a reference in two repository banks) and one file
+// with invalid UTF-8, which sync skips.
+func seedMemoryFixture(t *testing.T, projects string) {
+	t.Helper()
+	writeMemoryDoc(t, projects, "-work-alpha", "user.md", "user", "Prefers terse answers.")
+	writeMemoryDoc(t, projects, "-work-alpha", "project.md", "project", "Alpha freezes on Friday.")
+	writeMemoryDoc(t, projects, "-work-beta", "reference.md", "reference", "Beta dashboards live in Grafana.")
+	if err := os.WriteFile(filepath.Join(projects, "-work-beta", "memory", "broken.md"), []byte("\xff\xfe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// runMemorySync runs `leankg memory sync <args>` in-process and returns its
+// exit status and stdout.
+func runMemorySync(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+	var code int
+	out := captureStdout(t, func() {
+		code = runVerb(context.Background(), append([]string{"memory", "sync"}, args...))
+	})
+	return code, out
+}
+
+// snapshotTree maps every file under root to its contents. A missing root is an
+// empty snapshot, so an absent root compares equal to an empty one.
+func snapshotTree(t *testing.T, root string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, p)
+		out[rel] = string(b)
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// bankRows lists "bank document_id source_hash" for every row of every cc- bank
+// under central, sorted. It is the observable state sync writes.
+func bankRows(t *testing.T, central string) []string {
+	t.Helper()
+	mem, err := memory.Open(context.Background(), "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mem.Close()
+	if mem.Root() != central {
+		t.Fatalf("memory root = %s, want %s", mem.Root(), central)
+	}
+	banks, err := mem.Banks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, bank := range banks {
+		rows, _, err := mem.List(bank, 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range rows {
+			id, _ := row.Metadata["document_id"].(string)
+			hash, _ := row.Metadata["source_hash"].(string)
+			out = append(out, bank+" "+id+" "+hash)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+func decodeSyncResult(t *testing.T, out string) ccmemory.SyncResult {
+	t.Helper()
+	var res ccmemory.SyncResult
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("decode sync JSON: %v\n%s", err, out)
+	}
+	return res
+}
+
+func TestMemoryGlobalRootUnderHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	want := filepath.Join(home, ".leankg", "memory")
+	if got := memory.GlobalRoot(home); got != want {
+		t.Fatalf("GlobalRoot(%q) = %q, want %q", home, got, want)
+	}
+	mem, err := memory.Open(context.Background(), "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mem.Close()
+	if mem.Root() != want {
+		t.Errorf("Open(global).Root() = %q, want %q", mem.Root(), want)
+	}
+}
+
+func TestMemorySyncIsRegisteredAndListedInUsage(t *testing.T) {
+	if _, ok := verbs["memory"]; !ok {
+		t.Fatal(`verb "memory" is not registered`)
+	}
+	stderr := captureStderr(t, usage)
+	for _, line := range []string{
+		"leankg memory sync [--dry-run] [--rebuild] [--json]",
+		"leankg memory migrate [--project SLUG] [--dry-run] [--json]",
+	} {
+		if !strings.Contains(stderr, line) {
+			t.Fatalf("main usage does not list %q:\n%s", line, stderr)
+		}
+	}
+}
+
+func TestMemorySyncMissingOrUnknownSubcommandExitsOne(t *testing.T) {
+	memorySyncEnv(t)
+	for _, argv := range [][]string{{"memory"}, {"memory", "bogus"}} {
+		var code int
+		stderr := captureStderr(t, func() { code = runVerb(context.Background(), argv) })
+		if code != 1 {
+			t.Errorf("runVerb(%v) = %d, want 1", argv, code)
+		}
+		if !strings.Contains(stderr, "usage: leankg memory sync") {
+			t.Errorf("runVerb(%v) stderr lacks usage:\n%s", argv, stderr)
+		}
+	}
+}
+
+func TestMemorySyncJSONShape(t *testing.T) {
+	central, projects := memorySyncEnv(t)
+	seedMemoryFixture(t, projects)
+
+	code, out := runMemorySync(t, "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &keys); err != nil {
+		t.Fatal(err)
+	}
+	wantKeys := []string{"root", "projects", "documents", "upserted", "deleted", "skipped", "deletes_withheld", "banks"}
+	for _, k := range wantKeys {
+		if _, ok := keys[k]; !ok {
+			t.Errorf("JSON lacks key %q: %s", k, out)
+		}
+	}
+	if len(keys) != len(wantKeys) {
+		t.Errorf("JSON has %d keys, want %d: %s", len(keys), len(wantKeys), out)
+	}
+
+	res := decodeSyncResult(t, out)
+	if res.Root != central || res.Projects != projects {
+		t.Errorf("root/projects = %s / %s, want %s / %s", res.Root, res.Projects, central, projects)
+	}
+	if res.Documents != 3 || res.Upserted != 3 || res.Deleted != 0 || res.Skipped != 1 || res.DeletesWithheld {
+		t.Errorf("counts = docs %d upserted %d deleted %d skipped %d withheld %v; want 3 3 0 1 false",
+			res.Documents, res.Upserted, res.Deleted, res.Skipped, res.DeletesWithheld)
+	}
+	wantBanks := []ccmemory.SyncBank{
+		{Bank: ccmemory.GlobalBank, Project: "", Rows: 1},
+		{Bank: ccmemory.ProjectBank("-work-alpha"), Project: "-work-alpha", Rows: 1},
+		{Bank: ccmemory.ProjectBank("-work-beta"), Project: "-work-beta", Rows: 1},
+	}
+	slices.SortFunc(wantBanks, func(a, b ccmemory.SyncBank) int { return strings.Compare(a.Bank, b.Bank) })
+	if !reflect.DeepEqual(res.Banks, wantBanks) {
+		t.Errorf("banks = %+v, want %+v", res.Banks, wantBanks)
+	}
+}
+
+func TestMemorySyncDryRunWritesNothing(t *testing.T) {
+	t.Run("absent central root", func(t *testing.T) {
+		central, projects := memorySyncEnv(t)
+		seedMemoryFixture(t, projects)
+
+		code, out := runMemorySync(t, "--dry-run", "--json")
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0\n%s", code, out)
+		}
+		res := decodeSyncResult(t, out)
+		if res.Documents != 3 || res.Upserted != 3 || res.Deleted != 0 {
+			t.Errorf("dry-run plan = docs %d upserted %d deleted %d, want 3 3 0", res.Documents, res.Upserted, res.Deleted)
+		}
+		if res.Root != central {
+			t.Errorf("dry-run root = %s, want %s", res.Root, central)
+		}
+		if _, err := os.Stat(central); !os.IsNotExist(err) {
+			t.Fatalf("dry-run created the central root (stat err = %v)", err)
+		}
+	})
+
+	t.Run("existing central root", func(t *testing.T) {
+		central, projects := memorySyncEnv(t)
+		seedMemoryFixture(t, projects)
+		if code, out := runMemorySync(t); code != 0 {
+			t.Fatalf("seed sync exit = %d, want 0\n%s", code, out)
+		}
+		writeMemoryDoc(t, projects, "-work-beta", "extra.md", "feedback", "Use table tests.")
+
+		before := snapshotTree(t, central)
+		code, out := runMemorySync(t, "--dry-run", "--json")
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0\n%s", code, out)
+		}
+		if res := decodeSyncResult(t, out); res.Upserted != 1 {
+			t.Errorf("dry-run upserted = %d, want 1 (the new memory)", res.Upserted)
+		}
+		if after := snapshotTree(t, central); !reflect.DeepEqual(before, after) {
+			t.Fatalf("dry-run changed the central root\nbefore: %v\nafter:  %v", keysOf(before), keysOf(after))
+		}
+
+		// Nothing was applied: a real run still has the new memory to write.
+		code, out = runMemorySync(t, "--json")
+		if code != 0 || decodeSyncResult(t, out).Upserted != 1 {
+			t.Fatalf("real sync after dry-run: exit %d, want upserted 1\n%s", code, out)
+		}
+	})
+}
+
+func TestMemorySyncRebuildRefillsCCBanks(t *testing.T) {
+	central, projects := memorySyncEnv(t)
+	seedMemoryFixture(t, projects)
+	if code, out := runMemorySync(t); code != 0 {
+		t.Fatalf("seed sync exit = %d, want 0\n%s", code, out)
+	}
+	clean := bankRows(t, central)
+
+	mem, err := memory.Open(context.Background(), "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := memory.Entry{
+		ID: "ccm-stale", Content: "stale", Source: "test", Timestamp: 1,
+		Metadata: map[string]any{"document_id": "ccm-stale", "source_hash": "stale"},
+	}
+	if _, err := mem.RetainReplacing(context.Background(), ccmemory.GlobalBank, []memory.Entry{stale}, nil); err != nil {
+		t.Fatal(err)
+	}
+	mem.Close()
+
+	code, out := runMemorySync(t, "--rebuild", "--json")
+	if code != 0 {
+		t.Fatalf("rebuild exit = %d, want 0\n%s", code, out)
+	}
+	res := decodeSyncResult(t, out)
+	if res.Deleted != len(clean)+1 || res.Upserted != 3 {
+		t.Errorf("rebuild deleted %d upserted %d, want %d and 3", res.Deleted, res.Upserted, len(clean)+1)
+	}
+	if got := bankRows(t, central); !reflect.DeepEqual(got, clean) {
+		t.Errorf("rows after rebuild = %v, want %v", got, clean)
+	}
+}
+
+func TestMemorySyncWaitsForLock(t *testing.T) {
+	central, projects := memorySyncEnv(t)
+	seedMemoryFixture(t, projects)
+	if err := os.MkdirAll(central, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	release, err := flock.Lock(filepath.Join(central, "cc-sync.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var (
+		code     int
+		finished bool
+		timedOut bool
+	)
+	out := captureStdout(t, func() {
+		done := make(chan int, 1)
+		go func() {
+			done <- runVerb(context.Background(), []string{"memory", "sync", "--json"})
+		}()
+		// The command must still be blocked on the lock after a short window.
+		select {
+		case <-done:
+			finished = true
+		case <-time.After(300 * time.Millisecond):
+		}
+		release()
+		select {
+		case code = <-done:
+		case <-time.After(10 * time.Second):
+			timedOut = true
+		}
+	})
+	if finished {
+		t.Fatal("sync finished while another process held the lock; it must wait")
+	}
+	if timedOut {
+		t.Fatalf("sync did not finish after the lock was released\n%s", out)
+	}
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+}
+
+func TestMemorySyncErrorsExitOneAndWriteNoBanks(t *testing.T) {
+	banksOf := func(central string) []string {
+		files, _ := filepath.Glob(filepath.Join(central, "banks", "*.jsonl"))
+		return files
+	}
+
+	t.Run("bad deny-list line", func(t *testing.T) {
+		central, projects := memorySyncEnv(t)
+		seedMemoryFixture(t, projects)
+		if err := os.MkdirAll(central, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(central, "scrub.txt"), []byte("([\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if code, out := runMemorySync(t); code != 1 {
+			t.Fatalf("exit = %d, want 1\n%s", code, out)
+		}
+		if got := banksOf(central); len(got) != 0 {
+			t.Fatalf("bank files written before the error: %v", got)
+		}
+	})
+
+	t.Run("unopenable central root", func(t *testing.T) {
+		home := t.TempDir()
+		notDir := filepath.Join(home, "not-a-dir")
+		if err := os.WriteFile(notDir, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HOME", notDir)
+		t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+		if code, out := runMemorySync(t); code != 1 {
+			t.Fatalf("exit = %d, want 1\n%s", code, out)
+		}
+	})
+
+	t.Run("unreadable projects root", func(t *testing.T) {
+		central, projects := memorySyncEnv(t)
+		if err := os.MkdirAll(filepath.Dir(projects), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(projects, []byte("not a directory"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if code, out := runMemorySync(t); code != 1 {
+			t.Fatalf("exit = %d, want 1\n%s", code, out)
+		}
+		if got := banksOf(central); len(got) != 0 {
+			t.Fatalf("bank files written before the error: %v", got)
+		}
+	})
+}
+
+// captureStderr runs fn with os.Stderr redirected and returns what it wrote.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	done := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- string(b)
+	}()
+	fn()
+	_ = w.Close()
+	os.Stderr = old
+	return <-done
+}
+
+func keysOf(m map[string]string) []string {
+	var out []string
+	for k := range m {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// runMemoryMigrate runs `leankg memory migrate <args>` in-process and returns
+// its exit status and stdout.
+func runMemoryMigrate(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+	var code int
+	out := captureStdout(t, func() {
+		code = runVerb(context.Background(), append([]string{"memory", "migrate"}, args...))
+	})
+	return code, out
+}
+
+func decodeMigrateResult(t *testing.T, out string) ccmemory.MigrateResult {
+	t.Helper()
+	var res ccmemory.MigrateResult
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("decode migrate JSON: %v\n%s", err, out)
+	}
+	return res
+}
+
+func TestMemoryMigrateIsRegisteredAndInUsage(t *testing.T) {
+	if _, ok := memorySubcommands["migrate"]; !ok {
+		t.Fatal(`memory subcommand "migrate" is not registered`)
+	}
+	if usage := memoryUsageText("       "); !strings.Contains(usage, "leankg memory migrate [--project SLUG] [--dry-run] [--json]") {
+		t.Fatalf("memory usage does not list migrate:\n%s", usage)
+	}
+}
+
+func TestMemoryMigrateDryRunPrintsInventoryAndWritesNothing(t *testing.T) {
+	central, projects := memorySyncEnv(t)
+	seedMemoryFixture(t, projects)
+
+	code, out := runMemoryMigrate(t, "--dry-run", "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatalf("decode: %v\n%s", err, out)
+	}
+	var keys []string
+	for k := range raw {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	if want := []string{"documents", "mismatches", "projects", "root", "skipped", "upserted", "verified"}; !slices.Equal(keys, want) {
+		t.Errorf("JSON keys = %v, want %v", keys, want)
+	}
+	res := decodeMigrateResult(t, out)
+	if res.Documents != 3 || res.Upserted != 3 || res.Skipped != 1 || res.Verified {
+		t.Errorf("dry-run = docs %d upserted %d skipped %d verified %v, want 3 3 1 false",
+			res.Documents, res.Upserted, res.Skipped, res.Verified)
+	}
+	if len(res.Projects) != 2 || res.Projects[0].Slug != "-work-alpha" || res.Projects[1].Skipped != 1 {
+		t.Errorf("inventory = %+v, want alpha and beta with one skipped in beta", res.Projects)
+	}
+	if _, err := os.Stat(central); !os.IsNotExist(err) {
+		t.Fatalf("dry run created the central root (stat err = %v)", err)
+	}
+}
+
+func TestMemoryMigrateRealRunVerifiesAndIsIdempotent(t *testing.T) {
+	central, projects := memorySyncEnv(t)
+	seedMemoryFixture(t, projects)
+
+	code, out := runMemoryMigrate(t, "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	res := decodeMigrateResult(t, out)
+	if !res.Verified || res.Mismatches == nil || len(res.Mismatches) != 0 || res.Upserted != 3 {
+		t.Fatalf("result = verified %v, mismatches %v, upserted %d; want verified, [], 3", res.Verified, res.Mismatches, res.Upserted)
+	}
+	if rows := bankRows(t, central); len(rows) != 3 {
+		t.Fatalf("rows = %d, want 3 (one per file)", len(rows))
+	}
+
+	code, out = runMemoryMigrate(t, "--json")
+	if code != 0 || decodeMigrateResult(t, out).Upserted != 0 {
+		t.Fatalf("second run: exit %d, want 0 with upserted 0\n%s", code, out)
+	}
+}
+
+func TestMemoryMigrateDenyListAndSourceTreeUnchanged(t *testing.T) {
+	central, projects := memorySyncEnv(t)
+	seedMemoryFixture(t, projects)
+	if err := os.MkdirAll(central, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(central, "scrub.txt"), []byte("Graf[a]na\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotTree(t, projects)
+
+	if code, out := runMemoryMigrate(t, "--json"); code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+
+	if after := snapshotTree(t, projects); !reflect.DeepEqual(before, after) {
+		t.Fatal("migrate changed the Claude Code projects tree")
+	}
+	for path, body := range snapshotTree(t, central) {
+		if strings.Contains(body, "Grafana") {
+			t.Errorf("deny-listed word found in %s", path)
+		}
+	}
+}
+
+func TestMemoryMigrateProjectScopeLeavesOtherSlugsRows(t *testing.T) {
+	central, projects := memorySyncEnv(t)
+	seedMemoryFixture(t, projects)
+	if code, out := runMemoryMigrate(t); code != 0 {
+		t.Fatalf("full migrate exit = %d, want 0\n%s", code, out)
+	}
+	before := bankRows(t, central)
+	// beta keeps one memory, so its scope is not empty (an empty scope withholds
+	// deletes, as sync does); its reference memory is removed and its row is stale.
+	if err := os.Remove(filepath.Join(projects, "-work-beta", "memory", "reference.md")); err != nil {
+		t.Fatal(err)
+	}
+	writeMemoryDoc(t, projects, "-work-beta", "extra.md", "project", "Beta freezes on Fridays.")
+
+	code, out := runMemoryMigrate(t, "--project", "-work-beta", "--json")
+	if code != 0 {
+		t.Fatalf("scoped migrate exit = %d, want 0\n%s", code, out)
+	}
+	// The JSON shape omits the delete count; the stale row check below covers it.
+	if res := decodeMigrateResult(t, out); res.Upserted != 1 || !res.Verified {
+		t.Fatalf("scoped result upserted %d verified %v, want 1 true", res.Upserted, res.Verified)
+	}
+	after := bankRows(t, central)
+	betaBank := ccmemory.ProjectBank("-work-beta")
+	staleRow := betaBank + " " + ccmemory.DocID("-work-beta", "reference.md") + " "
+	for _, row := range before {
+		if strings.HasPrefix(row, betaBank+" ") {
+			continue
+		}
+		if !slices.Contains(after, row) {
+			t.Errorf("row outside the scope was removed or changed: %s", row)
+		}
+	}
+	for _, row := range after {
+		if strings.HasPrefix(row, staleRow) {
+			t.Errorf("stale beta row survived: %s", row)
+		}
+	}
+}
+
+func TestMemoryMigrateExitCodeFollowsVerification(t *testing.T) {
+	if got := migrateExitCode(ccmemory.MigrateResult{Verified: true}); got != 0 {
+		t.Errorf("verified exit = %d, want 0", got)
+	}
+	bad := ccmemory.MigrateResult{Verified: false, Mismatches: []ccmemory.Mismatch{{Bank: "cc-global", DocID: "d", Reason: "missing"}}}
+	if got := migrateExitCode(bad); got != 1 {
+		t.Errorf("unverified exit = %d, want 1", got)
+	}
+}
+
+func TestMemoryMigrateBadFlagExitsTwo(t *testing.T) {
+	memorySyncEnv(t)
+	var code int
+	captureStderr(t, func() {
+		code = runVerb(context.Background(), []string{"memory", "migrate", "-bogus"})
+	})
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+}
+
+func TestMemoryMigrateUnknownProjectExitsOne(t *testing.T) {
+	_, projects := memorySyncEnv(t)
+	seedMemoryFixture(t, projects)
+
+	var code int
+	stderr := captureStderr(t, func() {
+		code = runVerb(context.Background(), []string{"memory", "migrate", "--project", "-work-typo"})
+	})
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\n%s", code, stderr)
+	}
+	if !strings.Contains(stderr, "no memory found for project -work-typo") {
+		t.Fatalf("stderr lacks the unknown-project message:\n%s", stderr)
+	}
+}

@@ -123,6 +123,7 @@ var verbs = map[string]verbFunc{
 	"summarize":          cmdSummarize,
 	"register-project":   cmdRegisterProject,
 	"projects":           cmdProjects,
+	"memory":             cmdMemory,
 	"help":               showUsage,
 	"-h":                 showUsage,
 	"--help":             showUsage,
@@ -163,7 +164,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `leankg — LeanKG Go engine
+	fmt.Fprintf(os.Stderr, `leankg — LeanKG Go engine
 
 Usage:
   leankg query <text> [--kind name|impact] [--depth N] [--compress]
@@ -200,6 +201,7 @@ Usage:
   leankg register <name> | unregister <name> | list | status-repo <name>
   leankg register-project <dir> [--name N] [--project DIR] [--engine sqlite|postgres]
   leankg projects [--json] [--forget DIR] [--project DIR] [--engine sqlite|postgres]
+  %s
   leankg obsidian <init|push|pull|watch|status> [--project DIR] [--vault PATH] [--debounce-ms N]
   leankg export [--output FILE] [--format json|dot|mermaid] [--markdown] [--out FILE]
                 [--file F] [--depth N] [--path P] [--community C] [--max-nodes N]
@@ -243,7 +245,7 @@ token is configured (leankg auth token create, or LEANKG_TOKEN_ADMIN);
 --ui is the one deliberately public listener.
 LEANKG_PROJECT_DIRS (comma-separated) registers extra projects; REST/MCP
 requests select one with ?project= (dir path or name).
-`)
+`, memoryUsageText("  "))
 }
 
 // newScopedMCPServer builds the MCP server for a surface that already serves
