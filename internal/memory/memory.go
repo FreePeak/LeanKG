@@ -77,6 +77,11 @@ type Memory struct {
 	keepModelIDs []string
 }
 
+// GlobalRoot is the global memory root under home: <home>/.leankg/memory.
+func GlobalRoot(home string) string {
+	return filepath.Join(home, ".leankg", "memory")
+}
+
 // Open opens (creating if needed) the memory tree for projectDir, or the
 // global home tree when global is true. It creates the directories, empty
 // MEMORY.md/USER.md, and topics/ if missing.
@@ -90,7 +95,7 @@ func Open(ctx context.Context, projectDir string, global bool) (*Memory, error) 
 		if err != nil {
 			return nil, fmt.Errorf("memory: resolve home: %w", err)
 		}
-		root = filepath.Join(home, ".leankg", "memory")
+		root = GlobalRoot(home)
 	} else {
 		if projectDir == "" {
 			return nil, fmt.Errorf("memory: empty project dir")
@@ -457,7 +462,7 @@ func writeMemoryFile(full, content string) error {
 //
 // The caller's words are preserved (only the matched value is replaced), so
 // a redacted lesson still explains what it was about.
-func Redact(content string) string { return telemetry.Redact(content) }
+func Redact(content string) string { return applyScrub(telemetry.Redact(content)) }
 
 // redactEntry returns e with its content and every string inside its metadata
 // masked by Redact. The bank write path applies it once per row, so the JSONL
