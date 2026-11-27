@@ -67,6 +67,33 @@ Two defects this block used to carry, both corrected above: it counted **FR-GO-D
 | FIX-WAVE-2026-10-22 | Seven defects found by measuring the live self-host's own stores, ledgers and registry — the scheduled maintenance pass that ran hourly and reclaimed nothing, the vector row that owned a whole page, the memory row with no stable identity, the telemetry ledger that was never purged, the registry that pruned itself only by hand, the heading that stored its descendants' bodies, and the store that never reconciled with the tree it indexed | 2026-10-22 | **DONE — 7 fixes, one PR each, all merged.** #564 (memory lifecycle), #565 (markdown sections), #566 (the scheduled pass does its job), #567 (the store's page size), #568 (the registry's automatic prune), #570 (the telemetry ledger), #571 (reconcile with HEAD) — each with a regression test that fails on `main` and passes on its branch. The per-defect rows live in the sections each fix inserted; this row is the wave's index |
 
 
+## central-agent-memory - Claude Code memories shared across repositories (2026-11-27, branch docs/central-agent-memory)
+
+Plan, decisions and task breakdown: [`docs/plan-central-agent-memory.md`](plan-central-agent-memory.md) (section 12). No code yet; every row is TODO.
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| CAM-00 | Confirm three Claude Code facts on a real install (worktree memory directory, frontmatter keys, `SessionStart` stdout visible to the model) | **TODO** | Plan §12 (CAM-00); A2 and A3 already verified 2026-11-27, A6 open, step (c) blocks only CAM-16 onward |
+| CAM-01 | Tracker rows and PRD requirement entry for the wave | **TODO** | Plan §12 (CAM-01); `go test ./internal/archtest/ -count=1` |
+| CAM-02 | Export the Claude Code projects root and slug | **TODO** | Plan §12 (CAM-02); module `cc-source` |
+| CAM-03 | Move the frontmatter splitter and link extractor to a leaf package | **TODO** | Plan §12 (CAM-03); module `cc-source` |
+| CAM-04 | Parse and discover memory documents | **TODO** | Plan §12 (CAM-04); module `cc-source` |
+| CAM-05 | Project key, bank names and document ids | **TODO** | Plan §12 (CAM-05); module `cc-source` |
+| CAM-06 | Deny-list inside `memory.Redact` | **TODO** | Plan §12 (CAM-06); module `mem-scrub` |
+| CAM-07 | Batch document delete | **TODO** | Plan §12 (CAM-07); module `mem-bank-ops` |
+| CAM-08 | Injection over explicit banks with a filter and a budget | **TODO** | Plan §12 (CAM-08); module `mem-bank-ops` |
+| CAM-09 | Sync plan (pure diff) | **TODO** | Plan §12 (CAM-09); module `cc-sync` |
+| CAM-10 | Sync apply against a real memory root | **TODO** | Plan §12 (CAM-10); module `cc-sync` |
+| CAM-11 | `leankg memory sync` | **TODO** | Plan §12 (CAM-11); module `cc-sync` |
+| CAM-12 | Scoped recall function | **TODO** | Plan §12 (CAM-12); module `agent-recall` |
+| CAM-13 | `agent_recall` in the core dispatcher | **TODO** | Plan §12 (CAM-13); module `agent-recall` |
+| CAM-14 | MCP routing, schema text and serve wiring | **TODO** | Plan §12 (CAM-14); module `agent-recall` |
+| CAM-15 | `leankg memory recall` | **TODO** | Plan §12 (CAM-15); module `agent-recall` |
+| CAM-16 | `leankg memory hook` | **TODO** | Plan §12 (CAM-16); module `cc-hook` |
+| CAM-17 | Hook registration (`install --target claude --register-memory`) | **TODO** | Plan §12 (CAM-17); module `cc-hook` |
+| CAM-18 | Telemetry from the CLI paths | **TODO** | Plan §12 (CAM-18); module `cc-hook` |
+| CAM-19 | Reference documentation and full gate | **TODO** | Plan §12 (CAM-19); module all |
+
 ## hosted-multi-tenant - one cell serves many orgs, each seeing only its own projects (2026-11-25, PRs #610, #611, #613, #614)
 
 | ID | Title | Status | Evidence |

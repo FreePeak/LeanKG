@@ -10,6 +10,12 @@
 
 ## Changelog
 
+### central-agent-memory - memories shared across repositories, derived from Claude Code's files (CAM-00..CAM-19) (2026-11-27)
+
+**Requirement (CAM-00..CAM-19).** A `user` or `feedback` memory written in one repository is recallable from, and injected into, a session in any other repository. `project` and `reference` memories stay repository-scoped unless a caller asks for all memories. Claude Code's memory files stay canonical: LeanKG keeps a derived, one-way, idempotent copy in `cc-` banks, synced at `SessionStart`. The hook fails open, a deny-list masks secrets and user-listed patterns before any store write, and the MCP surface stays at four tools. Plan, decisions and task breakdown: `docs/plan-central-agent-memory.md`.
+
+**Status.** Planned; no code yet. Assumptions A2 and A3 are verified on a real install (2026-11-27); A6 is not. Tracker rows are in `docs/prd-task-tracker.md` under `central-agent-memory`.
+
 ### hosted-multi-tenant - one cell serves many orgs, each seeing only its own projects (FR-HOST-01..04) (2026-11-25)
 
 **Requirement (FR-HOST-01).** A hosted cell (`leankg serve --hosted`) serves many organisations from one listener. A token is bound to an org (`org_id`) and sees only that org's projects. A request for another org's project is answered exactly like a request for an unknown project, so the response does not reveal that the project exists. Every request must name its project (FR-ZCP-02 fail-closed rule applies). Routed project stores are read-only; the cell home store (tokens, org claims, registry) stays writable.
