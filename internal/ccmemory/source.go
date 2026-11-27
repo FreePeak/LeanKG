@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/FreePeak/LeanKG/internal/mdmeta"
+	"github.com/FreePeak/LeanKG/internal/pathguard"
 )
 
 // maxDocBytes is the largest memory file Discover reads.
@@ -168,7 +169,7 @@ func readDoc(slug, path, name, realRoot string) (Doc, string) {
 	if err != nil {
 		return Doc{}, "unreadable: " + err.Error()
 	}
-	if !within(realRoot, resolved) {
+	if !pathguard.Within(resolved, realRoot) {
 		return Doc{}, "symlink resolves outside the projects root"
 	}
 	if fi.Size() > maxDocBytes {
@@ -185,12 +186,6 @@ func readDoc(slug, path, name, realRoot string) (Doc, string) {
 	sum := sha256.Sum256(content)
 	doc.FileSHA = hex.EncodeToString(sum[:])
 	return doc, ""
-}
-
-// within reports whether p is inside dir. Both paths must already be resolved.
-func within(dir, p string) bool {
-	rel, err := filepath.Rel(dir, p)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // kindOf maps a frontmatter type value to a Kind; anything else is unknown.
