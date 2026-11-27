@@ -17,17 +17,23 @@ const (
 	scopeAll     = "all"
 )
 
-// recallCommand is the command name in every RecallResult.
-const recallCommand = "agent_recall"
+// RecallCommand is the query{action:"memory"} command name of agent_recall. It is
+// the one spelling every layer matches on: the engine, the MCP layer and the
+// RecallResult below.
+const RecallCommand = "agent_recall"
+
+// maxRecallLimit caps the rows of one agent_recall answer, whatever the caller
+// asks for. A zero or negative limit gets memory.RecallLimit instead.
+const maxRecallLimit = 50
 
 var (
 	validScopes = []string{scopeProject, scopeGlobal, scopeAll}
 	validTypes  = []string{string(KindUser), string(KindFeedback), string(KindProject), string(KindReference), string(KindUnknown)}
 )
 
-// RecallRequest is one agent_recall call. Empty Scope means project and a
-// zero Limit means memory.RecallLimit. Caller is the caller's resolved project
-// slug and may be empty.
+// RecallRequest is one agent_recall call. Empty Scope means project, a zero or
+// negative Limit means memory.RecallLimit, and a Limit above maxRecallLimit is
+// capped to it. Caller is the caller's resolved project slug and may be empty.
 type RecallRequest struct {
 	Query  string
 	Limit  int
@@ -79,8 +85,11 @@ func Recall(ctx context.Context, mem *memory.Memory, req RecallRequest) (RecallR
 		}
 	}
 	limit := req.Limit
-	if limit <= 0 {
+	switch {
+	case limit <= 0:
 		limit = memory.RecallLimit
+	case limit > maxRecallLimit:
+		limit = maxRecallLimit
 	}
 
 	all, err := mem.Banks()
@@ -102,7 +111,7 @@ func Recall(ctx context.Context, mem *memory.Memory, req RecallRequest) (RecallR
 		return RecallResult{}, err
 	}
 	res := RecallResult{
-		Command:  recallCommand,
+		Command:  RecallCommand,
 		Scope:    scope,
 		Project:  project,
 		Banks:    banks,

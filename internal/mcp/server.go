@@ -19,6 +19,7 @@ import (
 
 	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/budget"
+	"github.com/FreePeak/LeanKG/internal/ccmemory"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -173,18 +174,15 @@ func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core
 	return s.router.EngineAs(ctx, p, visible)
 }
 
-// agentRecallCommand is the query{action:"memory"} command that reads the
-// central memory banks (KD-7).
-const agentRecallCommand = "agent_recall"
-
 // isAgentRecall reports whether a call is query{action:"memory",
-// args.command:"agent_recall"}. args is the decoded tool arguments.
+// args.command:"agent_recall"}, the command that reads the central memory banks
+// (KD-7). args is the decoded tool arguments.
 func isAgentRecall(req *mcp.CallToolRequest, args map[string]any) bool {
 	if req == nil || req.Params == nil || req.Params.Name != core.ToolQuery || args["action"] != "memory" {
 		return false
 	}
 	nested, _ := args["args"].(map[string]any)
-	return nested["command"] == agentRecallCommand
+	return nested["command"] == ccmemory.RecallCommand
 }
 
 // centralEngine answers agent_recall from the default engine, whatever project
@@ -192,25 +190,27 @@ func isAgentRecall(req *mcp.CallToolRequest, args map[string]any) bool {
 // limited to some projects, or to an organization's projects, is refused,
 // because the banks span every repository and no grant can narrow them.
 func (s *Server) centralEngine(ctx context.Context) (*core.Engine, func(), error) {
-	grant, _ := auth.AuthFrom(ctx)
-	if grant.ProjectRestricted() || visibleOf(ctx) != nil {
-		return nil, noRelease, errs.NewError(errs.PermissionDenied,
-			"agent_recall reads the central memory, which spans every repository, so a token or organization limited to some projects may not run it",
-			"use a token without project: scopes")
+	if auth.ProjectLimited(ctx) {
+		return nil, noRelease, auth.SpanningDenied()
 	}
 	return s.engine, noRelease, nil
 }
 
 // agentRecallIdentity hands the project argument of an agent_recall call to the
 // engine as the caller's identity: args.cwd, which the engine resolves to the
-// repository's bank. It never routes the call (KD-8). Callers pass fields that
+// repository's bank. It never routes the call (KD-8). A relative project is
+// refused by the same rule the engine applies to cwd. Callers pass fields that
 // isAgentRecall has already matched, so args is a map.
-func agentRecallIdentity(fields map[string]any) {
+func agentRecallIdentity(fields map[string]any) error {
 	project, _ := fields["project"].(string)
+	if err := core.CheckAgentIdentity("project", project); err != nil {
+		return err
+	}
 	nested := fields["args"].(map[string]any)
 	if cwd, _ := nested["cwd"].(string); cwd == "" && project != "" {
 		nested["cwd"] = project
 	}
+	return nil
 }
 
 // grantedEngine refuses a caller whose grant or org scope does not cover the
@@ -689,7 +689,9 @@ func (s *Server) handleQuery(ctx context.Context, req *mcp.CallToolRequest) (*mc
 		return nil, err
 	}
 	if isAgentRecall(req, fields) {
-		agentRecallIdentity(fields)
+		if err := agentRecallIdentity(fields); err != nil {
+			return nil, err
+		}
 	}
 	in, err := core.DecodeQuery(fields)
 	if err != nil {

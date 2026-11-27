@@ -117,6 +117,7 @@ type SyncResult struct {
 	Deleted         int        `json:"deleted"`
 	Skipped         int        `json:"skipped"`
 	DeletesWithheld bool       `json:"deletes_withheld"`
+	FailedProjects  []string   `json:"-"` // human summary only; JSON shows deletes_withheld and skipped
 	Banks           []SyncBank `json:"banks"`
 }
 
@@ -128,6 +129,13 @@ type SyncBank struct {
 	Rows    int    `json:"rows"`
 }
 
+// compactCentral is the post-apply compaction of the cc- banks. It runs under the
+// sync lock: compaction rewrites the bank files, and a locked sync that appended
+// to them in between would lose its rows. A test replaces it to observe the lock.
+var compactCentral = func(ctx context.Context, mem *memory.Memory) error {
+	return mem.CompactPrefix(ctx, CentralBankPrefix)
+}
+
 // renderVersion is part of every source hash. Bump it when the row mapping
 // changes, so the next run rewrites every row.
 const renderVersion = "cc-row-v1"
@@ -136,12 +144,27 @@ const renderVersion = "cc-row-v1"
 const claudeCodeSource = "claude-code-memory"
 
 // Sync makes the cc- banks under mem equal to the memory files under
-// opts.Projects. It takes the sync lock, installs the deny-list, plans against
+// opts.Projects. It installs the deny-list, takes the sync lock, plans against
 // the stored rows and applies one retain and one delete per bank. A cancelled
 // ctx stops between banks; each bank's batch is complete or absent.
 func Sync(ctx context.Context, mem *memory.Memory, opts SyncOptions) (SyncResult, error) {
+	if err := installDenyList(opts.CentralRoot); err != nil {
+		return SyncResult{Root: opts.CentralRoot, Projects: opts.Projects}, err
+	}
 	res, _, err := syncPass(ctx, mem, opts, nil)
 	return res, err
+}
+
+// installDenyList loads the central deny-list and installs it process-wide.
+// Every read and write of a sync or migrate run is masked by it, so the callers
+// install it before they read the central root.
+func installDenyList(central string) error {
+	patterns, digest, err := memory.LoadScrubFile(filepath.Join(central, scrubFile))
+	if err != nil {
+		return err
+	}
+	memory.SetScrubPatterns(patterns, digest)
+	return nil
 }
 
 // syncState is what one sync pass read: the discovery limited to the scope,
@@ -152,8 +175,9 @@ type syncState struct {
 	projectOf map[string]string
 }
 
-// syncPass is Sync. When after is not nil it runs under the lock once the plan
-// is applied, and not on a dry run.
+// syncPass is Sync, without the deny-list install, which the caller has done.
+// Once the plan is applied it compacts the cc- banks and then runs after, when
+// not nil, both under the lock and not on a dry run.
 func syncPass(ctx context.Context, mem *memory.Memory, opts SyncOptions, after func(syncState) error) (SyncResult, syncState, error) {
 	res := SyncResult{Root: opts.CentralRoot, Projects: opts.Projects}
 	if err := ctx.Err(); err != nil {
@@ -168,12 +192,6 @@ func syncPass(ctx context.Context, mem *memory.Memory, opts SyncOptions, after f
 		defer release()
 	}
 
-	patterns, digest, err := memory.LoadScrubFile(filepath.Join(opts.CentralRoot, scrubFile))
-	if err != nil {
-		return res, syncState{}, err
-	}
-	memory.SetScrubPatterns(patterns, digest)
-
 	disc, err := Discover(opts.Projects)
 	if err != nil {
 		res.DeletesWithheld = true
@@ -182,23 +200,28 @@ func syncPass(ctx context.Context, mem *memory.Memory, opts SyncOptions, after f
 	disc = scopeDiscovery(disc, opts.Projects, opts.OnlySlug)
 	projectOf := map[string]string{}
 	hashes, docs := desiredSet(disc.Docs, projectOf)
-	actual, err := actualSet(mem, projectOf, opts.OnlySlug)
+	rowSlug := map[Key]string{}
+	actual, err := actualSet(mem, projectOf, rowSlug, opts.OnlySlug)
 	if err != nil {
 		return res, syncState{}, err
 	}
-	plan := BuildPlan(hashes, actual, opts.Rebuild)
+	plan := withholdFailed(BuildPlan(hashes, actual, opts.Rebuild), rowSlug, disc.FailedSlugs)
 
 	res.Documents = len(disc.Docs)
 	res.Upserted = len(plan.Upserts)
 	res.Deleted = len(plan.Deletes)
 	res.Skipped = len(disc.Skipped)
 	res.DeletesWithheld = plan.DeletesWithheld
+	res.FailedProjects = append([]string{}, disc.FailedSlugs...)
 	res.Banks = bankSummary(actual, plan, projectOf)
 	st := syncState{disc: disc, desired: hashes, projectOf: projectOf}
 	if opts.DryRun {
 		return res, st, nil
 	}
 	if err := apply(ctx, mem, plan, hashes, docs); err != nil {
+		return res, st, err
+	}
+	if err := compactCentral(ctx, mem); err != nil {
 		return res, st, err
 	}
 	if after != nil {
@@ -219,6 +242,11 @@ func scopeDiscovery(disc Discovery, projectsRoot, slug string) Discovery {
 	for _, d := range disc.Docs {
 		if d.Slug == slug {
 			scoped.Docs = append(scoped.Docs, d)
+		}
+	}
+	for _, s := range disc.FailedSlugs {
+		if s == slug {
+			scoped.FailedSlugs = append(scoped.FailedSlugs, s)
 		}
 	}
 	for _, s := range disc.Skipped {
@@ -271,7 +299,8 @@ func desiredSet(docs []Doc, projectOf map[string]string) (map[Key]string, map[Ke
 // actualSet reads every row of every cc- bank. A row without a document id was
 // not written by sync and is left out of the diff. When onlySlug is set, rows
 // of other projects are left out too, so a scoped run never plans their deletion.
-func actualSet(mem *memory.Memory, projectOf map[string]string, onlySlug string) (map[Key]string, error) {
+// rowSlug receives the project slug stored on each row it returns.
+func actualSet(mem *memory.Memory, projectOf map[string]string, rowSlug map[Key]string, onlySlug string) (map[Key]string, error) {
 	banks, err := mem.Banks()
 	if err != nil {
 		return nil, err
@@ -297,11 +326,47 @@ func actualSet(mem *memory.Memory, projectOf map[string]string, onlySlug string)
 				continue
 			}
 			hash, _ := row.Metadata["source_hash"].(string)
-			actual[Key{Bank: bank, DocID: id}] = hash
+			key := Key{Bank: bank, DocID: id}
+			actual[key] = hash
+			rowSlug[key] = slug
 			noteProject(projectOf, bank, slug)
 		}
 	}
 	return actual, nil
+}
+
+// failedRows returns the keys of the rows that belong to a project whose scan
+// failed. Rows store the slug masked by memory.Redact, so the comparison is made
+// in that form, as the OnlySlug scope is.
+func failedRows(rowSlug map[Key]string, failed []string) map[Key]bool {
+	masked := make(map[string]bool, len(failed))
+	for _, slug := range failed {
+		masked[memory.Redact(slug)] = true
+	}
+	out := map[Key]bool{}
+	for key, slug := range rowSlug {
+		if masked[slug] {
+			out[key] = true
+		}
+	}
+	return out
+}
+
+// withholdFailed drops from plan.Deletes every row of a project whose scan
+// failed this run. The scan did not see those documents, so their absence says
+// nothing about them: the rows stay and the plan reports deletes withheld.
+func withholdFailed(plan Plan, rowSlug map[Key]string, failed []string) Plan {
+	held := failedRows(rowSlug, failed)
+	kept := plan.Deletes[:0]
+	for _, key := range plan.Deletes {
+		if held[key] {
+			plan.DeletesWithheld = true
+			continue
+		}
+		kept = append(kept, key)
+	}
+	plan.Deletes = kept
+	return plan
 }
 
 // noteProject records the project slug a project bank serves. The global bank

@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/FreePeak/LeanKG/internal/mdmeta"
+	"github.com/FreePeak/LeanKG/internal/pathguard"
 )
 
 // maxDocBytes is the largest memory file Discover reads.
@@ -58,6 +59,7 @@ type Discovery struct {
 	Docs        []Doc
 	Skipped     []Skipped
 	RootMissing bool
+	FailedSlugs []string // projects whose memory directory could not be scanned, sorted by slug
 }
 
 // ParseDoc builds a Doc from one memory file's content. Frontmatter is read
@@ -97,7 +99,9 @@ func memoryDirOf(projectsRoot, slug string) string {
 // directory is <root>/<slug>/memory; each *.md in it except MEMORY.md is a
 // document. Subdirectories are not read. Files that resolve outside root, are
 // over 64 KiB, are unreadable or are not valid UTF-8 are recorded in Skipped
-// and the scan continues. A missing root sets RootMissing and is not an error.
+// and the scan continues. A memory directory that cannot be stat'ed or listed
+// is recorded in Skipped and FailedSlugs. A project with no memory directory
+// is neither. A missing root sets RootMissing and is not an error.
 func Discover(root string) (Discovery, error) {
 	var d Discovery
 	slugs, err := os.ReadDir(root)
@@ -114,12 +118,17 @@ func Discover(root string) (Discovery, error) {
 	}
 	for _, s := range slugs {
 		memDir := memoryDirOf(root, s.Name())
-		if fi, err := os.Stat(memDir); err != nil || !fi.IsDir() {
+		fi, err := os.Stat(memDir)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			d.fail(s.Name(), memDir, err)
+			continue
+		}
+		if err != nil || !fi.IsDir() {
 			continue // no memory directory for this project
 		}
 		files, err := os.ReadDir(memDir)
 		if err != nil {
-			d.Skipped = append(d.Skipped, Skipped{Path: memDir, Reason: "unreadable directory: " + err.Error()})
+			d.fail(s.Name(), memDir, err)
 			continue
 		}
 		for _, f := range files {
@@ -139,6 +148,14 @@ func Discover(root string) (Discovery, error) {
 	return d, nil
 }
 
+// fail records that the memory directory of slug could not be scanned. Sync
+// keeps that project's rows: a scan that could not see the directory says
+// nothing about the documents in it.
+func (d *Discovery) fail(slug, memDir string, err error) {
+	d.Skipped = append(d.Skipped, Skipped{Path: memDir, Reason: "unreadable directory: " + err.Error()})
+	d.FailedSlugs = append(d.FailedSlugs, slug)
+}
+
 // readDoc reads one memory file. A non-empty reason means the file is skipped.
 func readDoc(slug, path, name, realRoot string) (Doc, string) {
 	fi, err := os.Stat(path)
@@ -152,7 +169,7 @@ func readDoc(slug, path, name, realRoot string) (Doc, string) {
 	if err != nil {
 		return Doc{}, "unreadable: " + err.Error()
 	}
-	if !within(realRoot, resolved) {
+	if !pathguard.Within(resolved, realRoot) {
 		return Doc{}, "symlink resolves outside the projects root"
 	}
 	if fi.Size() > maxDocBytes {
@@ -169,12 +186,6 @@ func readDoc(slug, path, name, realRoot string) (Doc, string) {
 	sum := sha256.Sum256(content)
 	doc.FileSHA = hex.EncodeToString(sum[:])
 	return doc, ""
-}
-
-// within reports whether p is inside dir. Both paths must already be resolved.
-func within(dir, p string) bool {
-	rel, err := filepath.Rel(dir, p)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // kindOf maps a frontmatter type value to a Kind; anything else is unknown.

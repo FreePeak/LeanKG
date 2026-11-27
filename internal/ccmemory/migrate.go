@@ -60,9 +60,10 @@ type Mismatch struct {
 }
 
 const (
-	mismatchMissing = "missing"
-	mismatchExtra   = "extra"
-	mismatchHash    = "hash"
+	mismatchMissing    = "missing"
+	mismatchExtra      = "extra"
+	mismatchHash       = "hash"
+	mismatchScanFailed = "scan_failed"
 )
 
 // VerifyRows compares the rows read back after an apply with the desired set.
@@ -84,10 +85,14 @@ func VerifyRows(desired, actual map[Key]string) []Mismatch {
 			out = append(out, Mismatch{Bank: key.Bank, DocID: key.DocID, Reason: mismatchExtra})
 		}
 	}
-	slices.SortFunc(out, func(a, b Mismatch) int {
+	sortMismatches(out)
+	return out
+}
+
+func sortMismatches(ms []Mismatch) {
+	slices.SortFunc(ms, func(a, b Mismatch) int {
 		return cmp.Or(strings.Compare(a.Bank, b.Bank), strings.Compare(a.DocID, b.DocID), strings.Compare(a.Reason, b.Reason))
 	})
-	return out
 }
 
 // MigrateResult is the outcome of one migrate run, in the JSON shape of plan
@@ -109,6 +114,9 @@ type MigrateResult struct {
 // still under the sync lock, reads the cc- rows back and compares them with the
 // desired set. A dry run plans only: nothing is applied and nothing is verified.
 func Migrate(ctx context.Context, mem *memory.Memory, opts SyncOptions) (MigrateResult, error) {
+	if err := installDenyList(opts.CentralRoot); err != nil {
+		return MigrateResult{}, err
+	}
 	if err := requireSlugMemory(mem, opts); err != nil {
 		return MigrateResult{}, err
 	}
@@ -117,11 +125,19 @@ func Migrate(ctx context.Context, mem *memory.Memory, opts SyncOptions) (Migrate
 		mismatches = []Mismatch{}
 	)
 	verify := func(st syncState) error {
-		actual, err := actualSet(mem, st.projectOf, opts.OnlySlug)
+		rowSlug := map[Key]string{}
+		actual, err := actualSet(mem, st.projectOf, rowSlug, opts.OnlySlug)
 		if err != nil {
 			return err
 		}
+		for key := range failedRows(rowSlug, st.disc.FailedSlugs) {
+			delete(actual, key) // kept on purpose; reported once per project below
+		}
 		mismatches = VerifyRows(st.desired, actual)
+		for _, slug := range st.disc.FailedSlugs {
+			mismatches = append(mismatches, Mismatch{Bank: ProjectBank(slug), Reason: mismatchScanFailed})
+		}
+		sortMismatches(mismatches)
 		verified = len(mismatches) == 0
 		return nil
 	}
@@ -150,7 +166,7 @@ func requireSlugMemory(mem *memory.Memory, opts SyncOptions) error {
 	if opts.OnlySlug == "" || isDir(memoryDirOf(opts.Projects, opts.OnlySlug)) {
 		return nil
 	}
-	rows, err := actualSet(mem, map[string]string{}, opts.OnlySlug)
+	rows, err := actualSet(mem, map[string]string{}, map[Key]string{}, opts.OnlySlug)
 	if err != nil {
 		return err
 	}

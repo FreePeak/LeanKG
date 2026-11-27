@@ -83,8 +83,8 @@ func memoryUsage() error {
 }
 
 // cmdMemorySync makes the central cc- banks equal the Claude Code memory files
-// under the projects root, then compacts the central root. It waits for a sync
-// already running, unlike the session hook, which skips.
+// under the projects root, compacting them under the same lock. It waits for a
+// sync already running, unlike the session hook, which skips.
 func cmdMemorySync(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("memory sync", flag.ContinueOnError)
 	dryRun := flags.Bool("dry-run", false, "report the plan; write nothing")
@@ -257,10 +257,11 @@ func migrateExitCode(res ccmemory.MigrateResult) int {
 	return 1
 }
 
-// runOnCentral opens the central root under home, calls run with it and then
-// compacts it, unless this is a dry run. A dry run on an absent root calls run
-// on an empty scratch root instead, so the central root is never created. It
-// returns the central root path, which the caller reports as the result's root.
+// runOnCentral opens the central root under home and calls run with it. A dry
+// run on an absent root calls run on an empty scratch root instead, so the
+// central root is never created. It returns the central root path, which the
+// caller reports as the result's root. Compaction is not done here: the sync
+// and migrate passes run it under their own lock.
 func runOnCentral(ctx context.Context, home string, dryRun bool, run func(*memory.Memory) error) (string, error) {
 	central := memory.GlobalRoot(home)
 	if _, err := os.Stat(central); dryRun && errors.Is(err, os.ErrNotExist) {
@@ -281,10 +282,7 @@ func runOnCentral(ctx context.Context, home string, dryRun bool, run func(*memor
 		return central, err
 	}
 	defer mem.Close()
-	if err := run(mem); err != nil || dryRun {
-		return central, err
-	}
-	return central, mem.CompactPrefix(ctx, ccmemory.CentralBankPrefix)
+	return central, run(mem)
 }
 
 func printMemorySyncSummary(res ccmemory.SyncResult, dryRun bool) {
@@ -296,6 +294,9 @@ func printMemorySyncSummary(res ccmemory.SyncResult, dryRun bool) {
 		prefix, res.Documents, res.Upserted, res.Deleted, res.Skipped)
 	if res.DeletesWithheld {
 		fmt.Println("  WARNING: deletes withheld; the projects root is missing or holds no memories while central rows exist. Use --rebuild to clear them.")
+	}
+	if len(res.FailedProjects) > 0 {
+		fmt.Printf("  WARNING: scan failed for %s; their rows were kept.\n", strings.Join(res.FailedProjects, ", "))
 	}
 	for _, b := range res.Banks {
 		project := b.Project
