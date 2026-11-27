@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/ccmemory"
@@ -22,6 +23,7 @@ import (
 var memorySynopsis = []string{
 	"leankg memory sync [--dry-run] [--rebuild] [--json]",
 	"leankg memory migrate [--project SLUG] [--dry-run] [--json]",
+	"leankg memory recall <query...> [--scope project|global|all] [--type KIND ...] [--limit N] [--dir DIR] [--json] (keyword search)",
 }
 
 // memoryUsageText joins memorySynopsis; every line after the first starts with
@@ -34,6 +36,7 @@ func memoryUsageText(indent string) string {
 var memorySubcommands = map[string]verbFunc{
 	"sync":    cmdMemorySync,
 	"migrate": cmdMemoryMigrate,
+	"recall":  cmdMemoryRecall,
 }
 
 func cmdMemory(ctx context.Context, args []string) error {
@@ -136,6 +139,83 @@ func cmdMemoryMigrate(ctx context.Context, args []string) error {
 		return cliexit.Code(code)
 	}
 	return nil
+}
+
+// cmdMemoryRecall ranks the central memories for a query with ccmemory.Recall,
+// the function the agent_recall MCP command calls, so the rows match. No
+// embedder is wired on this path, so the ranking is keyword (BM25) only.
+func cmdMemoryRecall(ctx context.Context, args []string) error {
+	flags := flag.NewFlagSet("memory recall", flag.ContinueOnError)
+	scope := flags.String("scope", "project", "project, global or all")
+	var types stringList
+	flags.Var(&types, "type", "keep only this kind (user, feedback, project, reference, unknown); repeatable")
+	limit := flags.Int("limit", memory.RecallLimit, "maximum rows")
+	dir := flags.String("dir", "", "caller repository (default: the current directory)")
+	jsonOut := flags.Bool("json", false, "print the result as JSON")
+	words, err := parseInterspersed("memory recall", flags, args, -1)
+	if err != nil {
+		return err
+	}
+	query := strings.Join(words, " ")
+	if strings.TrimSpace(query) == "" {
+		return cliexit.Usage(errors.New("memory recall: a query is required"))
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return verbFatal(err)
+	}
+	repo, err := filepath.Abs(*dir) // Abs("") is the working directory
+	if err != nil {
+		return verbFatal(err)
+	}
+	h := ccmemory.NewHandle(home, nil)
+	defer h.Close()
+	mem, err := h.Get(ctx)
+	if err != nil {
+		return verbFatal(err)
+	}
+	res, err := ccmemory.Recall(ctx, mem, ccmemory.RecallRequest{
+		Query:  query,
+		Limit:  *limit,
+		Scope:  *scope,
+		Types:  types,
+		Caller: ccmemory.ProjectKey(claudecode.ProjectsRoot(home), repo),
+	})
+	if err != nil {
+		return verbFatal(err)
+	}
+	if *jsonOut {
+		return printOrgJSON(res)
+	}
+	printRecallText(res)
+	return nil
+}
+
+func printRecallText(res ccmemory.RecallResult) {
+	if res.Count == 0 {
+		fmt.Println("recall: no memories match")
+		return
+	}
+	for i, m := range res.Memories {
+		project := m.Project
+		if project == "" {
+			project = "global"
+		}
+		fmt.Printf("%d. [%s] %s (%s)\n", i+1, m.Kind, m.Name, project)
+		if m.Description != "" {
+			fmt.Printf("   %s\n", m.Description)
+		}
+		fmt.Printf("   %s\n", recallPreview(m.Content))
+	}
+}
+
+// recallPreview is the first non-empty line of content, cut to 120 runes.
+func recallPreview(content string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(content), "\n")
+	if r := []rune(line); len(r) > 120 {
+		return string(r[:120]) + "..."
+	}
+	return line
 }
 
 // migrateExitCode maps a migrate result to the process status: 0 when every

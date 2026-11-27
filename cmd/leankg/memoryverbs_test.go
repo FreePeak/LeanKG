@@ -15,6 +15,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/ccmemory"
 	"github.com/FreePeak/LeanKG/internal/flock"
 	"github.com/FreePeak/LeanKG/internal/memory"
+	"github.com/FreePeak/LeanKG/internal/sessionlink/claudecode"
 )
 
 // memorySyncEnv points HOME and CLAUDE_CONFIG_DIR at a fresh temp tree, so no
@@ -613,5 +614,219 @@ func TestMemoryMigrateUnknownProjectExitsOne(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "no memory found for project -work-typo") {
 		t.Fatalf("stderr lacks the unknown-project message:\n%s", stderr)
+	}
+}
+
+// memoryRecallFixture gives two repositories their own Claude Code memory
+// banks and syncs them into the central root: repository A holds a feedback
+// note and a project note, B a reference. Each repository is a temp dir, and
+// its slug names its memory directory, so --dir can select it.
+func memoryRecallFixture(t *testing.T) (repoA, repoB string) {
+	t.Helper()
+	_, projects := memorySyncEnv(t)
+	repoA, repoB = t.TempDir(), t.TempDir()
+	writeMemoryDoc(t, projects, claudecode.Slug(repoA), "tabs.md", "feedback", "Use tabs in every deploy script.")
+	writeMemoryDoc(t, projects, claudecode.Slug(repoA), "freeze.md", "project", "Alpha freezes deploys on Friday.")
+	writeMemoryDoc(t, projects, claudecode.Slug(repoB), "dashboards.md", "reference", "Beta dashboards live in Grafana.")
+	if code, out := runMemorySync(t); code != 0 {
+		t.Fatalf("memory sync exit = %d\n%s", code, out)
+	}
+	return repoA, repoB
+}
+
+// runMemoryRecall runs `leankg memory recall <args>` in-process and returns its
+// exit status, stdout and stderr.
+func runMemoryRecall(t *testing.T, args ...string) (int, string, string) {
+	t.Helper()
+	var code int
+	var stdout string
+	stderr := captureStderr(t, func() {
+		stdout = captureStdout(t, func() {
+			code = runVerb(context.Background(), append([]string{"memory", "recall"}, args...))
+		})
+	})
+	return code, stdout, stderr
+}
+
+// directRecall is ccmemory.Recall called the way the MCP command calls it, for
+// the same inputs the CLI receives. home is the HOME the test set.
+func directRecall(t *testing.T, req func(home string) ccmemory.RecallRequest) ccmemory.RecallResult {
+	t.Helper()
+	home := os.Getenv("HOME")
+	h := ccmemory.NewHandle(home, nil)
+	defer h.Close()
+	mem, err := h.Get(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := ccmemory.Recall(context.Background(), mem, req(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+func TestMemoryRecallIsRegisteredAndListedInUsage(t *testing.T) {
+	if _, ok := memorySubcommands["recall"]; !ok {
+		t.Fatal(`memory subcommand "recall" is not registered`)
+	}
+	stderr := captureStderr(t, usage)
+	line := "leankg memory recall <query...> [--scope project|global|all] [--type KIND ...] [--limit N] [--dir DIR] [--json]"
+	if !strings.Contains(stderr, line) {
+		t.Fatalf("main usage does not list %q:\n%s", line, stderr)
+	}
+}
+
+func TestMemoryRecallJSONMatchesRecall(t *testing.T) {
+	_, repoB := memoryRecallFixture(t)
+
+	code, out, stderr := runMemoryRecall(t, "deploy", "--scope", "all", "--dir", repoB, "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, stderr)
+	}
+	var got ccmemory.RecallResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decode recall JSON: %v\n%s", err, out)
+	}
+	want := directRecall(t, func(home string) ccmemory.RecallRequest {
+		return ccmemory.RecallRequest{
+			Query: "deploy", Limit: memory.RecallLimit, Scope: "all",
+			Caller: ccmemory.ProjectKey(claudecode.ProjectsRoot(home), repoB),
+		}
+	})
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("CLI JSON differs from ccmemory.Recall:\ngot  %+v\nwant %+v", got, want)
+	}
+	if got.Count == 0 {
+		t.Fatalf("fixture query returned no rows; the comparison proves nothing")
+	}
+}
+
+func TestMemoryRecallTextListsTheSameRowsInOrder(t *testing.T) {
+	_, repoB := memoryRecallFixture(t)
+
+	code, out, stderr := runMemoryRecall(t, "deploy", "--scope", "all", "--dir", repoB)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, stderr)
+	}
+	want := directRecall(t, func(home string) ccmemory.RecallRequest {
+		return ccmemory.RecallRequest{
+			Query: "deploy", Limit: memory.RecallLimit, Scope: "all",
+			Caller: ccmemory.ProjectKey(claudecode.ProjectsRoot(home), repoB),
+		}
+	})
+	if len(want.Memories) == 0 {
+		t.Fatal("fixture query returned no rows; the comparison proves nothing")
+	}
+	last := -1
+	for _, m := range want.Memories {
+		row := "[" + m.Kind + "] " + m.Name
+		i := strings.Index(out, row)
+		if i < 0 {
+			t.Fatalf("text output lacks row %q:\n%s", row, out)
+		}
+		if i < last {
+			t.Fatalf("text output lists %q out of ranking order:\n%s", row, out)
+		}
+		last = i
+	}
+}
+
+func TestMemoryRecallDirSelectsCallerRepository(t *testing.T) {
+	repoA, repoB := memoryRecallFixture(t)
+	_ = repoA
+
+	// Feedback from repository A is returned for caller B under project scope.
+	code, out, stderr := runMemoryRecall(t, "tabs", "--dir", repoB, "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, stderr)
+	}
+	var got ccmemory.RecallResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := findRecalledByName(got, "tabs"); !ok {
+		t.Fatalf("caller B: feedback from A not returned; memories=%+v", got.Memories)
+	}
+
+	// A's project note is returned for caller B only under scope all.
+	_, out, _ = runMemoryRecall(t, "freeze", "--dir", repoB, "--json")
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Count != 0 {
+		t.Fatalf("caller B, project scope: A's project note leaked: %+v", got.Memories)
+	}
+	_, out, _ = runMemoryRecall(t, "freeze", "--scope", "all", "--dir", repoB, "--json")
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := findRecalledByName(got, "freeze"); !ok {
+		t.Fatalf("caller B, scope all: A's project note not returned: %+v", got.Memories)
+	}
+}
+
+func findRecalledByName(res ccmemory.RecallResult, name string) (ccmemory.RecalledMemory, bool) {
+	for _, m := range res.Memories {
+		if m.Name == name {
+			return m, true
+		}
+	}
+	return ccmemory.RecalledMemory{}, false
+}
+
+func TestMemoryRecallTypeFilterIsRepeatable(t *testing.T) {
+	_, repoB := memoryRecallFixture(t)
+
+	code, out, stderr := runMemoryRecall(t, "deploy", "--scope", "all", "--type", "feedback", "--type", "project", "--dir", repoB, "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, stderr)
+	}
+	var got ccmemory.RecallResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range got.Memories {
+		if m.Kind != "feedback" && m.Kind != "project" {
+			t.Fatalf("--type feedback --type project returned kind %q: %+v", m.Kind, m)
+		}
+	}
+}
+
+func TestMemoryRecallWithoutCentralRootExitsOneAndCreatesNothing(t *testing.T) {
+	central, _ := memorySyncEnv(t)
+
+	code, _, stderr := runMemoryRecall(t, "deploy")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\n%s", code, stderr)
+	}
+	if !strings.Contains(stderr, "no central memory root") || !strings.Contains(stderr, "leankg memory sync") {
+		t.Fatalf("stderr lacks the no-central-root message naming the sync command:\n%s", stderr)
+	}
+	if _, err := os.Stat(central); !os.IsNotExist(err) {
+		t.Fatalf("central root was created by a read: stat err = %v", err)
+	}
+}
+
+func TestMemoryRecallMissingQueryExitsTwo(t *testing.T) {
+	memoryRecallFixture(t)
+	for _, args := range [][]string{{}, {"--json"}, {"--scope", "all"}} {
+		code, _, stderr := runMemoryRecall(t, args...)
+		if code != 2 {
+			t.Errorf("recall %v: exit = %d, want 2\n%s", args, code, stderr)
+		}
+	}
+}
+
+func TestMemoryRecallInvalidScopeOrTypeExitsOne(t *testing.T) {
+	_, repoB := memoryRecallFixture(t)
+	for _, args := range [][]string{
+		{"deploy", "--scope", "bogus", "--dir", repoB},
+		{"deploy", "--type", "bogus", "--dir", repoB},
+	} {
+		code, _, stderr := runMemoryRecall(t, args...)
+		if code != 1 {
+			t.Errorf("recall %v: exit = %d, want 1\n%s", args, code, stderr)
+		}
 	}
 }
