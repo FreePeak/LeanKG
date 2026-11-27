@@ -222,3 +222,41 @@ func TestCompactRedactsRowIDs(t *testing.T) {
 		t.Fatalf("compaction left the raw key in the row id: %s", data)
 	}
 }
+
+// TestCompactPrefixLeavesOtherBanksAlone pins the scoped pass: CompactPrefix
+// rewrites only the banks whose name carries the prefix, so the post-sync
+// compaction never rewrites a bank the user owns. Compact (an empty prefix)
+// still rewrites every bank.
+func TestCompactPrefixLeavesOtherBanksAlone(t *testing.T) {
+	m := openTest(t)
+	ownPath := writeDuplicateBank(t, m, "cc-own")
+	foreignPath := writeDuplicateBank(t, m, "other-bank")
+	foreignBefore, err := os.ReadFile(foreignPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.CompactPrefix(context.Background(), "cc-"); err != nil {
+		t.Fatalf("CompactPrefix: %v", err)
+	}
+	if got := bankLines(t, m, "cc-own"); len(got) != 2 {
+		t.Fatalf("cc- bank holds %d rows after CompactPrefix, want 2 (duplicate collapsed): %v", len(got), got)
+	}
+	foreignAfter, err := os.ReadFile(foreignPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(foreignAfter) != string(foreignBefore) {
+		t.Fatalf("CompactPrefix rewrote a bank outside the prefix:\nbefore: %q\nafter:  %q", foreignBefore, foreignAfter)
+	}
+	if _, err := os.Stat(ownPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.Compact(context.Background()); err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if got := bankLines(t, m, "other-bank"); len(got) != 2 {
+		t.Fatalf("Compact (no prefix) left %d rows in other-bank, want 2: %v", len(got), got)
+	}
+}
