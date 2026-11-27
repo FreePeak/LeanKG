@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/memory"
@@ -121,5 +122,49 @@ func TestHandleInjectedMemoryIsReturnedAndNotClosed(t *testing.T) {
 	}
 	if _, err := mem.Banks(); err != nil {
 		t.Fatalf("Close closed the injected memory, which the handle does not own: %v", err)
+	}
+}
+
+// A failed open or stat must not hand the caller the local home path: the error
+// reaches every transport that answers agent_recall. The two branches are the
+// stat of the index (the root cannot be entered) and the open (the index is
+// present but the root cannot take its topics directory). Both need a non-root
+// user, because root ignores directory modes.
+func TestHandleFailureNamesNoLocalPath(t *testing.T) {
+	cases := map[string]fs.FileMode{
+		"stat fails": 0o000,
+		"open fails": 0o555,
+	}
+	for name, mode := range cases {
+		t.Run(name, func(t *testing.T) {
+			if os.Geteuid() == 0 {
+				t.Skip("root ignores directory modes")
+			}
+			home := t.TempDir()
+			root := memory.GlobalRoot(home)
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "index.db"), []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(root, mode); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+
+			_, err := NewHandle(home, nil).Get(context.Background())
+			if err == nil {
+				t.Fatal("Get on an unreadable root: err = nil, want a refusal")
+			}
+			if errors.Is(err, ErrNoCentralRoot) {
+				t.Fatalf("Get on an unreadable root answered as an absent root: %v", err)
+			}
+			for _, leak := range []string{home, root} {
+				if strings.Contains(err.Error(), leak) {
+					t.Errorf("error leaks local path %q: %v", leak, err)
+				}
+			}
+		})
 	}
 }

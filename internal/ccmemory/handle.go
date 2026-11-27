@@ -3,10 +3,11 @@ package ccmemory
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/FreePeak/LeanKG/internal/memory"
@@ -18,6 +19,10 @@ var ErrNoCentralRoot = errors.New("ccmemory: no central memory root yet; run `le
 
 // errHandleClosed is returned by Get after Close.
 var errHandleClosed = errors.New("ccmemory: central memory handle is closed")
+
+// errCentralUnavailable is what a caller gets when the central index exists but
+// cannot be opened. The cause names local paths, so it is logged, never returned.
+var errCentralUnavailable = errors.New("ccmemory: central memory could not be opened (run `leankg memory sync`)")
 
 // Handle is a lazily opened handle on the central memory root,
 // memory.GlobalRoot(home). It is safe for concurrent use.
@@ -54,16 +59,26 @@ func (h *Handle) Get(ctx context.Context) (*memory.Memory, error) {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, ErrNoCentralRoot
 		}
-		return nil, fmt.Errorf("ccmemory: stat central index: %w", err)
+		return nil, h.unavailable(err)
 	}
 	// memory.Open(ctx, dir, false) opens <dir>/.leankg/memory, which is the
 	// central root when dir is home.
 	mem, err := memory.Open(ctx, h.home, false)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, h.unavailable(err)
 	}
 	h.mem, h.owned = mem, true
 	return mem, nil
+}
+
+// unavailable logs the cause with the home rewritten to ~ (the plan's privacy
+// rule for local paths) and returns the fixed refusal.
+func (h *Handle) unavailable(cause error) error {
+	log.Printf("ccmemory: central memory unavailable: %s", strings.ReplaceAll(cause.Error(), h.home, "~"))
+	return errCentralUnavailable
 }
 
 // Close closes the memory this handle opened. An injected memory is left open.

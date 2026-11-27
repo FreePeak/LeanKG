@@ -220,6 +220,22 @@ func TestAgentRecallUnknownTypeNamesValidTypes(t *testing.T) {
 	}
 }
 
+// args.cwd is the caller's repository identity, and a relative one would be taken
+// as a slug that matches no bank. It is refused as an invalid parameter, the same
+// rule the MCP layer applies to the project argument.
+func TestAgentRecallRejectsRelativeCwd(t *testing.T) {
+	f, _ := newRecallEngine(t, true, nil)
+
+	_, err := recallQuery(t, f.e, "tabs", map[string]any{"cwd": "repo-beta"})
+	var e *errs.Error
+	if !errors.As(err, &e) || e.Entry.Code != errs.InvalidParam.Code {
+		t.Fatalf("relative cwd: err = %v; want %s", err, errs.InvalidParam.Code)
+	}
+	if !strings.Contains(err.Error(), "absolute directory path") {
+		t.Fatalf("relative cwd: refusal does not name the rule: %v", err)
+	}
+}
+
 func TestAgentRecallEmptyQueryNamesTheArgument(t *testing.T) {
 	f, _ := newRecallEngine(t, true, nil)
 

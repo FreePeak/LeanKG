@@ -200,14 +200,19 @@ func (s *Server) centralEngine(ctx context.Context) (*core.Engine, func(), error
 
 // agentRecallIdentity hands the project argument of an agent_recall call to the
 // engine as the caller's identity: args.cwd, which the engine resolves to the
-// repository's bank. It never routes the call (KD-8). Callers pass fields that
+// repository's bank. It never routes the call (KD-8). A relative project is
+// refused by the same rule the engine applies to cwd. Callers pass fields that
 // isAgentRecall has already matched, so args is a map.
-func agentRecallIdentity(fields map[string]any) {
+func agentRecallIdentity(fields map[string]any) error {
 	project, _ := fields["project"].(string)
+	if err := core.CheckAgentIdentity("project", project); err != nil {
+		return err
+	}
 	nested := fields["args"].(map[string]any)
 	if cwd, _ := nested["cwd"].(string); cwd == "" && project != "" {
 		nested["cwd"] = project
 	}
+	return nil
 }
 
 // grantedEngine refuses a caller whose grant or org scope does not cover the
@@ -686,7 +691,9 @@ func (s *Server) handleQuery(ctx context.Context, req *mcp.CallToolRequest) (*mc
 		return nil, err
 	}
 	if isAgentRecall(req, fields) {
-		agentRecallIdentity(fields)
+		if err := agentRecallIdentity(fields); err != nil {
+			return nil, err
+		}
 	}
 	in, err := core.DecodeQuery(fields)
 	if err != nil {

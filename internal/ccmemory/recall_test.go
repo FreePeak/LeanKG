@@ -2,6 +2,7 @@ package ccmemory
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -185,6 +186,37 @@ func TestRecallDefaultsToProjectScopeAndRecallLimit(t *testing.T) {
 	}
 	if res.Count > memory.RecallLimit {
 		t.Errorf("count: got %d, want at most %d", res.Count, memory.RecallLimit)
+	}
+}
+
+// TestRecallLimitIsCappedAndZeroDefaults: a request for more rows than the
+// documented cap (50) is answered with 50 rows, and a zero or negative limit gets
+// the default. The rows are distinct, so none collapses by content_id.
+func TestRecallLimitIsCappedAndZeroDefaults(t *testing.T) {
+	const wantCap = 50
+	projects, mem := applySetup(t)
+	mtime := time.Unix(fixedMTime, 0)
+	for i := 0; i < wantCap+10; i++ {
+		body := fmt.Sprintf("---\nname: Deploy note %02d\ndescription: Deploy runbook note %02d.\nmetadata:\n  type: project\n---\nDeploy step %02d runs after the freeze lifts.\n", i, i, i)
+		path := memFile(projects, "-work-alpha", fmt.Sprintf("deploy-note-%02d.md", i))
+		writeFile(t, path, body)
+		if err := os.Chtimes(path, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runSync(t, mem, syncOpts(projects, mem))
+
+	for _, limit := range []int{wantCap + 10, 1000} {
+		res := recallOK(t, mem, RecallRequest{Query: "deploy", Scope: "all", Limit: limit})
+		if res.Count != wantCap {
+			t.Errorf("limit %d: count %d, want the cap %d", limit, res.Count, wantCap)
+		}
+	}
+	for _, limit := range []int{0, -3} {
+		res := recallOK(t, mem, RecallRequest{Query: "deploy", Scope: "all", Limit: limit})
+		if res.Count != memory.RecallLimit {
+			t.Errorf("limit %d: count %d, want the default %d", limit, res.Count, memory.RecallLimit)
+		}
 	}
 }
 

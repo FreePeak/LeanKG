@@ -231,6 +231,28 @@ func TestAgentRecallIsAdvertisedInQuerySchema(t *testing.T) {
 	t.Fatal("query tool is not advertised")
 }
 
+// A bare repository name is not an identity: ProjectKey takes it as a slug that
+// matches no bank, so the caller silently gets the global rows only. The call is
+// refused with an invalid-parameter error; an empty project still answers.
+func TestAgentRecallRejectsRelativeProjectIdentity(t *testing.T) {
+	srv := agentRecallSetup(t)
+	ctx := context.Background()
+
+	_, err := callAgentQuery(ctx, srv, `{"action":"memory","query":"deploys","project":"repo-beta","args":{"command":"agent_recall","scope":"all"}}`)
+	var e *errs.Error
+	if !errors.As(err, &e) || e.Entry.Code != errs.InvalidParam.Code {
+		t.Fatalf("relative project: err = %v; want %s", err, errs.InvalidParam.Code)
+	}
+	if !strings.Contains(err.Error(), "project must be an absolute directory path for agent_recall") {
+		t.Fatalf("relative project: refusal does not name the rule: %v", err)
+	}
+
+	out, err := callAgentQuery(ctx, srv, `{"action":"memory","query":"deploys","args":{"command":"agent_recall","scope":"all"}}`)
+	if err != nil || !strings.Contains(out, "Release freeze") {
+		t.Fatalf("empty project must fall back to the engine's project: err = %v, out %s", err, out)
+	}
+}
+
 // TestSearchWithAgentRecallCommandIsNotRoutedAsRecall pins that only
 // action=memory is agent_recall: a search that carries args.command=agent_recall
 // is routed like any other search. For a limited caller it must not meet the

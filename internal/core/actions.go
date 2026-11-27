@@ -17,11 +17,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/ccmemory"
 	"github.com/FreePeak/LeanKG/internal/docindex"
+	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/graph"
 	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/memory"
@@ -563,6 +565,9 @@ func (e *Engine) queryAgentRecall(ctx context.Context, req QueryRequest, a query
 	if auth.ProjectLimited(ctx) {
 		return nil, auth.SpanningDenied()
 	}
+	if err := CheckAgentIdentity("cwd", a.Cwd); err != nil {
+		return nil, err
+	}
 	if e.agentMem == nil {
 		return nil, errors.New("agent_recall: central memory is not configured on this server")
 	}
@@ -597,6 +602,20 @@ func (e *Engine) queryAgentRecall(ctx context.Context, req QueryRequest, a query
 		"count":    res.Count,
 		"memories": res.Memories,
 	}, nil
+}
+
+// CheckAgentIdentity refuses a relative repository identity for agent_recall:
+// field is the argument name ("cwd" or "project"). A relative path names no
+// repository. ProjectKey would take it as a slug that matches no bank, and the
+// caller would silently get the global rows only. An empty value is no identity
+// and passes. The MCP layer and the engine share this rule.
+func CheckAgentIdentity(field, value string) error {
+	if value == "" || filepath.IsAbs(value) {
+		return nil
+	}
+	return errs.NewError(errs.InvalidParam,
+		field+" must be an absolute directory path for agent_recall",
+		"pass the repository's absolute path, or omit it to use this server's project")
 }
 
 // queryMemoryView reads one memory file by path (RS-21: was ConnectRPC-only).
