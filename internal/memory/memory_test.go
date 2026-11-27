@@ -852,3 +852,16 @@ func TestCoreFileBoundMeasuresWhatLands(t *testing.T) {
 		}
 	})
 }
+
+// TestInjectBlockOversizeFirstEntryDoesNotHideTheRest: an entry over the token
+// budget is skipped while nothing is kept yet, so it cannot hide the block.
+func TestInjectBlockOversizeFirstEntryDoesNotHideTheRest(t *testing.T) {
+	es := []Entry{
+		{Content: strings.Repeat("b", 200)}, // ~51 tokens, over the 12-token budget
+		{Content: strings.Repeat("a", 40)},  // ~11 tokens, fits
+	}
+	got := InjectBlock(es, 8, 12)
+	if !strings.Contains(got, "- "+strings.Repeat("a", 40)) || strings.Contains(got, "bbb") {
+		t.Fatalf("block = %q, want the fitting entry and no oversize one", got)
+	}
+}
