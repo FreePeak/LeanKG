@@ -266,13 +266,14 @@ func (e *Engine) stampProvenance(ctx context.Context, resp map[string]any, rung,
 // project the caller cannot see: the router already applied the grant to the
 // served project. A context with no caller (stdio, the CLI) is an unrestricted
 // local admin. A portfolio answer spans several projects, so it has no project
-// key. A project-less engine (no ProjectDir) has none either.
-func (e *Engine) stampAccess(ctx context.Context, resp map[string]any, action string) {
+// key. An agent_recall answer spans every repository too, so it has none either. A
+// project-less engine (no ProjectDir) has none either.
+func (e *Engine) stampAccess(ctx context.Context, resp map[string]any, spansRepos bool) {
 	access := map[string]any{"role": auth.Admin.String(), "via": auth.ViaLocal, "restricted": false}
 	if ac, ok := auth.AuthFrom(ctx); ok {
 		access["role"], access["via"], access["restricted"] = ac.Role.String(), ac.Via, ac.ProjectRestricted()
 	}
-	if action != PortfolioAction && e.projectDir != "" {
+	if !spansRepos && e.projectDir != "" {
 		access["project"] = filepath.Base(e.projectDir)
 	}
 	if n, _ := resp["projects_withheld"].(int); n > 0 {
@@ -756,7 +757,7 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	}
 	out, err := e.query(ctx, req)
 	if err == nil && out != nil {
-		e.stampAccess(ctx, out, req.Action)
+		e.stampAccess(ctx, out, spansRepositories(req))
 		if r, ok := out["retrieval"].(map[string]any); ok && r != nil && scopeName != "" {
 			r["scope"] = scopeName
 			// A weighted answer says so, for the same reason scope does — but
@@ -1740,7 +1741,13 @@ func parseFusionWeight(raw string) (fusionWeight, error) {
 // whose args.scope is its own vocabulary (project, global, all; KD-9), not the
 // retrieval scope scopePredicate checks.
 func memoryOwnsScope(req QueryRequest) bool {
-	return req.Action == "memory" && req.Args["command"] == "agent_recall"
+	return req.Action == "memory" && req.Args["command"] == ccmemory.RecallCommand
+}
+
+// spansRepositories reports whether an answer is built from more than this
+// engine's project: a portfolio fan-out, or agent_recall over the central memory.
+func spansRepositories(req QueryRequest) bool {
+	return req.Action == PortfolioAction || memoryOwnsScope(req)
 }
 
 func scopePredicate(scope string) (store.ElementFilter, string, error) {

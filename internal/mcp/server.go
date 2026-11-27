@@ -19,6 +19,7 @@ import (
 
 	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/budget"
+	"github.com/FreePeak/LeanKG/internal/ccmemory"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -173,18 +174,15 @@ func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core
 	return s.router.EngineAs(ctx, p, visible)
 }
 
-// agentRecallCommand is the query{action:"memory"} command that reads the
-// central memory banks (KD-7).
-const agentRecallCommand = "agent_recall"
-
 // isAgentRecall reports whether a call is query{action:"memory",
-// args.command:"agent_recall"}. args is the decoded tool arguments.
+// args.command:"agent_recall"}, the command that reads the central memory banks
+// (KD-7). args is the decoded tool arguments.
 func isAgentRecall(req *mcp.CallToolRequest, args map[string]any) bool {
 	if req == nil || req.Params == nil || req.Params.Name != core.ToolQuery || args["action"] != "memory" {
 		return false
 	}
 	nested, _ := args["args"].(map[string]any)
-	return nested["command"] == agentRecallCommand
+	return nested["command"] == ccmemory.RecallCommand
 }
 
 // centralEngine answers agent_recall from the default engine, whatever project

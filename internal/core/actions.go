@@ -177,8 +177,10 @@ var queryMemoryCommands = map[string]queryMemoryHandler{
 	"view":           (*Engine).queryMemoryView,
 	"snapshot":       (*Engine).queryMemorySnapshot,
 	"search":         (*Engine).queryMemorySearch,
-	"agent_recall":   (*Engine).queryAgentRecall,
-	"":               (*Engine).queryMemorySearch,
+	// The key stays a literal: the registry guards read keys from source. It is
+	// pinned to ccmemory.RecallCommand by TestAgentRecallCommandIsRegistered.
+	"agent_recall": (*Engine).queryAgentRecall,
+	"":             (*Engine).queryMemorySearch,
 }
 
 // memoryReadCommands serves the read-only memory commands MemoryRead answers.
@@ -527,7 +529,7 @@ type memoryBaseArgs struct {
 // args.types; for every other sub-command the args decode against memoryBaseArgs,
 // so types is an unknown key and is refused with the same error any unknown key gets.
 func queryMemoryAction(e *Engine, ctx context.Context, req QueryRequest) (map[string]any, error) {
-	if cmd, _ := req.Args["command"].(string); cmd == "agent_recall" {
+	if cmd, _ := req.Args["command"].(string); cmd == ccmemory.RecallCommand {
 		return queryAction((*Engine).queryMemory)(e, ctx, req)
 	}
 	base, err := decodeArgs[memoryBaseArgs](req.Args)

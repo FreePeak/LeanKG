@@ -316,6 +316,32 @@ func TestAgentRecallRefusesLimitedCallersOnTheEngine(t *testing.T) {
 	}
 }
 
+// The dispatch key is a literal (the registry guards read keys from source). This
+// pins it to the one constant the engine, the MCP layer and ccmemory all match on.
+func TestAgentRecallCommandIsRegistered(t *testing.T) {
+	if _, ok := queryMemoryCommands[ccmemory.RecallCommand]; !ok {
+		t.Fatalf("queryMemoryCommands has no %q key: the literal and ccmemory.RecallCommand disagree", ccmemory.RecallCommand)
+	}
+}
+
+// An agent_recall answer spans every repository, so its access block names no
+// project: the engine's own project would mis-attribute a cross-repository answer.
+func TestAgentRecallAccessNamesNoProject(t *testing.T) {
+	f, _ := newRecallEngine(t, true, nil)
+	res, err := f.e.QueryAnswer(context.Background(), QueryRequest{Action: "memory", Query: "tabs",
+		Args: map[string]any{"command": "agent_recall", "cwd": recallRepoB, "scope": "all"}})
+	if err != nil {
+		t.Fatalf("agent_recall: %v", err)
+	}
+	access, _ := res.Raw["access"].(map[string]any)
+	if access == nil {
+		t.Fatalf("answer carries no access block: %+v", res.Raw)
+	}
+	if got, has := access["project"]; has {
+		t.Errorf("access.project = %v on a cross-repository answer; want none", got)
+	}
+}
+
 // An unlimited token is answered as before: the refusal above is for limited
 // callers only.
 func TestAgentRecallServesUnlimitedCaller(t *testing.T) {

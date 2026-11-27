@@ -17,8 +17,10 @@ const (
 	scopeAll     = "all"
 )
 
-// recallCommand is the command name in every RecallResult.
-const recallCommand = "agent_recall"
+// RecallCommand is the query{action:"memory"} command name of agent_recall. It is
+// the one spelling every layer matches on: the engine, the MCP layer and the
+// RecallResult below.
+const RecallCommand = "agent_recall"
 
 // maxRecallLimit caps the rows of one agent_recall answer, whatever the caller
 // asks for. A zero or negative limit gets memory.RecallLimit instead.
@@ -109,7 +111,7 @@ func Recall(ctx context.Context, mem *memory.Memory, req RecallRequest) (RecallR
 		return RecallResult{}, err
 	}
 	res := RecallResult{
-		Command:  recallCommand,
+		Command:  RecallCommand,
 		Scope:    scope,
 		Project:  project,
 		Banks:    banks,
