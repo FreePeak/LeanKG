@@ -1,9 +1,9 @@
 # Plan: central agent memory (cross-repository recall for Claude Code sessions)
 
-**Status:** In implementation: sync and migrate in #619, recall in #620, hook and docs in the stacked hook PR
+**Status:** Implemented in PRs #619 (sync, migrate), #620 (recall) and #621 (hook, install, docs); see section 12 for slice status
 **Date:** 2026-11-27
 **Owner:** maintainer
-**Tracks:** `CAM-00..CAM-20` (rows to be added to `docs/prd-task-tracker.md` by CAM-01; the prefix does not occur under `docs/` today)
+**Tracks:** `CAM-00..CAM-20` (rows in `docs/prd-task-tracker.md`, added by CAM-01; the prefix does not occur under `docs/` before this wave)
 **Evidence pin:** every `file:line` below was read first-hand from the checkout of `origin/main` reported as commit `15221142` (the commit id itself is UNVERIFIED by this document; re-pin if `main` has moved).
 
 This is the working plan for one wave. When the wave lands, its outcome moves into the PRD changelog and this file is archived under `docs/archive/` (same convention as `docs/plan-dashboard.md:6`).
@@ -50,7 +50,7 @@ Claude Code keeps auto-memory per repository under `~/.claude/projects/<project-
 | # | Assumption | Status |
 |---|---|---|
 | A1 | The memory directory is `~/.claude/projects/<project>/memory/`, where `<project>` is derived from the git repository, so worktrees and subdirectories share one directory. Outside a git repository the project root is used. | Verified in the Claude Code documentation (`memory` page, read 2026-11-27). |
-| A2 | The exact `<project>` string is the main repository root with `/` and `.` replaced by `-`. | Supported (2026-11-27): the one linked-worktree session directory on the machine has no memory directory, so memory resolves to the main repository slug; exact string for a worktree session still to confirm with CAM-00 step (a). |
+| A2 | The exact `<project>` string is the main repository root with `/` and `.` replaced by `-`. | Supported, not verified for linked worktrees (2026-11-27): no linked-worktree session with a memory directory was observed, so the main-repository slug is the expected name. `ProjectKey` tries the main-root slug first, then the directory's own slug. CAM-00 step (a) stays open. |
 | A3 | A memory file is Markdown with YAML frontmatter carrying `name`, `description` and a type (`user`, `feedback`, `project`, `reference`) either as top-level `type` or nested under `metadata`. `MEMORY.md` is an index, one line per memory. | Verified on a real install (2026-11-27): all 274 memory files across 160 project directories have top-level `name`, `description`, `metadata`, with `type` nested under `metadata`; none has a top-level `type` or lacks frontmatter. Extra nested keys (`originSessionId`, `node_type`, `modified`) are ignored. |
 | A4 | At session start Claude Code loads the first 200 lines or 25 KB of the current repository's `MEMORY.md` and no topic files. | Verified in the Claude Code documentation (`memory` page). |
 | A5 | Plain stdout of a `SessionStart` command hook is added to context. Each output string is capped at 10,000 characters; beyond that only a 2,000-character preview is shown. A non-zero exit does not block the session. The default command timeout is 600 s and a per-hook `timeout` field exists. | Verified in the Claude Code documentation (`hooks` page, read 2026-11-27). Verified end to end on 2026-11-27 with Claude Code 2.1.329: the stdout of a synchronous `SessionStart` command hook was visible to the model (a one-shot probe printed a random token and the model repeated it). |
@@ -591,8 +591,8 @@ More on a topic: call the leankg query tool with action "memory", args.command "
 
 Recommended: one local server for every repository.
 
-- Start it: `<leankg-binary> serve --http 127.0.0.1:9699 --memory`
-- Register it: `claude mcp add --transport http --scope user leankg http://127.0.0.1:9699/mcp`
+- Start it: `<leankg-binary> serve --http 127.0.0.1:<port> --memory`
+- Register it: `claude mcp add --transport http --scope user leankg http://127.0.0.1:<port>/mcp`
 
 The exact `claude mcp add` flags are UNVERIFIED here; check `claude mcp add --help`. `<leankg-binary> install --target claude-code` writes the same entry into the client config (`cmd/leankg/connect.go:103`).
 
@@ -710,13 +710,13 @@ Slices are ordered. Each is one commit. CAM-00 has no code.
 
 - [x] Task: CAM-00 Confirm three Claude Code facts on a real install
   - Module: `cc-source`, `cc-hook`
-  - Acceptance: the notes record (a) the directory name Claude Code uses for a repository's memory when the session runs in a linked worktree; (b) the frontmatter keys of three real memory files, with values replaced by placeholders; (c) that plain stdout of a synchronous `SessionStart` hook containing a `<memories>` block is visible to the model. A2 and A3 are updated in this document (2026-11-27); A6 stays UNVERIFIED. Item (c) remains a manual check that blocks only CAM-16 onward. DONE (c) 2026-11-27 with Claude Code 2.1.329: the stdout of a synchronous `SessionStart` command hook was visible to the model (a one-shot probe printed a random token and the model repeated it).
+  - Acceptance: the notes record (a) the directory name Claude Code uses for a repository's memory when the session runs in a linked worktree; (b) the frontmatter keys of three real memory files, with values replaced by placeholders; (c) that plain stdout of a synchronous `SessionStart` hook containing a `<memories>` block is visible to the model. A2 and A3 are updated in this document (2026-11-27); A6 stays UNVERIFIED. DONE with (a) not fully verified: no worktree session had a memory directory; `ProjectKey` tries the main-root slug first then the directory's own slug. (b) and (c) verified. (c) 2026-11-27 with Claude Code 2.1.329: the stdout of a synchronous `SessionStart` command hook was visible to the model (a one-shot probe printed a random token and the model repeated it).
   - Verify: manual; a throwaway hook `printf 'probe\n<memories>\n- x\n</memories>\n'` and one question to the model.
   - Files: `docs/plan-central-agent-memory.md`
 
 - [x] Task: CAM-01 Tracker rows
   - Module: all
-  - Acceptance: `docs/prd-task-tracker.md` has rows `CAM-00..CAM-19` and `docs/prd.md` has a short requirement entry pointing at this plan.
+  - Acceptance: `docs/prd-task-tracker.md` has rows `CAM-00..CAM-20` and `docs/prd.md` has a short requirement entry pointing at this plan.
   - Verify: `go test ./internal/archtest/ -count=1`
   - Files: `docs/prd.md`, `docs/prd-task-tracker.md`
 
@@ -822,7 +822,7 @@ Slices are ordered. Each is one commit. CAM-00 has no code.
   - Acceptance: `install --target claude-code --register-memory` adds the entry of section 7.2 to a settings file, preserving every other key and hook; a second run changes nothing; the existing index hook entry and its tests are unaffected; other targets return the unsupported-client error.
   - Note (2026-11-27): the install verb also writes the leankg MCP server entry to the client config file (`~/.claude.json`), because that is what `install` already does; there is no hook-only path in this wave (OQ-11).
   - Verify: `go test ./cmd/leankg/ -run 'TestRegister|TestInstall' -count=1`
-  - Files: `cmd/leankg/connect.go`, `cmd/leankg/connect_test.go`, `cmd/leankg/install.go`, `cmd/leankg/install_test.go`
+  - Files: `cmd/leankg/connect.go`, `cmd/leankg/connect_test.go`, `cmd/leankg/install.go`, `cmd/leankg/install_test.go`, `cmd/leankg/wire.go`
 
 - [x] Task: CAM-18 Telemetry from the CLI paths
   - Module: `cc-hook`
