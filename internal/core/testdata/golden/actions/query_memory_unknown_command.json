@@ -1,3 +1,3 @@
 {
-  "error": "unknown memory read command \"bogus\" (valid: session_recall, memories, view, snapshot, search)"
+  "error": "unknown memory read command \"bogus\" (valid: session_recall, memories, view, snapshot, search, agent_recall)"
 }

@@ -4,12 +4,32 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // ResourceProject is the ResourceClaim type a registered project is recorded
 // under. The claim's org_id is the org that may see the project.
 const ResourceProject = "project"
+
+// ProjectLimited reports whether the caller in ctx is limited to some projects:
+// a project: grant, the anonymous caller of a gated listener, or an organization
+// scope (see ProjectScope: an OrgID is exactly an org scope). It is the one test
+// for an answer that spans every repository, applied on every transport. A
+// context with no caller (stdio, the local CLI) carries no grant and is not
+// limited.
+func ProjectLimited(ctx context.Context) bool {
+	ac, ok := AuthFrom(ctx)
+	return ok && (ac.ProjectRestricted() || ac.OrgID != "")
+}
+
+// SpanningDenied is the refusal for a limited caller asking for an answer that
+// spans every repository. It names no bank and no project.
+func SpanningDenied() error {
+	return errs.NewError(errs.PermissionDenied,
+		"this answer spans every repository, so a token or organization limited to some projects may not read it",
+		"use a token without project: scopes and outside any organization")
+}
 
 // ProjectScope returns the projects a caller may be served, as a predicate on
 // canonical project dirs. A caller with no OrgID sees every project (nil). A

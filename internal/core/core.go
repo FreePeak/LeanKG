@@ -23,6 +23,7 @@ import (
 
 	"github.com/FreePeak/LeanKG/internal/astgrep"
 	"github.com/FreePeak/LeanKG/internal/auth"
+	"github.com/FreePeak/LeanKG/internal/ccmemory"
 	"github.com/FreePeak/LeanKG/internal/compress"
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/errs"
@@ -62,6 +63,7 @@ var supersededTools = map[string]string{
 type Engine struct {
 	st         store.Backend
 	mem        *memory.Memory
+	agentMem   *ccmemory.Handle // central memory for agent_recall; nil when not configured
 	projectDir string
 	langsReg   *langs.Registry            // lazy language activation for the opened codebase
 	embedder   embed.Provider             // optional; nil ⇒ L3 degrades with reason
@@ -92,19 +94,27 @@ type Options struct {
 	// Hosted turns off the fleet paths: a portfolio query fans out across
 	// registered projects, which a hosted server must not do.
 	Hosted bool
+	// AgentMemory is the central memory root query{action:"memory",
+	// command:"agent_recall"} reads; nil makes that command error.
+	AgentMemory *ccmemory.Handle
 }
 
-// wireMemoryVectors gives the memory layer the dense recall arm (RS-19): the
-// provider, and the calibrated noise floor of its collection.
-func (e *Engine) wireMemoryVectors() {
-	if e.mem == nil {
+// wireMemoryVectors gives the engine's memory layer the dense recall arm (RS-19).
+func (e *Engine) wireMemoryVectors() { e.wireVectors(e.mem) }
+
+// wireVectors gives mem the dense recall arm the engine's embedder and its
+// calibrated noise floor define. The central memory of agent_recall is wired
+// through it on every call, so a handle opened after the engine starts still
+// gets the arm.
+func (e *Engine) wireVectors(mem *memory.Memory) {
+	if mem == nil {
 		return
 	}
 	if e.embedder == nil {
-		e.mem.SetProvider(nil, nil)
+		mem.SetProvider(nil, nil)
 		return
 	}
-	e.mem.SetProvider(e.embedder, func(ctx context.Context) (float64, bool) {
+	mem.SetProvider(e.embedder, func(ctx context.Context) (float64, bool) {
 		return embed.ReadCalibration(ctx, e.st, embed.StampOf(e.embedder))
 	})
 }
@@ -123,7 +133,7 @@ func New(st store.Backend, opts Options) *Engine {
 		}
 	}
 	e := &Engine{
-		st: st, mem: opts.Memory, embedder: opts.Embedder, langsReg: opts.Langs,
+		st: st, mem: opts.Memory, agentMem: opts.AgentMemory, embedder: opts.Embedder, langsReg: opts.Langs,
 		projectDir: projectDir, compressor: compress.New(), hosted: opts.Hosted,
 	}
 	if e.embedder != nil {
@@ -256,13 +266,14 @@ func (e *Engine) stampProvenance(ctx context.Context, resp map[string]any, rung,
 // project the caller cannot see: the router already applied the grant to the
 // served project. A context with no caller (stdio, the CLI) is an unrestricted
 // local admin. A portfolio answer spans several projects, so it has no project
-// key. A project-less engine (no ProjectDir) has none either.
-func (e *Engine) stampAccess(ctx context.Context, resp map[string]any, action string) {
+// key. An agent_recall answer spans every repository too, so it has none either. A
+// project-less engine (no ProjectDir) has none either.
+func (e *Engine) stampAccess(ctx context.Context, resp map[string]any, spansRepos bool) {
 	access := map[string]any{"role": auth.Admin.String(), "via": auth.ViaLocal, "restricted": false}
 	if ac, ok := auth.AuthFrom(ctx); ok {
 		access["role"], access["via"], access["restricted"] = ac.Role.String(), ac.Via, ac.ProjectRestricted()
 	}
-	if action != PortfolioAction && e.projectDir != "" {
+	if !spansRepos && e.projectDir != "" {
 		access["project"] = filepath.Base(e.projectDir)
 	}
 	if n, _ := resp["projects_withheld"].(int); n > 0 {
@@ -716,9 +727,13 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	if err != nil {
 		return nil, err
 	}
-	_, scopeName, serr := scopePredicate(env.Scope)
-	if serr != nil {
-		return nil, serr
+	scopeName := ""
+	if !memoryOwnsScope(req) {
+		_, name, serr := scopePredicate(env.Scope)
+		if serr != nil {
+			return nil, serr
+		}
+		scopeName = name
 	}
 	// The fusion weight is validated HERE, beside the scope contract and before
 	// the ladder, for the same reason: L3 degrades to L2 without ever reading a
@@ -742,8 +757,8 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	}
 	out, err := e.query(ctx, req)
 	if err == nil && out != nil {
-		e.stampAccess(ctx, out, req.Action)
-		if r, ok := out["retrieval"].(map[string]any); ok && r != nil {
+		e.stampAccess(ctx, out, spansRepositories(req))
+		if r, ok := out["retrieval"].(map[string]any); ok && r != nil && scopeName != "" {
 			r["scope"] = scopeName
 			// A weighted answer says so, for the same reason scope does — but
 			// ONLY when the rung that applies a weight actually ran. Measured on
@@ -1720,6 +1735,19 @@ func parseFusionWeight(raw string) (fusionWeight, error) {
 		return fusionWeight{}, fmt.Errorf("query weight %q cannot be \"0,0\": both arms off ranks nothing", raw)
 	}
 	return fusionWeight{vector: nums[0], keyword: nums[1], raw: raw}, nil
+}
+
+// memoryOwnsScope reports whether req is agent_recall, the one memory command
+// whose args.scope is its own vocabulary (project, global, all; KD-9), not the
+// retrieval scope scopePredicate checks.
+func memoryOwnsScope(req QueryRequest) bool {
+	return req.Action == "memory" && req.Args["command"] == ccmemory.RecallCommand
+}
+
+// spansRepositories reports whether an answer is built from more than this
+// engine's project: a portfolio fan-out, or agent_recall over the central memory.
+func spansRepositories(req QueryRequest) bool {
+	return req.Action == PortfolioAction || memoryOwnsScope(req)
 }
 
 func scopePredicate(scope string) (store.ElementFilter, string, error) {
