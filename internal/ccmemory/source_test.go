@@ -176,3 +176,48 @@ func TestDiscoverMissingRoot(t *testing.T) {
 		t.Fatalf("got %+v, want RootMissing with no docs or skips", got)
 	}
 }
+
+// makeUnreadable removes every permission from path and returns a restore
+// func that puts the original mode back. The restore also runs at cleanup, so a
+// failing test does not leave a directory behind that cannot be removed. It
+// skips when the process is root, which can read anything.
+func makeUnreadable(t *testing.T, path string) (restore func()) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("permission checks do not apply to root")
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode := fi.Mode().Perm()
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	restore = func() { _ = os.Chmod(path, mode) }
+	t.Cleanup(restore)
+	return restore
+}
+
+func TestDiscoverRecordsSlugsWhoseScanFailed(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "-work-ok", "memory", "a.md"), "---\ntype: user\n---\nok\n")
+	writeFile(t, filepath.Join(root, "-work-unreadable", "memory", "b.md"), "---\ntype: user\n---\nlocked\n")
+	writeFile(t, filepath.Join(root, "-work-hidden", "memory", "c.md"), "---\ntype: user\n---\nhidden\n")
+	if err := os.MkdirAll(filepath.Join(root, "-work-nomemory"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeUnreadable(t, filepath.Join(root, "-work-unreadable", "memory"))
+	makeUnreadable(t, filepath.Join(root, "-work-hidden"))
+
+	got, err := Discover(root)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if want := []string{"-work-hidden", "-work-unreadable"}; !reflect.DeepEqual(got.FailedSlugs, want) {
+		t.Fatalf("FailedSlugs = %v, want %v (a project with no memory directory is not a failure)", got.FailedSlugs, want)
+	}
+	if len(got.Docs) != 1 || got.Docs[0].Slug != "-work-ok" {
+		t.Errorf("docs = %+v, want only the readable project's document", got.Docs)
+	}
+}

@@ -60,7 +60,7 @@ func Resolve(root, p string) (abs, rel string, err error) {
 		// os.Root refuses every symlink with an ABSOLUTE target, including one
 		// pointing back inside the tree. Accept those only when the fully
 		// resolved target still lies under the resolved root.
-		if target, eerr := filepath.EvalSymlinks(filepath.Join(realRoot, rel)); eerr == nil && within(target, realRoot) {
+		if target, eerr := filepath.EvalSymlinks(filepath.Join(realRoot, rel)); eerr == nil && Within(target, realRoot) {
 			return target, filepath.ToSlash(rel), nil
 		}
 		return "", "", outside(p)
@@ -68,7 +68,9 @@ func Resolve(root, p string) (abs, rel string, err error) {
 	return filepath.Join(realRoot, rel), filepath.ToSlash(rel), nil
 }
 
-func within(p, dir string) bool {
+// Within reports whether p lies inside dir. Both paths must already be resolved;
+// p equal to dir counts as inside.
+func Within(p, dir string) bool {
 	rel, err := filepath.Rel(dir, p)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
@@ -101,7 +103,7 @@ func relativeTo(p, root, realRoot string) (string, bool) {
 
 // relUnder returns p relative to base when p lies inside it.
 func relUnder(base, p string) (string, bool) {
-	if !within(p, base) {
+	if !Within(p, base) {
 		return "", false
 	}
 	rel, err := filepath.Rel(base, p)

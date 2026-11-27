@@ -525,6 +525,14 @@ func TestMemoryMigrateDenyListAndSourceTreeUnchanged(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(central, "scrub.txt"), []byte("Graf[a]na\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The deny-list is process-wide: clear it so no later test sees "Grafana" masked.
+	t.Cleanup(func() {
+		_, digest, err := memory.LoadScrubFile(filepath.Join(central, "no-scrub.txt"))
+		if err != nil {
+			t.Errorf("LoadScrubFile: %v", err)
+		}
+		memory.SetScrubPatterns(nil, digest)
+	})
 	before := snapshotTree(t, projects)
 
 	if code, out := runMemoryMigrate(t, "--json"); code != 0 {

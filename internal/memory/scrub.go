@@ -37,9 +37,9 @@ var activeScrub atomic.Pointer[scrubState]
 // non-space character is '#' are skipped; every other line is compiled as a
 // regexp (surrounding space trimmed). A missing file yields an empty list and
 // a nil error. digest is the hex sha256 of the file bytes, or emptyScrubDigest
-// when the file is missing. A line that does not compile fails the load with
-// its 1-based line number. The regexp text is left out of the error so a
-// deny-list entry is not echoed into logs.
+// when the file is missing. A line that does not compile, or that matches the
+// empty string, fails the load with its 1-based line number. The regexp text is
+// left out of the error so a deny-list entry is not echoed into logs.
 func LoadScrubFile(path string) (patterns []*regexp.Regexp, digest string, err error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -60,6 +60,11 @@ func LoadScrubFile(path string) (patterns []*regexp.Regexp, digest string, err e
 				return nil, "", fmt.Errorf("scrub file line %d: invalid pattern: %s", i+1, se.Code)
 			}
 			return nil, "", fmt.Errorf("scrub file line %d: invalid pattern", i+1)
+		}
+		// An empty match would put the marker at every position, and each pass
+		// would grow the row, so such a line is refused.
+		if re.MatchString("") {
+			return nil, "", fmt.Errorf("scrub file line %d: pattern matches the empty string", i+1)
 		}
 		patterns = append(patterns, re)
 	}
