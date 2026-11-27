@@ -160,6 +160,170 @@ leankg version
 Telemetry capture is off by default and needs explicit consent. See
 [Telemetry](telemetry.md).
 
+## Memory
+
+`leankg memory` keeps a central copy of Claude Code's per-repository memory
+files, so a preference saved in one repository can be recalled from another.
+The guide is [Central agent memory](central-agent-memory.md). Placeholders below
+are `<leankg-binary>` and `<project-dir>`.
+
+```bash
+leankg memory sync [--dry-run] [--rebuild] [--json]
+leankg memory migrate [--project SLUG] [--dry-run] [--json]
+leankg memory recall <query...> [--scope project|global|all] [--type KIND] [--limit N] [--dir DIR] [--json]
+leankg memory hook                      # SessionStart hook; reads hook JSON on stdin
+leankg install --target claude-code --register-memory
+```
+
+The `memory` verb with no subcommand prints the usage and exits 1. An unknown
+subcommand does the same.
+
+### memory sync
+
+Makes every `cc-` bank under the central root equal the Claude Code memory
+files under `~/.claude/projects` (`CLAUDE_CONFIG_DIR/projects` when that is set).
+It waits for a sync that is already running.
+
+| Flag | Meaning |
+| --- | --- |
+| `--dry-run` | Print the plan; write nothing. Does not create the central root. |
+| `--rebuild` | Delete every `cc-` row, then sync from scratch. The only way to delete when the scan is empty. |
+| `--json` | Print the result as JSON. |
+
+Text output: a count line, then one line per bank. A withheld delete prints a
+`WARNING` line. JSON result (fields as the code emits them):
+
+```json
+{
+  "root": "<central root>",
+  "projects": "<projects root>",
+  "documents": 3,
+  "upserted": 0,
+  "deleted": 0,
+  "skipped": 0,
+  "deletes_withheld": false,
+  "banks": [{"bank": "cc-global", "project": "", "rows": 2}]
+}
+```
+
+`projects` is the projects root path, not a count. `deletes_withheld` is `true`
+when deletes were held back (see Safety below).
+
+Exit codes: 0 on success, 1 on error (for example an invalid deny-list line or
+an unreadable central root).
+
+### memory migrate
+
+One explicit run that moves all existing Claude Code memory into the central
+root. It runs the same apply path as `memory sync`, then verifies that every
+bank holds exactly the desired rows.
+
+| Flag | Meaning |
+| --- | --- |
+| `--project SLUG` | Migrate only this project slug. An unknown slug fails with `no memory found for project <slug>`. |
+| `--dry-run` | Print the inventory and plan; write nothing. |
+| `--json` | Print the result as JSON. |
+
+JSON result:
+
+```json
+{
+  "root": "<central root>",
+  "projects": [{"slug": "<slug>", "bank": "cc-p-<hex>", "files": 2, "global": 1, "skipped": 0}],
+  "documents": 3,
+  "upserted": 3,
+  "skipped": 0,
+  "verified": true,
+  "mismatches": []
+}
+```
+
+`mismatches` entries are `{"bank", "document_id", "reason"}` with reason
+`missing`, `extra` or `hash`. The JSON result has no `deleted` field.
+
+Exit codes: 0 when verified, or on a dry run. 1 when verification fails
+(mismatches are listed) or on error.
+
+### memory recall
+
+Ranks the central memories for a query. It calls the same function as the
+`agent_recall` MCP command. On this CLI path no embedder is wired, so the ranking
+is keyword (BM25) only.
+
+| Flag | Meaning |
+| --- | --- |
+| `--scope project\|global\|all` | Default `project`. See [scope mapping](central-agent-memory.md#how-memory-types-map-to-scope). |
+| `--type KIND` | Keep only this kind (`user`, `feedback`, `project`, `reference`, `unknown`). Repeatable. Applied before the limit. |
+| `--limit N` | Maximum rows. Default 8. |
+| `--dir DIR` | The caller's repository. Default: the current directory. |
+| `--json` | Print the result as JSON. |
+
+Text output is one block per memory: `N. [kind] name (project or global)`, the
+description, and the first line of content (cut at 120 characters). With no
+match it prints `recall: no memories match`.
+
+JSON result (also the `agent_recall` result shape):
+
+```json
+{
+  "command": "agent_recall",
+  "scope": "global",
+  "project": "<caller slug or empty>",
+  "banks": ["cc-global"],
+  "count": 1,
+  "memories": [{"id": "ccm-...", "name": "...", "kind": "user", "project": "<slug>", "description": "...", "content": "...", "links": [], "timestamp": 0, "score": 1.5}]
+}
+```
+
+Exit codes: 0 on success (including no match), 2 when no query is given (the
+usage error), 1 on other errors. An unknown `--scope` exits 1 and lists the
+valid scopes. When the central root has no index yet, it exits 1 with
+`run leankg memory sync once`.
+
+### memory hook
+
+The `SessionStart` hook. It reads the hook JSON on stdin (`cwd` is used; stdin
+is waited for at most 500 ms). Without a usable `cwd` it falls back to
+`CLAUDE_PROJECT_DIR`, then to the working directory.
+
+1. Sync the `cc-` banks when due. The sync takes a non-waiting lock; when another
+   sync holds it, the sync step is skipped and the stored rows are used.
+2. Print the cross-repository block for the caller: one context line, the
+   newest `user` and `feedback` memories saved by other repositories (at most 8
+   entries and about 1,500 tokens), and one hint line that names `args.cwd`.
+
+Nothing is printed when there is nothing to inject. The process always exits 0.
+Each failure is one line on stderr. The run has a 3 s deadline inside the
+process; `settings.json` allows 10 s.
+
+### install --register-memory
+
+`leankg install --target claude-code --register-memory` writes the leankg MCP
+entry (as `install` always does) and merges one `SessionStart` command hook
+(`<leankg-binary> memory hook`, `timeout` 10, no matcher) into
+`~/.claude/settings.json`. Other hooks are preserved, and a second run changes
+nothing. Only `claude-code` accepts the flag; any other target fails with an
+error before anything is written. The target name is `claude-code`, not
+`claude`, which the command rejects as unknown.
+
+### Safety
+
+- The memory verbs read `~/.claude/projects` and write only under the central
+  root `~/.leankg/memory` (`GlobalRoot`). They never write into `~/.claude`.
+- `install --register-memory` writes exactly one hook entry into
+  `~/.claude/settings.json`, and the MCP entry that `install` always writes
+  into `~/.claude.json`.
+- Deletes are withheld when the projects root is missing or holds no memory
+  files while central rows exist. The run reports `deletes_withheld: true` and
+  deletes nothing. `--rebuild` is the only way to clear those rows.
+- `migrate` never modifies Claude Code's files. A dry run never creates the
+  central root.
+- Deny-list: `<central root>/scrub.txt` (`~/.leankg/memory/scrub.txt`). One
+  regular expression per line; blank lines and lines starting with `#` are
+  ignored. A match is replaced with `[SCRUBBED]` on write and on read. An invalid
+  line fails the load with its line number. The hook then skips sync and injects
+  from the stored rows; `memory sync` and `migrate` exit 1.
+
 ## Environment variables
 
 | Variable | Purpose |

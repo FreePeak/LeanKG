@@ -183,6 +183,7 @@ archives, client wiring, semantic search, verification and troubleshooting.
 | [Architecture](docs/architecture.md) | Components, indexing tiers, retrieval ladder, trust boundaries, limits |
 | [Flow diagrams](docs/architecture-flow.md) | Component, data, request and storage diagrams |
 | [CLI reference](docs/cli-reference.md) | Commands, query actions, authentication, environment variables |
+| [Central agent memory](docs/central-agent-memory.md) | Cross-repository Claude Code memory: sync, session hook, recall, rollback |
 | [Deployment and security](docs/deployment.md) | Deployment models, security model, scale-out, operations, enterprise limits |
 | [Performance](docs/performance.md) | Measured A/B results, benchmark harness, how to read them |
 | [Languages](docs/languages.md) | The 40 profiles and extraction tiers |

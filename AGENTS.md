@@ -49,6 +49,11 @@ The `go-engine` CI job runs only the in-process suite (both tag sets) with a
 |`leankg-embed export\|import`|NDJSON offsite flow (pairs with `scripts/hf_embed_job.py`, the Hugging Face Job embedder). `import` stamps the collection exactly as the live provider would for the same `LEANKG_EMBED_*` environment, so a later `run` sees no drift; `--model/--revision/--dims/--distance` are optional and must agree with that environment|
 |`scripts/hf-embed.sh [--dry-run] [--yes] [--limit N] [--keep] <project-dir>`|EmbeddingGemma 2 bulk embed on a Hugging Face Job: export, upload to `LEANKG_HF_BUCKET`, `hf jobs uv run` of `scripts/hf_embed_job.py`, download, import. Without `--yes` it prints the estimate and exits 1; a run whose worst case (timeout x hourly price) exceeds `LEANKG_HF_MAX_USD` is refused. Configured by `LEANKG_HF_*`, `LEANKG_EMBED_*` and `HF_TOKEN` (see `.env.example`); never started by the session hook|
 |`leankg connect\|install --target claude\|cursor\|codex\|gemini\|opencode\|omp`|Client wiring (+ `--register-cwd` async SessionStart hook, matcher `startup\|resume`, running `leankg index --hook "$CLAUDE_PROJECT_DIR"`)|
+|`leankg install --target claude-code --register-memory`|Writes one SessionStart command hook (`leankg memory hook`, timeout 10, no matcher) into `~/.claude/settings.json`, merged and idempotent. claude-code only; see [central agent memory](docs/central-agent-memory.md)|
+|`leankg memory sync [--dry-run] [--rebuild] [--json]`|Makes the central `cc-` banks under `~/.leankg/memory` equal the Claude Code memory files under `~/.claude/projects`. Withholds deletes on an empty or missing scan. Reference: [CLI reference](docs/cli-reference.md#memory)|
+|`leankg memory migrate [--project SLUG] [--dry-run] [--json]`|One-time verified import of all Claude Code memory through the sync path; exit 1 when verification fails|
+|`leankg memory recall <query...> [--scope project\|global\|all] [--type KIND] [--limit N] [--dir DIR] [--json]`|Keyword recall over the central banks (same function as the `agent_recall` MCP command)|
+|`leankg memory hook`|SessionStart hook: sync when due, then print the cross-repository memory block. Reads hook JSON on stdin; always exits 0|
 |`leankg doctor --project <dir>`|Store diagnostics|
 |`leankg status [--project <dir>]`|Health, inventory, freshness and embed state (JSON)|
 |`leankg dashboard [--addr 127.0.0.1:9701] [--no-open]`|Web dashboard (embedded `ui-dashboard`): per-session efficiency metrics, failures, memory, replay; `--format text\|json` keeps the usage tables|
@@ -128,6 +133,8 @@ follow-up workflow (that is how v0.28.1–v0.30.0 shipped with no binaries).
 |`internal/core/`|3-tool envelope + L0–L3 ladder|
 |`internal/index/`, `docindex/`, `prdindex/`|code / markdown-doc / PRD-requirement extractors (regex tier; tree-sitter behind `-tags tstree`)|
 |`internal/memory/`|full-markdown memory + mnemopi banks|
+|`internal/ccmemory/`|central agent memory: Claude Code memory files to `cc-` banks (sync, migrate, recall, hook)|
+|`internal/mdmeta/`|leaf helpers: frontmatter splitter and `[[link]]` extractor (used by `ccmemory` and the Obsidian sync)|
 |`internal/embed/`|Provider port, ModelStamp guards, pipeline, pinned model catalog (`catalog.go`)|
 |`scripts/hf-embed.sh`, `scripts/hf_embed_job.py`|EmbeddingGemma 2 bulk path on a Hugging Face Job (orchestrator and in-job embedder)|
 |`internal/graph/`|impact/path/callers/callees/context/explain|
