@@ -305,6 +305,20 @@ func serveGateOn(ctx context.Context, dir, engine, dbPath string) bool {
 	return gateOn
 }
 
+// centralMemoryWired reports whether serve hands agent_recall the central
+// memory. With the gate on every caller authenticates, so it is wired. With the
+// gate off every caller is Admin, so it is wired only while no listener binds
+// beyond loopback: a public listener would let anyone on the network read every
+// repository's memory. binds lists the listeners that start.
+func centralMemoryWired(gateOn bool, binds []string) bool {
+	for _, addr := range binds {
+		if servebind.Exposed(addr, gateOn) {
+			return false
+		}
+	}
+	return true
+}
+
 // uiFileGate refuses GET /api/file on a --ui listener bound beyond loopback
 // while no token gates it: with the gate off every caller resolves to Admin,
 // so the file reader would serve any file under the project root to the LAN.
@@ -602,18 +616,29 @@ afterSidecars:
 	// creates the central tree. --memory-global hands over its own handle.
 	// Hosted serving wires none: the central root is the operator's personal
 	// Claude Code memory, and a hosted server answers every token holder.
+	// It is also withheld when a listener is public and no token gates it: the
+	// central memory spans every repository, so anyone on the network could read
+	// it (centralMemoryWired). stdio starts no listener, so it is always wired.
 	var agentMem *ccmemory.Handle
 	if !*hosted {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("agent memory: resolve home: %w", err)
+		binds := []string{addr, *restAddr, *rpcAddr, *uiAddr}
+		if *stdio {
+			binds = nil
 		}
-		var global *memory.Memory
-		if *memoryGlobal {
-			global = mem
+		if !centralMemoryWired(gateOn, binds) {
+			log.Printf("agent_recall: central memory not served: no auth token is configured and a listener binds beyond loopback, so every caller would be Admin; bind 127.0.0.1 or configure a token to serve it")
+		} else {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("agent memory: resolve home: %w", err)
+			}
+			var global *memory.Memory
+			if *memoryGlobal {
+				global = mem
+			}
+			agentMem = ccmemory.NewHandle(home, global)
+			defer agentMem.Close()
 		}
-		agentMem = ccmemory.NewHandle(home, global)
-		defer agentMem.Close()
 	}
 	engine := core.New(st, core.Options{Memory: mem, Embedder: embedder, ProjectDir: dir, Langs: langReg, Hosted: *hosted, AgentMemory: agentMem})
 	defer engine.Close()
