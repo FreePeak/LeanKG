@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/FreePeak/LeanKG/internal/mdmeta"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -124,7 +125,7 @@ func TestInitAndStatus(t *testing.T) {
 func TestSplitFrontmatter(t *testing.T) {
 	content := "---\r\nleankg_id: ./src/a.rs::A\r\nleankg_annotation: \"quoted: value\"\r\nleankg_relationships:\r\n---\r\n\r\n# Body\r\n"
 	content = strings.ReplaceAll(content, "\r\n", "\n")
-	meta, body := splitFrontmatter(content)
+	meta, body := mdmeta.SplitFrontmatter(content)
 	if meta["leankg_id"] != "./src/a.rs::A" {
 		t.Fatalf("leankg_id = %q", meta["leankg_id"])
 	}
@@ -136,7 +137,7 @@ func TestSplitFrontmatter(t *testing.T) {
 	}
 
 	// No frontmatter at all: everything is body, no keys.
-	meta, body = splitFrontmatter("# Plain\n\ntext\n")
+	meta, body = mdmeta.SplitFrontmatter("# Plain\n\ntext\n")
 	if len(meta) != 0 || body != "# Plain\n\ntext" {
 		t.Fatalf("plain note parsed as meta=%v body=%q", meta, body)
 	}

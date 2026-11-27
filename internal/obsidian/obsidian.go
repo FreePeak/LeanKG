@@ -201,36 +201,6 @@ func (e *Engine) readNote(rel string) (string, error) {
 	return strings.ReplaceAll(string(b), "\r\n", "\n"), nil
 }
 
-// splitFrontmatter ports the Rust parse_frontmatter and additionally returns
-// the note body: the leading --- fence is scanned to the closing fence, every
-// line splits on the FIRST ':' with both sides trimmed, and values keep any
-// surrounding quotes. Lines before the opening fence are ignored.
-func splitFrontmatter(content string) (meta map[string]string, body string) {
-	meta = map[string]string{}
-	lines := strings.Split(content, "\n")
-	in, end := false, 0
-	for i, line := range lines {
-		if strings.TrimSpace(line) == "---" {
-			if in {
-				end = i + 1
-				break
-			}
-			in = true
-			continue
-		}
-		if !in {
-			continue
-		}
-		if k, v, ok := strings.Cut(line, ":"); ok {
-			meta[strings.TrimSpace(k)] = strings.TrimSpace(v)
-		}
-	}
-	if end > 0 {
-		return meta, strings.Trim(strings.Join(lines[end:], "\n"), "\n")
-	}
-	return meta, strings.Trim(content, "\n")
-}
-
 // unquote strips one symmetric layer of double quotes, the way the Rust
 // annotation reader did with trim_matches('"').
 func unquote(s string) string { return strings.Trim(s, `"`) }

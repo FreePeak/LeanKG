@@ -143,17 +143,30 @@ func TestDetectAndRoots(t *testing.T) {
 	}
 }
 
-func TestRootHonorsClaudeConfigDir(t *testing.T) {
+func TestProjectsRootHonorsClaudeConfigDir(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "/custom/claude")
-	if got := root("/home/u"); got != "/custom/claude/projects" {
-		t.Fatalf("root = %q, want /custom/claude/projects", got)
+	if got := ProjectsRoot("/home/u"); got != "/custom/claude/projects" {
+		t.Fatalf("ProjectsRoot = %q, want /custom/claude/projects", got)
+	}
+}
+
+func TestProjectsRootFallsBackToHome(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	if got := ProjectsRoot("/home/u"); got != "/home/u/.claude/projects" {
+		t.Fatalf("ProjectsRoot = %q, want /home/u/.claude/projects", got)
+	}
+}
+
+func TestSlug(t *testing.T) {
+	if got := Slug("/a/b.c"); got != "-a-b-c" {
+		t.Fatalf("Slug(/a/b.c) = %q, want -a-b-c", got)
 	}
 }
 
 func TestExactLocateAndWindow(t *testing.T) {
 	home, projects := fixtureHome(t)
 	sid := "sess-exact-1"
-	main := filepath.Join(projects, slug(cwd), sid+".jsonl")
+	main := filepath.Join(projects, Slug(cwd), sid+".jsonl")
 	write(t, main, mainSession(sid)...)
 
 	args := map[string]any{"query": "auth handler", "action": "search"}
@@ -206,11 +219,11 @@ func TestExactLocateAndWindow(t *testing.T) {
 func TestExactLocateFollowsSubagentWhenCallLivesThere(t *testing.T) {
 	home, projects := fixtureHome(t)
 	sid := "sess-sub-1"
-	write(t, filepath.Join(projects, slug(cwd), sid+".jsonl"),
+	write(t, filepath.Join(projects, Slug(cwd), sid+".jsonl"),
 		prompt(sid, "u1", cwd, 0, "main task"),
 		assistantText(sid, "a1", cwd, time.Second, "m1", "delegating"),
 	)
-	subPath := filepath.Join(projects, slug(cwd), sid, "subagents", "agent-x.jsonl")
+	subPath := filepath.Join(projects, Slug(cwd), sid, "subagents", "agent-x.jsonl")
 	args := map[string]any{"query": "sub query"}
 	write(t, subPath,
 		line(map[string]any{"type": "user", "isSidechain": true, "sessionId": sid, "uuid": "su1", "cwd": cwd, "timestamp": ts(2 * time.Second),
@@ -262,7 +275,7 @@ func TestExactLocateSearchesOtherProjectDirs(t *testing.T) {
 func TestExactLocateRefusesMissingCallAndTraversal(t *testing.T) {
 	home, projects := fixtureHome(t)
 	sid := "sess-nocall"
-	write(t, filepath.Join(projects, slug(cwd), sid+".jsonl"), mainSession(sid)...)
+	write(t, filepath.Join(projects, Slug(cwd), sid+".jsonl"), mainSession(sid)...)
 	a := New()
 
 	// The call is not in the transcript: no false link.
@@ -283,7 +296,7 @@ func TestSymlinkedTranscriptIsRefused(t *testing.T) {
 	sid := "sess-link"
 	outside := filepath.Join(t.TempDir(), "outside.jsonl")
 	write(t, outside, mainSession(sid)...)
-	slugDir := filepath.Join(projects, slug(cwd))
+	slugDir := filepath.Join(projects, Slug(cwd))
 	os.MkdirAll(slugDir, 0o755)
 	if err := os.Symlink(outside, filepath.Join(slugDir, sid+".jsonl")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
@@ -297,7 +310,7 @@ func TestSymlinkedTranscriptIsRefused(t *testing.T) {
 func TestHeuristicLocatePicksCoveringTranscript(t *testing.T) {
 	home, projects := fixtureHome(t)
 	args := map[string]any{"query": "auth handler", "action": "search"}
-	slugDir := filepath.Join(projects, slug(cwd))
+	slugDir := filepath.Join(projects, Slug(cwd))
 
 	// Old session: same tool and args, but it ended long before the call.
 	old := filepath.Join(slugDir, "old-session.jsonl")
@@ -336,7 +349,7 @@ func TestHeuristicLocatePicksCoveringTranscript(t *testing.T) {
 func TestHeuristicAmbiguousIsLowConfidence(t *testing.T) {
 	home, projects := fixtureHome(t)
 	args := map[string]any{"query": "auth handler", "action": "search"}
-	slugDir := filepath.Join(projects, slug(cwd))
+	slugDir := filepath.Join(projects, Slug(cwd))
 	for _, sid := range []string{"twin-a", "twin-b"} {
 		write(t, filepath.Join(slugDir, sid+".jsonl"), mainSession(sid)...)
 	}
@@ -354,7 +367,7 @@ func TestHeuristicRejectsSlugCollision(t *testing.T) {
 	home, projects := fixtureHome(t)
 	args := map[string]any{"query": "auth handler", "action": "search"}
 	// A transcript in the same slug dir but recorded for a different cwd.
-	p := filepath.Join(projects, slug(cwd), "collide.jsonl")
+	p := filepath.Join(projects, Slug(cwd), "collide.jsonl")
 	write(t, p, toolUse("collide", "a1", "/work/repo/v2", time.Second, "m1", "mcp__leankg__query", "tu-c", args))
 	c := lkCall("x", time.Second, args, false)
 	if _, _, err := New().Locate(context.Background(), home, c, nil); !errors.Is(err, sessionlink.ErrNotFound) {
@@ -373,7 +386,7 @@ func TestGarbageLinesAreSkippedNotFatal(t *testing.T) {
 	}
 	lines = append(lines, mainSession(sid)...)
 	lines = append(lines, `{truncated`)
-	write(t, filepath.Join(projects, slug(cwd), sid+".jsonl"), lines...)
+	write(t, filepath.Join(projects, Slug(cwd), sid+".jsonl"), lines...)
 	c := lkCall(sid, 5*time.Second, map[string]any{"query": "auth handler", "action": "search"}, true)
 
 	a := New()
@@ -393,7 +406,7 @@ func TestGarbageLinesAreSkippedNotFatal(t *testing.T) {
 func TestUnsupportedFormatIsErrUnsupportedVersion(t *testing.T) {
 	home, projects := fixtureHome(t)
 	sid := "sess-future"
-	write(t, filepath.Join(projects, slug(cwd), sid+".jsonl"),
+	write(t, filepath.Join(projects, Slug(cwd), sid+".jsonl"),
 		"not json", `{"kind":"new-format","v":9}`, `[1,2,3]`)
 	c := lkCall(sid, 5*time.Second, map[string]any{"query": "x"}, true)
 	if _, _, err := New().Locate(context.Background(), home, c, nil); !errors.Is(err, sessionlink.ErrUnsupportedVersion) {
@@ -412,7 +425,7 @@ func TestTranscriptCapsTurnsAndResults(t *testing.T) {
 		lines = append(lines, resultLine(sid, "r"+string(rune('a'+i)), cwd, time.Duration(i+1)*time.Second+time.Millisecond,
 			"tu-"+string(rune('a'+i)), big, false))
 	}
-	p := filepath.Join(projects, slug(cwd), sid+".jsonl")
+	p := filepath.Join(projects, Slug(cwd), sid+".jsonl")
 	write(t, p, lines...)
 	a := New()
 	turns, err := a.Transcript(context.Background(), sessionlink.TranscriptRef{Path: p, SessionID: sid}, 4)
@@ -433,7 +446,7 @@ func TestRealUserPromptSkipsToolResultOnlyEntries(t *testing.T) {
 	home, projects := fixtureHome(t)
 	sid := "sess-prompt"
 	args := map[string]any{"query": "q"}
-	write(t, filepath.Join(projects, slug(cwd), sid+".jsonl"),
+	write(t, filepath.Join(projects, Slug(cwd), sid+".jsonl"),
 		prompt(sid, "u1", cwd, 0, "real prompt"),
 		toolUse(sid, "a1", cwd, time.Second, "m1", "Read", "tu-r", map[string]any{"file_path": "/x"}),
 		resultLine(sid, "r1", cwd, 2*time.Second, "tu-r", "content", false),
@@ -459,7 +472,7 @@ func TestRealUserPromptSkipsToolResultOnlyEntries(t *testing.T) {
 func TestSharedReaderMatchesFreshParseAndWritesNothing(t *testing.T) {
 	home, projects := fixtureHome(t)
 	sid := "sess-shared-1"
-	main := filepath.Join(projects, slug(cwd), sid+".jsonl")
+	main := filepath.Join(projects, Slug(cwd), sid+".jsonl")
 	write(t, main, mainSession(sid)...)
 	before, err := os.ReadFile(main)
 	if err != nil {

@@ -110,7 +110,7 @@ func TestCompactBanksStopsOnCancelledContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.compactBanks(cancelledCtx()); !errors.Is(err, context.Canceled) {
+	if err := m.compactBanks(cancelledCtx(), ""); !errors.Is(err, context.Canceled) {
 		t.Fatalf("compactBanks err = %v, want context.Canceled", err)
 	}
 	after, err := os.ReadFile(path)

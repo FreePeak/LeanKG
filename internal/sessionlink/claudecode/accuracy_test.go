@@ -18,7 +18,7 @@ func TestLinkingAccuracy(t *testing.T) {
 	home, projects := fixtureHome(t)
 	const sessions = 40
 	args := map[string]any{"query": "auth handler", "action": "search"}
-	dir := filepath.Join(projects, slug(cwd))
+	dir := filepath.Join(projects, Slug(cwd))
 
 	type want struct {
 		sid string

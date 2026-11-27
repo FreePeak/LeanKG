@@ -28,8 +28,8 @@ func New() sessionlink.Adapter { return adapter{} }
 
 func (adapter) Client() string { return clientName }
 
-// root is the projects directory under the configured Claude config dir.
-func root(home string) string {
+// ProjectsRoot is the projects directory under the configured Claude config dir.
+func ProjectsRoot(home string) string {
 	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
 		return filepath.Join(d, "projects")
 	}
@@ -37,14 +37,14 @@ func root(home string) string {
 }
 
 func (adapter) Detect(home string) bool {
-	fi, err := os.Stat(root(home))
+	fi, err := os.Stat(ProjectsRoot(home))
 	return err == nil && fi.IsDir()
 }
 
-func (adapter) Roots(home string) []string { return []string{root(home)} }
+func (adapter) Roots(home string) []string { return []string{ProjectsRoot(home)} }
 
-// slug maps a working directory to the store's directory name.
-func slug(cwd string) string {
+// Slug maps a working directory to the store's directory name.
+func Slug(cwd string) string {
 	return strings.NewReplacer("/", "-", ".", "-").Replace(cwd)
 }
 
@@ -55,7 +55,7 @@ func (a adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef,
 	if err := ctx.Err(); err != nil {
 		return sessionlink.TranscriptRef{}, 0, err
 	}
-	r := root(home)
+	r := ProjectsRoot(home)
 	if c.ClientSessionID != "" {
 		return locateExact(ctx, r, c, rd)
 	}
@@ -70,7 +70,7 @@ func locateExact(ctx context.Context, r string, c sessionlink.CallRef, rd *sessi
 	var mains []string
 	unsupported := false
 	if c.Cwd != "" {
-		mains = append(mains, filepath.Join(r, slug(c.Cwd), sid+".jsonl"))
+		mains = append(mains, filepath.Join(r, Slug(c.Cwd), sid+".jsonl"))
 	}
 	if more, _ := filepath.Glob(filepath.Join(r, "*", sid+".jsonl")); len(more) > 0 {
 		mains = append(mains, more...)
@@ -115,7 +115,7 @@ func locateHeuristic(ctx context.Context, r string, c sessionlink.CallRef, rd *s
 	if c.Cwd == "" || c.Tool == "" {
 		return sessionlink.TranscriptRef{}, 0, sessionlink.ErrNotFound
 	}
-	dir := filepath.Join(r, slug(c.Cwd))
+	dir := filepath.Join(r, Slug(c.Cwd))
 	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
 		return sessionlink.TranscriptRef{}, 0, sessionlink.ErrNotFound
 	}

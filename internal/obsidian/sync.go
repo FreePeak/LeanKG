@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"path"
-	"regexp"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/langs"
+	"github.com/FreePeak/LeanKG/internal/mdmeta"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -30,10 +30,6 @@ type PullResult struct {
 	Annotations int        `json:"annotations"`
 	Conflicts   []Conflict `json:"conflicts,omitempty"`
 }
-
-// wikiLinkRE matches [[target]], [[target|alias]], [[target#heading]], and the
-// inner target of ![[embed]].
-var wikiLinkRE = regexp.MustCompile(`\[\[([^\[\]]+)\]\]`)
 
 // Pull syncs the vault into the store: one Note element per markdown note, one
 // LinkRel relationship per [[wiki-link]], one DocumentsRel edge per leankg_id
@@ -69,7 +65,7 @@ func (e *Engine) Pull(ctx context.Context) (PullResult, error) {
 		if err != nil {
 			continue // note vanished between scan and read
 		}
-		meta, body := splitFrontmatter(content)
+		meta, body := mdmeta.SplitFrontmatter(content)
 		qn := NotePrefix + strings.TrimSuffix(note, ".md")
 
 		els = append(els, store.Element{
@@ -84,7 +80,7 @@ func (e *Engine) Pull(ctx context.Context) (PullResult, error) {
 			Metadata:      unquotedMeta(meta),
 		})
 
-		for _, link := range wikiLinks(content) {
+		for _, link := range mdmeta.WikiLinks(content) {
 			if addRelationship(&rels, seen, qn, NotePrefix+link, LinkRel) {
 				res.Links++
 			}
@@ -161,33 +157,6 @@ func (e *Engine) importAnnotation(ctx context.Context, elementID, annotation str
 		}, nil
 	}
 	return false, nil, nil
-}
-
-// wikiLinks extracts [[target]] targets from note text, stripping Obsidian
-// aliases (|label) and heading or block anchors (#heading). Targets keep
-// document order with duplicates removed.
-//
-// ponytail: links inside fenced code blocks are picked up too; a
-// fenced-region pre-pass is the upgrade path if that ever matters.
-func wikiLinks(content string) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, m := range wikiLinkRE.FindAllStringSubmatch(content, -1) {
-		target := m[1]
-		if i := strings.IndexByte(target, '|'); i >= 0 {
-			target = target[:i]
-		}
-		if i := strings.IndexByte(target, '#'); i >= 0 {
-			target = target[:i]
-		}
-		target = strings.TrimSpace(target)
-		if target == "" || seen[target] {
-			continue
-		}
-		seen[target] = true
-		out = append(out, target)
-	}
-	return out
 }
 
 // readAnnotationLine ports the Rust read_existing_annotation: the first line
