@@ -1,6 +1,6 @@
 # Plan: central agent memory (cross-repository recall for Claude Code sessions)
 
-**Status:** Draft
+**Status:** In implementation: sync and migrate in #619, recall in #620, hook and docs in the stacked hook PR
 **Date:** 2026-11-27
 **Owner:** maintainer
 **Tracks:** `CAM-00..CAM-20` (rows to be added to `docs/prd-task-tracker.md` by CAM-01; the prefix does not occur under `docs/` today)
@@ -53,8 +53,8 @@ Claude Code keeps auto-memory per repository under `~/.claude/projects/<project-
 | A2 | The exact `<project>` string is the main repository root with `/` and `.` replaced by `-`. | Supported (2026-11-27): the one linked-worktree session directory on the machine has no memory directory, so memory resolves to the main repository slug; exact string for a worktree session still to confirm with CAM-00 step (a). |
 | A3 | A memory file is Markdown with YAML frontmatter carrying `name`, `description` and a type (`user`, `feedback`, `project`, `reference`) either as top-level `type` or nested under `metadata`. `MEMORY.md` is an index, one line per memory. | Verified on a real install (2026-11-27): all 274 memory files across 160 project directories have top-level `name`, `description`, `metadata`, with `type` nested under `metadata`; none has a top-level `type` or lacks frontmatter. Extra nested keys (`originSessionId`, `node_type`, `modified`) are ignored. |
 | A4 | At session start Claude Code loads the first 200 lines or 25 KB of the current repository's `MEMORY.md` and no topic files. | Verified in the Claude Code documentation (`memory` page). |
-| A5 | Plain stdout of a `SessionStart` command hook is added to context. Each output string is capped at 10,000 characters; beyond that only a 2,000-character preview is shown. A non-zero exit does not block the session. The default command timeout is 600 s and a per-hook `timeout` field exists. | Verified in the Claude Code documentation (`hooks` page, read 2026-11-27). |
-| A6 | Output of an `async: true` hook is not added to context. | UNVERIFIED (the documentation read did not state it). The memory hook is therefore synchronous. |
+| A5 | Plain stdout of a `SessionStart` command hook is added to context. Each output string is capped at 10,000 characters; beyond that only a 2,000-character preview is shown. A non-zero exit does not block the session. The default command timeout is 600 s and a per-hook `timeout` field exists. | Verified in the Claude Code documentation (`hooks` page, read 2026-11-27). Verified end to end on 2026-11-27 with Claude Code 2.1.329: the stdout of a synchronous `SessionStart` command hook was visible to the model (a one-shot probe printed a random token and the model repeated it). |
+| A6 | Output of an `async: true` hook is not added to context. | UNVERIFIED for async hooks (the documentation read did not state it). Verified end to end on 2026-11-27 with Claude Code 2.1.329 for synchronous hooks: the stdout of a synchronous `SessionStart` command hook was visible to the model (a one-shot probe printed a random token and the model repeated it). The memory hook is therefore synchronous. |
 | A7 | `CLAUDE_PROJECT_DIR` is set for hook commands and for stdio MCP servers; the hook also receives `cwd` and `session_id` as JSON on stdin. | Verified in the Claude Code documentation (`hooks` page). |
 | A8 | One developer, one machine. Every reader and writer of the central store runs as the same OS user. | Agreed for the first release. |
 | A9 | Volume is small: up to a few thousand memory files across up to a few hundred repositories, each file under 64 KiB. | Assumed. Drives the choice of a file-backed store with a linear vector scan. |
@@ -224,7 +224,7 @@ There are no cycles. Build order: `cc-source`, `mem-scrub`, `mem-bank-ops`, `cc-
 
 1. Projects root: `$CLAUDE_CONFIG_DIR/projects` when set, else `~/.claude/projects` (the exported `ProjectsRoot`).
 2. A memory directory is `<root>/<slug>/memory`. Every `*.md` directly inside it is a document except `MEMORY.md`, which is an index of the others and is skipped. Subdirectories are not read. Symlinks that resolve outside the projects root are skipped.
-3. Kind comes from the frontmatter key `type`. The existing splitter cuts each line on the first colon and then trims the key and the value (`obsidian.go:224-226`), so it yields the same key for a top-level `type:` and for one indented under `metadata:`. Any other value, or no frontmatter, gives `unknown`.
+3. Kind comes from the frontmatter key `type`. The existing splitter cuts each line on the first colon and then trims the key and the value (`obsidian.go:224-226`), so it yields the same key for a top-level `type:` and for one indented under `metadata:`. Any other value, or no frontmatter, gives `unknown`. Frontmatter is parsed flat, so a nested `metadata:` with `type:` works as designed; a file with two `type` lines takes the last one.
 4. `unknown` is treated as repository-scoped. A memory is never made global by default.
 5. Files over 64 KiB are skipped and counted.
 6. Known limit: multi-line YAML scalars in frontmatter are not parsed; the fallbacks in the table apply.
@@ -272,7 +272,7 @@ There are no cycles. Build order: `cc-source`, `mem-scrub`, `mem-bank-ops`, `cc-
 | Function | Contract |
 |---|---|
 | `(*Memory).DeleteDocuments(ctx, bank, ids) (int, error)` | Removes every row whose document id is in `ids` (raw or redacted form) with one rewrite of the bank, and records one `delete` event with the count. An empty list is a no-op. `DeleteDocument` delegates to it. |
-| `(*Memory).InjectBanks(ctx, banks, query, limit, tokenBudget, keep) (text, injected, total, err)` | With a query: ranked recall filtered by `keep` before the limit. Without: newest first, filtered by `keep`. Renders through the existing block renderer and records one `inject` event. `(*Memory).firstTurn` (`scope.go:124`) calls it with the existing constants and a nil filter. |
+| `(*Memory).InjectBanks(ctx, banks, query, limit, tokenBudget, keep) (text, rows, injected, total, err)` | With a query: ranked recall filtered by `keep` before the limit. Without: newest first, filtered by `keep`. Renders through the existing block renderer and records one `inject` event. The capped `rows` are returned as well, because `firstTurn` needs them for byte-identical output. `(*Memory).firstTurn` (`scope.go:124`) calls it with the existing constants and a nil filter. |
 
 **Failure modes.** Same as the functions they generalize: a cancelled context returns its error and records nothing; a missing bank is empty.
 
@@ -315,6 +315,14 @@ There are no cycles. Build order: `cc-source`, `mem-scrub`, `mem-bank-ops`, `cc-
 - `--rebuild` removes every row from every `cc-` bank, then syncs from scratch.
 - Only banks with the `cc-` prefix are ever read or written by sync.
 - A cancelled context stops between banks; each bank's batch is complete or absent.
+- Implementation notes (2026-11-27):
+  - `--rebuild` skips deleting a document that is being upserted in the same bank.
+  - Rows without a `document_id` cannot be removed by any existing API.
+  - The sync JSON `projects` field is the projects root string.
+  - An unreadable projects root returns an error, with deletes withheld.
+  - A missing root gives `deletes_withheld` with exit 0.
+  - The lock wait ignores context cancellation.
+  - A dry run takes no lock and creates nothing.
 
 **CLI.**
 
@@ -353,6 +361,11 @@ JSON result: `{"root", "projects", "documents", "upserted", "deleted", "skipped"
 - Source files are never modified.
 - Re-running is idempotent and produces the same result as a normal `leankg memory sync`.
 - `--dry-run` prints the inventory and the plan and writes nothing.
+- Implementation notes (2026-11-27):
+  - A dry run exits 0 with `verified` false, because nothing is verified. This is the exception to the exit rule above.
+  - `--project <unknown slug>` exits 1 with "no memory found for project".
+  - With `--project` and an empty source scope, deletes stay withheld.
+  - The scope match uses the masked slug.
 
 **JSON result.** `{"root","projects":[{"slug","bank","files","global","skipped"}],"documents","upserted","skipped","verified":true|false,"mismatches":[]}`. Exit 0 when verified, 1 otherwise.
 
@@ -406,6 +419,14 @@ Errors:
 3. Rows with the same `content_id` are collapsed to the best-ranked one, so a preference saved in several repositories is returned once.
 4. The server holds one handle on the central root. It is the `--memory-global` handle when that flag is set. Otherwise it is opened lazily on the first call, and only if `<central root>/index.db` exists (the same existence probe as `main.go:897-899`), so a server never creates the central tree by answering a read. The dense arm is wired with the default engine's embedder and calibration, as in `core.go:99`.
 5. Role: Viewer, like every `query` call (`auth.go:147-152`).
+6. Implementation notes (2026-11-27):
+   - `agent_recall` is wired on every non-hosted server, not gated on `--memory`.
+   - Hosted mode wires no central handle and answers "not configured" (central memory is the operator's personal memory).
+   - Callers with project grants or an org scope are refused.
+   - `?project=` URL handlers do not serve it (known limit).
+   - `args.types` is accepted only by `agent_recall`.
+   - `content_id` hashes the whole rendered row (header line plus body), so identical memories collapse only when name and description match too.
+   - CLI recall is keyword-only.
 
 **CLI.** `leankg memory recall <query> [--scope project|global|all] [--type KIND] [--limit N] [--dir DIR] [--json]` calls the same function. It is keyword-only unless an embedding endpoint is configured.
 
@@ -421,14 +442,15 @@ Errors:
 
 **Behavior rules.**
 
-1. Overall deadline 3 s. Budget for the sync step 2 s.
+1. Overall deadline 3 s, including the telemetry flush, which gets only the time left. Budget for the sync step 2 s.
 2. Step 1, sync as in section 6.4 with a non-waiting lock (`flock.TryLock`, `internal/flock/flock.go:21`).
 3. Step 2, inject. Banks: `cc-global`. Filter: rows whose `project` differs from the caller's resolved slug. Order: newest first. Limits: `memory.RecallLimit` entries (8, `internal/memory/scope.go:83`) and 1,500 tokens (about 6,000 bytes). This stays under the 10,000-character cap in A5; the existing default of 5,000 tokens would not.
 4. Output: one context line, the block from `InjectBanks`, one hint line (section 7.3). Nothing is printed when there is nothing to inject.
 5. The process always exits 0. Any error is one line on stderr.
-6. When telemetry consent is on, the sync and inject events carry the hook's session id, so the dashboard Memory page shows the `cc-` banks. With consent off nothing is recorded (`telemetry_hook.go:41-47`).
+6. When telemetry consent is on, the sync and inject events carry the hook's session id, so the dashboard Memory page shows the `cc-` banks. With consent off nothing is recorded (`telemetry_hook.go:41-47`). The hook uses the existing `TransportStdio` constant and records only when consent is on.
+7. An unknown caller (empty or non-JSON stdin) falls back to the working directory. That matches no project bank, so nothing is excluded.
 
-**Registration.** `leankg install --target claude --register-memory` merges one entry into `hooks.SessionStart` of `~/.claude/settings.json`: a synchronous command hook with `timeout` 10 and no matcher. It preserves every other hook and is idempotent. This is a plain `settings.json` hook, so it works where plugin-provided hooks are skipped.
+**Registration.** `leankg install --target claude-code --register-memory` merges one entry into `hooks.SessionStart` of `~/.claude/settings.json`: a synchronous command hook with `timeout` 10 and no matcher. It preserves every other hook and is idempotent. This is a plain `settings.json` hook, so it works where plugin-provided hooks are skipped.
 
 **Failure modes (all fail open).**
 
@@ -529,7 +551,7 @@ All paths are placeholders.
 2. First sync: `<leankg-binary> memory sync`. This creates `~/.leankg/memory` if needed.
 3. Optional deny-list: create `~/.leankg/memory/scrub.txt`, one regular expression per line.
 4. Migrate existing memory: `<leankg-binary> memory migrate --dry-run`, then `<leankg-binary> memory migrate`. Run it after the deny-list so secrets are masked on the way in.
-5. Register the hook: `<leankg-binary> install --target claude --register-memory`, or add the snippet in 7.2 by hand.
+5. Register the hook: `<leankg-binary> install --target claude-code --register-memory`, or add the snippet in 7.2 by hand.
 6. Optional, for on-demand recall: register the MCP server (7.4).
 
 ### 7.2 Hook snippet (`~/.claude/settings.json`)
@@ -572,7 +594,7 @@ Recommended: one local server for every repository.
 - Start it: `<leankg-binary> serve --http 127.0.0.1:9699 --memory`
 - Register it: `claude mcp add --transport http --scope user leankg http://127.0.0.1:9699/mcp`
 
-The exact `claude mcp add` flags are UNVERIFIED here; check `claude mcp add --help`. `<leankg-binary> install --target claude` writes the same entry into the client config (`cmd/leankg/connect.go:103`).
+The exact `claude mcp add` flags are UNVERIFIED here; check `claude mcp add --help`. `<leankg-binary> install --target claude-code` writes the same entry into the client config (`cmd/leankg/connect.go:103`).
 
 A per-repository stdio registration also works. It is not recommended at user scope, because each session's server opens a store, and with `--memory` a memory tree, inside the repository it starts in (KD-8).
 
@@ -602,6 +624,7 @@ A per-repository stdio registration also works. It is not recommended at user sc
 | Deletion | Deleting the source file deletes the row on the next sync. `--rebuild` re-derives everything. Removing the `cc-` bank files and running sync is equivalent. |
 | File permissions | The central root is created by the existing code with its existing modes (`internal/memory/memory.go:100-108`); this plan does not change them. |
 | Telemetry | Off by default. When on, events carry counts, ids and hashes, not memory text (`internal/memory/telemetry_hook.go:94-105`). |
+| Claude Code config writes | `install --target claude-code --register-memory` writes the hook entry to `~/.claude/settings.json` and, as `install` already does, the leankg MCP server entry to `~/.claude.json`. There is no hook-only path in this wave (OQ-11). |
 
 ---
 
@@ -672,7 +695,7 @@ There is no separate lint target; `go vet` is the repository's static gate. The 
 
 **Never**
 
-- Write into `~/.claude/` other than the one hook entry the install command owns.
+- Write into `~/.claude/` other than the one hook entry the install command owns (install also writes the MCP entry to `~/.claude.json`, as it already does; OQ-11).
 - Delete central rows on a failed or empty scan without `--rebuild`.
 - Put real host paths, usernames, hostnames or secrets in code, tests, fixtures or docs.
 - Let a hook path block a session, prompt the user, or start a server or an embedding sidecar.
@@ -685,127 +708,129 @@ There is no separate lint target; `go vet` is the repository's static gate. The 
 
 Slices are ordered. Each is one commit. CAM-00 has no code.
 
-- [ ] Task: CAM-00 Confirm three Claude Code facts on a real install
+- [x] Task: CAM-00 Confirm three Claude Code facts on a real install
   - Module: `cc-source`, `cc-hook`
-  - Acceptance: the notes record (a) the directory name Claude Code uses for a repository's memory when the session runs in a linked worktree; (b) the frontmatter keys of three real memory files, with values replaced by placeholders; (c) that plain stdout of a synchronous `SessionStart` hook containing a `<memories>` block is visible to the model. A2 and A3 are updated in this document (2026-11-27); A6 stays UNVERIFIED. Item (c) remains a manual check that blocks only CAM-16 onward.
+  - Acceptance: the notes record (a) the directory name Claude Code uses for a repository's memory when the session runs in a linked worktree; (b) the frontmatter keys of three real memory files, with values replaced by placeholders; (c) that plain stdout of a synchronous `SessionStart` hook containing a `<memories>` block is visible to the model. A2 and A3 are updated in this document (2026-11-27); A6 stays UNVERIFIED. Item (c) remains a manual check that blocks only CAM-16 onward. DONE (c) 2026-11-27 with Claude Code 2.1.329: the stdout of a synchronous `SessionStart` command hook was visible to the model (a one-shot probe printed a random token and the model repeated it).
   - Verify: manual; a throwaway hook `printf 'probe\n<memories>\n- x\n</memories>\n'` and one question to the model.
   - Files: `docs/plan-central-agent-memory.md`
 
-- [ ] Task: CAM-01 Tracker rows
+- [x] Task: CAM-01 Tracker rows
   - Module: all
   - Acceptance: `docs/prd-task-tracker.md` has rows `CAM-00..CAM-19` and `docs/prd.md` has a short requirement entry pointing at this plan.
   - Verify: `go test ./internal/archtest/ -count=1`
   - Files: `docs/prd.md`, `docs/prd-task-tracker.md`
 
-- [ ] Task: CAM-02 Export the Claude Code projects root and slug
+- [x] Task: CAM-02 Export the Claude Code projects root and slug
   - Module: `cc-source`
   - Acceptance: `ProjectsRoot(home)` returns `$CLAUDE_CONFIG_DIR/projects` when the variable is set, else `<home>/.claude/projects`; `Slug("/a/b.c")` returns `-a-b-c`; the adapter's existing tests pass unchanged.
   - Verify: `go test ./internal/sessionlink/... -count=1`
   - Files: `internal/sessionlink/claudecode/claudecode.go`, `internal/sessionlink/claudecode/claudecode_test.go`
 
-- [ ] Task: CAM-03 Move the frontmatter splitter and link extractor to a leaf package
+- [x] Task: CAM-03 Move the frontmatter splitter and link extractor to a leaf package
   - Module: `cc-source`
   - Acceptance: `mdmeta.SplitFrontmatter` and `mdmeta.WikiLinks` behave exactly as the functions they replace; `internal/obsidian` calls them and its tests pass unchanged; new cases cover a top-level `type:` and a `type:` indented under `metadata:`.
   - Verify: `go test ./internal/mdmeta/ ./internal/obsidian/ -count=1`
   - Files: `internal/mdmeta/mdmeta.go`, `internal/mdmeta/mdmeta_test.go`, `internal/obsidian/obsidian.go`, `internal/obsidian/sync.go`
 
-- [ ] Task: CAM-04 Parse and discover memory documents
+- [x] Task: CAM-04 Parse and discover memory documents
   - Module: `cc-source`
   - Acceptance: over a fixture of three project directories, discovery returns one `Doc` per `*.md` except `MEMORY.md`; kind, name, description, body and links match; a file with no frontmatter is `unknown`; a file over 64 KiB and a symlink leaving the root are reported as skipped; a missing root sets `RootMissing` without an error.
   - Verify: `go test ./internal/ccmemory/ -run 'TestParse|TestDiscover' -count=1`
   - Files: `internal/ccmemory/source.go`, `internal/ccmemory/source_test.go`, `internal/ccmemory/testdata/`
 
-- [ ] Task: CAM-05 Project key, bank names and document ids
+- [x] Task: CAM-05 Project key, bank names and document ids
   - Module: `cc-source`
   - Acceptance: a directory inside a linked worktree resolves to the slug of the main worktree root without running git; a directory outside any repository resolves to its own slug; two slugs sharing their first 80 characters get different banks; every bank name is at most 64 characters and unchanged by `sanitizeBank`; a slug ending in `token` produces ids that `memory.Redact` leaves unchanged.
   - Verify: `go test ./internal/ccmemory/ -run 'TestProjectKey|TestBankFor|TestDocID' -count=1`
   - Files: `internal/ccmemory/identity.go`, `internal/ccmemory/identity_test.go`
 
-- [ ] Task: CAM-06 Deny-list inside `memory.Redact`
+- [x] Task: CAM-06 Deny-list inside `memory.Redact`
   - Module: `mem-scrub`
   - Acceptance: with a pattern installed, a create, an append and a bank retain all store `[SCRUBBED]` in place of the match; a row written before the pattern existed is masked on read; a line that does not compile fails the load with its line number; no file means no change; existing redaction tests pass.
   - Verify: `go test ./internal/memory/ -run 'TestScrub|TestRedact' -count=1`
   - Files: `internal/memory/scrub.go`, `internal/memory/scrub_test.go`, `internal/memory/memory.go`
 
-- [ ] Task: CAM-07 Batch document delete
+- [x] Task: CAM-07 Batch document delete
   - Module: `mem-bank-ops`
   - Acceptance: `DeleteDocuments` with three ids removes exactly those rows with one rewrite of the bank file and one `delete` event carrying the count 3; unknown ids and a missing bank delete nothing; `DeleteDocument` still passes its tests.
   - Verify: `go test ./internal/memory/ -run 'TestDeleteDocument' -count=1`
   - Files: `internal/memory/banks.go`, `internal/memory/banks_docs_test.go`
 
-- [ ] Task: CAM-08 Injection over explicit banks with a filter and a budget
+- [x] Task: CAM-08 Injection over explicit banks with a filter and a budget
   - Module: `mem-bank-ops`
   - Acceptance: `InjectBanks` with no query returns newest rows first after the filter; rows the filter rejects are never rendered or counted as injected; the hidden-count marker is present when rows were cut; one `inject` event is recorded; `FirstTurnMemories` and `FirstTurnMemoriesWithIDs` produce byte-identical output to before.
   - Verify: `go test ./internal/memory/ -run 'TestInject|TestFirstTurn' -count=1`
   - Files: `internal/memory/scope.go`, `internal/memory/banks.go`, `internal/memory/injectbanks_test.go`
 
-- [ ] Task: CAM-09 Sync plan (pure diff)
+- [x] Task: CAM-09 Sync plan (pure diff)
   - Module: `cc-sync`
   - Acceptance: given desired and actual sets, the plan lists upserts for missing and changed keys and deletes for extra keys; a kind change yields one delete and one upsert in different banks; equal sets give an empty plan; an empty desired set against a non-empty actual set gives `deletes_withheld` unless rebuild is requested.
   - Verify: `go test ./internal/ccmemory/ -run TestPlan -count=1`
   - Files: `internal/ccmemory/sync.go`, `internal/ccmemory/sync_test.go`
 
-- [ ] Task: CAM-10 Sync apply against a real memory root
+- [x] Task: CAM-10 Sync apply against a real memory root
   - Module: `cc-sync`
   - Acceptance: after one run over the fixture, `cc-global` and each project bank hold the expected rows with the mapped fields; a second run changes no bank file and emits no event; editing one file rewrites one row; removing one file removes one row; changing the deny-list rewrites every row; a planted secret in a source file is absent from every file under the central root.
   - Verify: `go test ./internal/ccmemory/ -run TestApply -count=1`
   - Files: `internal/ccmemory/sync.go`, `internal/ccmemory/sync_test.go`
 
-- [ ] Task: CAM-11 `leankg memory sync`
+- [x] Task: CAM-11 `leankg memory sync`
   - Module: `cc-sync`
   - Acceptance: the verb is registered and listed in usage; `--json` prints the result shape of section 6.4; `--dry-run` writes nothing; `--rebuild` empties and refills the `cc-` banks; a second process holding the lock makes the command wait; exit codes are 0 and 1 as specified.
   - Verify: `go test ./cmd/leankg/ -run TestMemorySync -count=1`
   - Files: `cmd/leankg/memoryverbs.go`, `cmd/leankg/memoryverbs_test.go`, `cmd/leankg/main.go`
 
-- [ ] Task: CAM-20 `leankg memory migrate`
+- [x] Task: CAM-20 `leankg memory migrate`
   - Module: `cc-sync`
   - Acceptance: `--dry-run` writes nothing and prints the inventory; a real run produces rows equal to the files of each bank and `verified` is true; `--project` limits the scope to one slug; a planted mismatch (a test hook that removes one row) gives exit 1 and lists the mismatch; the source tree bytes are unchanged before and after; a second run changes nothing; the run works with the deny-list present.
   - Verify: `go test ./cmd/leankg/ -run TestMemoryMigrate -count=1`
   - Files: `cmd/leankg/memoryverbs.go`, `cmd/leankg/memoryverbs_test.go`, `internal/ccmemory/migrate.go`, `internal/ccmemory/migrate_test.go`
 
-- [ ] Task: CAM-12 Scoped recall function
+- [x] Task: CAM-12 Scoped recall function
   - Module: `agent-recall`
   - Acceptance: from repository B, a `feedback` memory written in repository A is returned under `project` and `global`; A's `project` memory is returned only under `all`; `types` narrows before the limit; two identical global memories from two repositories are returned once; an unknown scope or type is an error naming the valid values; a caller with no project bank gets global rows and an empty `project`.
   - Verify: `go test ./internal/ccmemory/ -run TestRecall -count=1`
   - Files: `internal/ccmemory/recall.go`, `internal/ccmemory/recall_test.go`
 
-- [ ] Task: CAM-13 `agent_recall` in the core dispatcher
+- [x] Task: CAM-13 `agent_recall` in the core dispatcher
   - Module: `agent-recall`
   - Acceptance: `query {action:"memory", args:{command:"agent_recall"}}` returns the response of section 6.5 with provenance; `args.types` decodes and an unknown argument key is still refused; with no central root the error tells the caller to run the sync; the central handle is opened lazily and only when its index exists; a golden pins the response.
   - Verify: `go test ./internal/core/ -run 'TestActionGoldens|TestAgentRecall' -count=1`
   - Files: `internal/core/core.go`, `internal/core/actions.go`, `internal/core/agent_recall_test.go`, `internal/core/testdata/golden/actions/`, `internal/ccmemory/handle.go`
 
-- [ ] Task: CAM-14 MCP routing, schema text and serve wiring
+- [x] Task: CAM-14 MCP routing, schema text and serve wiring
   - Module: `agent-recall`
   - Acceptance: on a multi-project server, `agent_recall` with a `project` that is not registered is answered from the central banks, while every other action with that `project` is still refused; a caller restricted to some projects is refused; `tools/list` still reports four tools; the regenerated contract document is committed and the drift test passes.
   - Verify: `go test ./internal/mcp/ -run 'TestAgentRecall|TestToolContractDoc' -count=1`
   - Files: `internal/mcp/server.go`, `internal/mcp/agent_recall_test.go`, `docs/mcp-tool-contract.md`, `cmd/leankg/main.go`
+  - Known limits (2026-11-27): hosted mode wires no central handle and answers "not configured"; `?project=` URL handlers do not serve `agent_recall`.
 
-- [ ] Task: CAM-15 `leankg memory recall`
+- [x] Task: CAM-15 `leankg memory recall`
   - Module: `agent-recall`
   - Acceptance: the CLI prints the same rows as the core function for the same inputs, as text and as `--json`; `--dir` selects the caller repository.
   - Verify: `go test ./cmd/leankg/ -run TestMemoryRecall -count=1`
   - Files: `cmd/leankg/memoryverbs.go`, `cmd/leankg/memoryverbs_test.go`
 
-- [ ] Task: CAM-16 `leankg memory hook`
+- [x] Task: CAM-16 `leankg memory hook`
   - Module: `cc-hook`
   - Acceptance: with hook JSON on stdin for repository B, stdout is the context line, a block holding only global memories from other repositories, and the hint line; stdout is under 10,000 characters with 500 fixture memories; the exit status is 0 and stdout is empty for each row of the failure table in section 6.6; a held sync lock skips the sync and still injects.
   - Verify: `go test ./cmd/leankg/ -run TestMemoryHook -count=1`
   - Files: `cmd/leankg/memoryhook.go`, `cmd/leankg/memoryhook_test.go`, `internal/ccmemory/hook.go`, `internal/ccmemory/hook_test.go`
 
-- [ ] Task: CAM-17 Hook registration
+- [x] Task: CAM-17 Hook registration
   - Module: `cc-hook`
-  - Acceptance: `install --target claude --register-memory` adds the entry of section 7.2 to a settings file, preserving every other key and hook; a second run changes nothing; the existing index hook entry and its tests are unaffected; other targets return the unsupported-client error.
+  - Acceptance: `install --target claude-code --register-memory` adds the entry of section 7.2 to a settings file, preserving every other key and hook; a second run changes nothing; the existing index hook entry and its tests are unaffected; other targets return the unsupported-client error.
+  - Note (2026-11-27): the install verb also writes the leankg MCP server entry to the client config file (`~/.claude.json`), because that is what `install` already does; there is no hook-only path in this wave (OQ-11).
   - Verify: `go test ./cmd/leankg/ -run 'TestRegister|TestInstall' -count=1`
   - Files: `cmd/leankg/connect.go`, `cmd/leankg/connect_test.go`, `cmd/leankg/install.go`, `cmd/leankg/install_test.go`
 
-- [ ] Task: CAM-18 Telemetry from the CLI paths
+- [x] Task: CAM-18 Telemetry from the CLI paths
   - Module: `cc-hook`
   - Acceptance: with consent on, one hook run records a retain event per changed bank and one inject event naming `cc-global`, carrying the session id from stdin; with consent off nothing is opened or written; the flush is bounded by the existing close budget. Existing constants are `TransportStdio`, `TransportHTTP`, `TransportREST`, `TransportHS`, `TransportRPC` (`internal/telemetry/types.go:97-101`); reuse one, and adding a new constant needs approval.
   - Verify: `go test ./cmd/leankg/ -run TestMemoryHookTelemetry -count=1`
   - Files: `cmd/leankg/memoryhook.go`, `cmd/leankg/memoryverbs.go`, `cmd/leankg/memoryhook_test.go`
 
-- [ ] Task: CAM-19 Reference documentation and full gate
+- [x] Task: CAM-19 Reference documentation and full gate
   - Module: all
   - Acceptance: the CLI reference and the quick-reference table list the `memory` verb and the install flag; the integration guide of section 7 is reachable from the docs; the full gate is green.
   - Verify: `make go-build && make go-test && make go-vet`
@@ -877,3 +902,4 @@ Gated, not to be started before OQ-1 is answered: `team-store` slices (migration
 | OQ-8 | In team mode, what identifies a project across machines without embedding a local path? | `team-store`. |
 | OQ-9 | Resolved 2026-11-27: reference memories are repository-scoped. | Nothing; one constant in `cc-source`. |
 | OQ-10 | Is the side effect in KD-8 (a stdio server creating a store in every repository) confirmed? If not, user-scope stdio registration is also acceptable. | Guide wording only. |
+| OQ-11 | Should `install --register-memory` have a hook-only mode that does not write the MCP entry? | Nothing in this wave; install writes the MCP entry today (CAM-17). |
