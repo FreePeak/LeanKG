@@ -19,9 +19,19 @@ const (
 	hookStdinLimit = 1 << 20
 )
 
+// memoryHookRun is the hook's run. It is a variable so a test can make it panic.
+var memoryHookRun = ccmemory.RunHook
+
 // cmdMemoryHook is the SessionStart hook (plan 6.6). It always returns nil, so
-// the process exits 0 on every path; failures are one line on stderr.
-func cmdMemoryHook(ctx context.Context, _ []string) error {
+// the process exits 0 on every path; failures are one line on stderr. A panic
+// is recovered here as well, after the deferred telemetry flush has run.
+func cmdMemoryHook(ctx context.Context, _ []string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "leankg memory hook: panic: %v\n", r)
+			err = nil
+		}
+	}()
 	// One deadline for the whole run, the telemetry flush included (plan 6.6 rule 1).
 	deadline := time.Now().Add(ccmemory.HookDeadline)
 	ctx, cancel := context.WithDeadline(ctx, deadline)
@@ -37,7 +47,7 @@ func cmdMemoryHook(ctx context.Context, _ []string) error {
 		return nil
 	}
 	wd, _ := os.Getwd()
-	ccmemory.RunHook(ctx, ccmemory.HookOptions{
+	memoryHookRun(ctx, ccmemory.HookOptions{
 		Home:      home,
 		CallerDir: ccmemory.ResolveHookDir(stdin, os.Getenv("CLAUDE_PROJECT_DIR"), wd),
 		Stdout:    os.Stdout,

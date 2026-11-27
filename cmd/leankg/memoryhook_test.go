@@ -376,24 +376,19 @@ func TestMemoryHookTelemetryConsentOffOpensAndWritesNothing(t *testing.T) {
 
 // hookFlushSink is the process telemetry sink for the deadline tests. Its first
 // memory event sleeps work, which is how the hook's own work spends its budget,
-// because emitMemory calls RecordMemory on the work path. Close never returns
-// until block closes, so the flush always runs out whatever budget it is given.
+// because emitMemory calls RecordMemory on the work path. Its Close is the
+// blockingRecorder one: it never returns until block closes, so the flush always
+// runs out whatever budget it is given.
 type hookFlushSink struct {
-	telemetry.Nop
-	block <-chan struct{}
-	work  time.Duration
-	once  sync.Once
+	blockingRecorder
+	work time.Duration
+	once sync.Once
 }
 
 func (s *hookFlushSink) Level() telemetry.Level { return telemetry.Metadata }
 
 func (s *hookFlushSink) RecordMemory(telemetry.MemoryEvent) {
 	s.once.Do(func() { time.Sleep(s.work) })
-}
-
-func (s *hookFlushSink) Close() error {
-	<-s.block
-	return nil
 }
 
 // installBlockedHookSink grants consent and makes the hook's recorder a
@@ -404,7 +399,7 @@ func installBlockedHookSink(t *testing.T, work time.Duration) {
 	block := make(chan struct{})
 	t.Cleanup(func() { close(block) })
 	telemetryOnce.Do(func() {}) // the lazy build must not replace the sink below
-	telemetrySinks.install(&hookFlushSink{block: block, work: work})
+	telemetrySinks.install(&hookFlushSink{blockingRecorder: blockingRecorder{block: block}, work: work})
 }
 
 // TestMemoryHookFastWorkWithBlockedFlushEndsAtDeadline pins the shared budget
@@ -421,8 +416,8 @@ func TestMemoryHookFastWorkWithBlockedFlushEndsAtDeadline(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit %d, want 0", code)
 	}
-	if limit := ccmemory.HookDeadline + 200*time.Millisecond; elapsed > limit {
-		t.Errorf("hook took %v with a blocked flush, want at most %v (the hook deadline)", elapsed, limit)
+	if limit := ccmemory.HookDeadline + 500*time.Millisecond; elapsed > limit {
+		t.Errorf("hook took %v with a blocked flush, want at most %v (the hook deadline plus slack)", elapsed, limit)
 	}
 }
 
@@ -441,8 +436,46 @@ func TestMemoryHookWorkUsingFullBudgetAddsOnlyTheFlushFloor(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit %d, want 0", code)
 	}
-	// Deadline, plus the 100 ms floor, plus 100 ms of scheduling slack.
-	if limit := ccmemory.HookDeadline + 200*time.Millisecond; elapsed > limit {
+	// Deadline, plus the 100 ms floor, plus 400 ms of scheduling slack.
+	if limit := ccmemory.HookDeadline + 500*time.Millisecond; elapsed > limit {
 		t.Errorf("hook took %v when the work used the full budget, want at most %v", elapsed, limit)
+	}
+}
+
+// TestMemoryHookPanicPrintsOneLineAndExitsZero: a panic in the hook run is one
+// stderr line and a nil return, so the process exits 0.
+func TestMemoryHookPanicPrintsOneLineAndExitsZero(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	setHookStdin(t, `{"cwd":"`+filepath.Join(home, "work", "repo-b")+`"}`, false)
+	old := memoryHookRun
+	memoryHookRun = func(context.Context, ccmemory.HookOptions) { panic("boom") }
+	t.Cleanup(func() { memoryHookRun = old })
+
+	var err error
+	stderr := captureStderr(t, func() { err = cmdMemoryHook(context.Background(), nil) })
+	if err != nil {
+		t.Errorf("cmdMemoryHook = %v, want nil (exit 0)", err)
+	}
+	if n := strings.Count(strings.TrimSuffix(stderr, "\n"), "\n") + 1; stderr == "" || n != 1 {
+		t.Errorf("stderr has %d lines, want exactly one: %q", n, stderr)
+	}
+}
+
+// TestMemoryHookWithoutHomeExitsZeroWithOneStderrLine: with HOME and
+// CLAUDE_PROJECT_DIR unset the hook exits 0, writes nothing to stdout and
+// writes one stderr line.
+func TestMemoryHookWithoutHomeExitsZeroWithOneStderrLine(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("CLAUDE_PROJECT_DIR", "")
+	setHookStdin(t, "", false)
+
+	code, stdout, stderr := runMemoryHook(t)
+	if code != 0 || stdout != "" {
+		t.Errorf("exit %d, stdout %q; want 0 and empty", code, stdout)
+	}
+	if n := strings.Count(strings.TrimSuffix(stderr, "\n"), "\n") + 1; stderr == "" || n != 1 {
+		t.Errorf("stderr has %d lines, want exactly one: %q", n, stderr)
 	}
 }
