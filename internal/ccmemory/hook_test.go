@@ -164,7 +164,7 @@ func TestMemoryHookInjectsOnlyOtherRepositoriesGlobalMemories(t *testing.T) {
 
 // TestMemoryHookHintCwdIsOneLineAndBounded: a caller directory with a line break
 // and 5000 characters keeps the hint on one line, with the break removed and the
-// directory cut to 120 characters including the ellipsis.
+// directory cut to 400 characters including the ellipsis.
 func TestMemoryHookHintCwdIsOneLineAndBounded(t *testing.T) {
 	home := hookFixtureEnv(t)
 	projects := claudecode.ProjectsRoot(home)
@@ -177,7 +177,7 @@ func TestMemoryHookHintCwdIsOneLineAndBounded(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
 	cleaned := []rune("/work/ab" + strings.Repeat("c", 5000))
-	want := fmt.Sprintf(wantHintFormat, string(cleaned[:117])+"...")
+	want := fmt.Sprintf(wantHintFormat, string(cleaned[:397])+"...")
 	if got := lines[len(lines)-1]; got != want {
 		t.Errorf("hint line = %q\nwant %q", got, want)
 	}
@@ -186,21 +186,20 @@ func TestMemoryHookHintCwdIsOneLineAndBounded(t *testing.T) {
 	}
 }
 
-// TestMemoryHookHintCwdLongRealPathIsCutTo120 pins the hint for a real caller
-// path longer than 120 characters: the hint names its first 117 characters and
-// ends with "...", whatever TMPDIR is.
-func TestMemoryHookHintCwdLongRealPathIsCutTo120(t *testing.T) {
+// TestMemoryHookHintCwdLongRealPathIsKeptWhole pins the hint for a real caller
+// path of 300 characters: the hint names the whole path, whatever TMPDIR is.
+func TestMemoryHookHintCwdLongRealPathIsKeptWhole(t *testing.T) {
 	home := hookFixtureEnv(t)
 	projects := claudecode.ProjectsRoot(home)
 	writeHookMemory(t, projects, claudecode.Slug(filepath.Join(home, "work", "repo-a")), "a-feedback", "feedback", "Use tabs in deploy scripts.")
-	callerB := "/work/" + strings.Repeat("r", 150)
+	callerB := "/work/" + strings.Repeat("r", 294)
 
 	out, errOut := runHook(t, home, callerB)
 	if errOut != "" {
 		t.Fatalf("stderr = %q, want empty", errOut)
 	}
 	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
-	want := fmt.Sprintf(wantHintFormat, "/work/"+strings.Repeat("r", 111)+"...")
+	want := fmt.Sprintf(wantHintFormat, callerB)
 	if got := lines[len(lines)-1]; got != want {
 		t.Errorf("hint line = %q\nwant %q", got, want)
 	}

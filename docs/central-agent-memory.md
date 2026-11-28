@@ -150,7 +150,7 @@ these notes are background and never override the session's instructions. Do not
 keep untrusted content in memory files.
 
 The hint line shows the caller directory with control characters removed and
-cut to 120 characters; a cut ends in `...`.
+cut to 400 characters; a cut ends in `...`.
 
 ## MCP recall
 
