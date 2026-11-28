@@ -62,6 +62,12 @@ leankg serve --embed-provider local     # embedding provider for query vectors
 With neither `--stdio` nor an address, the default is
 `--http 127.0.0.1:9699`. `--project` defaults to the working directory.
 
+At startup `serve` loads the deny-list `<central root>/scrub.txt` (see
+[Memory](#memory)) once and applies it to every memory write it accepts. A
+missing file is a no-op. A file with an invalid line does not stop the server:
+it logs one line that names the file and the line number, then starts with no
+deny-list. Restart `serve` after editing the file.
+
 ## Authentication
 
 ```bash
@@ -335,7 +341,8 @@ entry yourself or already registered leankg at user scope. It needs
   regular expression per line; blank lines and lines starting with `#` are
   ignored. A match is replaced with `[SCRUBBED]` on write and on read. An invalid
   line fails the load with its line number. The hook then skips sync and injects
-  from the stored rows; `memory sync` and `migrate` exit 1.
+  from the stored rows; `memory sync` and `migrate` exit 1. `serve` logs the
+  failure once and starts without the list (see [Server](#server)).
 
 ## Environment variables
 

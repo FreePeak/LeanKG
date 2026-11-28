@@ -39,6 +39,8 @@ only read.
 
    A match is replaced with `[SCRUBBED]` when a memory is written and when it is
    read. Create the file before migrating, so secrets are masked on the way in.
+   A running `serve` reads the file once, at startup; restart it after you edit
+   the file.
 3. Preview the migration, then run it:
 
    ```bash
@@ -237,6 +239,12 @@ scope, because each session's server opens its own store.
   memory. `agent_recall` returns `central memory is not configured on this server`.
 - **`?project=` routing does not serve it.** Project routing does not select the
   central banks; `agent_recall` answers from the default engine.
+- **Deny-list in `serve` is read once.** `serve` loads `scrub.txt` when it starts
+  and masks the writes its listeners accept from then on. An edit takes effect
+  after a restart. `memory sync`, `migrate` and the session hook read the file on
+  every run. If the file has an invalid line, `serve` starts without a deny-list
+  and logs one line on stderr that names the file and the line number, never a
+  pattern.
 - **Keyword recall on the CLI.** `leankg memory recall` has no embedder, so it
   ranks by keyword only. Over MCP the dense arm is used when an embedder and a
   calibrated floor are configured.

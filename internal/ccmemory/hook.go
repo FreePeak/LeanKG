@@ -113,12 +113,10 @@ func syncForHook(ctx context.Context, opts HookOptions) (*memory.Memory, error) 
 	central := memory.GlobalRoot(opts.Home)
 	projects := claudecode.ProjectsRoot(opts.Home)
 
-	patterns, digest, err := memory.LoadScrubFile(filepath.Join(central, scrubFile))
-	if err != nil {
+	if err := InstallDenyList(central); err != nil {
 		hookFail(opts.Stderr, fmt.Errorf("deny-list invalid, sync skipped: %w", err))
 		return nil, nil
 	}
-	memory.SetScrubPatterns(patterns, digest)
 
 	if !isDir(projects) {
 		return nil, nil

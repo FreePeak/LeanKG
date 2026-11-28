@@ -150,18 +150,24 @@ const claudeCodeSource = "claude-code-memory"
 // nothing is written or deleted. Once the plan is applied, a cancelled ctx stops
 // between banks; each bank's batch is complete or absent.
 func Sync(ctx context.Context, mem *memory.Memory, opts SyncOptions) (SyncResult, error) {
-	if err := installDenyList(opts.CentralRoot); err != nil {
+	if err := InstallDenyList(opts.CentralRoot); err != nil {
 		return SyncResult{Root: opts.CentralRoot, Projects: opts.Projects}, err
 	}
 	res, _, err := syncPass(ctx, mem, opts, nil)
 	return res, err
 }
 
-// installDenyList loads the central deny-list and installs it process-wide.
-// Every read and write of a sync or migrate run is masked by it, so the callers
-// install it before they read the central root.
-func installDenyList(central string) error {
-	patterns, digest, err := memory.LoadScrubFile(filepath.Join(central, scrubFile))
+// DenyListPath is the deny-list file under the central root.
+func DenyListPath(central string) string {
+	return filepath.Join(central, scrubFile)
+}
+
+// InstallDenyList loads the central deny-list and installs it process-wide.
+// Every read and write of a sync, migrate, hook or serve run is masked by it, so
+// the callers install it before they read the central root. A file that does
+// not load leaves the installed list unchanged and returns the error.
+func InstallDenyList(central string) error {
+	patterns, digest, err := memory.LoadScrubFile(DenyListPath(central))
 	if err != nil {
 		return err
 	}
