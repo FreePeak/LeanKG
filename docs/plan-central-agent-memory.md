@@ -27,7 +27,7 @@ Claude Code keeps auto-memory per repository under `~/.claude/projects/<project-
 |---|---|
 | G1 | Memories of type `user` and `feedback` written in any repository are recallable from, and injected into, sessions in every other repository. |
 | G2 | Memories of type `project` and `reference` are recallable from their own repository by default and from other repositories only on explicit request. |
-| G3 | Claude Code's files stay canonical. The LeanKG copy is derived, one-way, idempotent and rebuildable from the files at any time. |
+| G3 | Claude Code keeps writing its native files. LeanKG is the authority for history, fed by hook write-through, with archive and restore (KD-12). The sync stays idempotent and rebuildable from the files at any time. |
 | G4 | A session start never fails or stalls because LeanKG is absent, slow or broken. |
 | G5 | Secrets and user-listed patterns never reach the central store. |
 | G6 | The MCP surface stays at exactly four tools. |
@@ -50,7 +50,7 @@ Claude Code keeps auto-memory per repository under `~/.claude/projects/<project-
 | # | Assumption | Status |
 |---|---|---|
 | A1 | The memory directory is `~/.claude/projects/<project>/memory/`, where `<project>` is derived from the git repository, so worktrees and subdirectories share one directory. Outside a git repository the project root is used. | Verified in the Claude Code documentation (`memory` page, read 2026-11-27). |
-| A2 | The exact `<project>` string is the main repository root with `/` and `.` replaced by `-`. | Supported, not verified for linked worktrees (2026-11-27): no linked-worktree session with a memory directory was observed, so the main-repository slug is the expected name. `ProjectKey` tries the main-root slug first, then the directory's own slug. CAM-00 step (a) stays open. |
+| A2 | The exact `<project>` string is the main repository root with every character outside `[A-Za-z0-9]` replaced by `-` (controlled experiment, 2026-11-28; on macOS `/tmp` becomes `/private/tmp`). Claude Code truncates names over 200 characters and appends a hash (observed in the installed binary, version 2.1.329; not documented by Claude Code); LeanKG matches the first 200 characters. | Supported, not verified for linked worktrees (2026-11-27): no linked-worktree session with a memory directory was observed, so the main-repository slug is the expected name. `ProjectKey` tries the main-root slug first, then the directory's own slug. CAM-00 step (a) stays open. |
 | A3 | A memory file is Markdown with YAML frontmatter carrying `name`, `description` and a type (`user`, `feedback`, `project`, `reference`) either as top-level `type` or nested under `metadata`. `MEMORY.md` is an index, one line per memory. | Verified on a real install (2026-11-27): all 274 memory files across 160 project directories have top-level `name`, `description`, `metadata`, with `type` nested under `metadata`; none has a top-level `type` or lacks frontmatter. Extra nested keys (`originSessionId`, `node_type`, `modified`) are ignored. |
 | A4 | At session start Claude Code loads the first 200 lines or 25 KB of the current repository's `MEMORY.md` and no topic files. | Verified in the Claude Code documentation (`memory` page). |
 | A5 | Plain stdout of a `SessionStart` command hook is added to context. Each output string is capped at 10,000 characters; beyond that only a 2,000-character preview is shown. A non-zero exit does not block the session. The default command timeout is 600 s and a per-hook `timeout` field exists. | Verified in the Claude Code documentation (`hooks` page, read 2026-11-27). Verified end to end on 2026-11-27 with Claude Code 2.1.329: the stdout of a synchronous `SessionStart` command hook was visible to the model (a one-shot probe printed a random token and the model repeated it). |
@@ -68,7 +68,9 @@ Each decision lists the alternatives considered. KD-2, KD-3, KD-5, KD-6 and KD-7
 
 ### KD-1: Claude Code's files are canonical; LeanKG is derived
 
-Agreed and unchanged. `MEMORY.md` is loaded natively with no tool call, while a tool-based store only helps when the model calls it. Alternative rejected: LeanKG as the write target.
+**Superseded by KD-12** where it says LeanKG is derived and one-way. Claude Code's native files still load `MEMORY.md` as described below; the `cc-` banks are now the authority for history.
+
+Agreed at the time. `MEMORY.md` is loaded natively with no tool call, while a tool-based store only helps when the model calls it. Alternative rejected: LeanKG as the write target.
 
 ### KD-2: The first central store is the existing file-backed memory root, not a new database table
 
@@ -106,6 +108,8 @@ Hashes are used because bank names are cut at 64 characters (`internal/memory/ba
 
 ### KD-5: Sync runs at session start, inside the hook; no watcher
 
+**Superseded in part by KD-12.** The session-start sync and the no-watcher decision stand. The sync now also runs on PostToolUse (Write or Edit of a memory file) and SessionEnd, which narrows the staleness described below.
+
 A memory written in session A matters to session B only when B starts, and B's `SessionStart` hook runs a bounded sync before it injects. Alternatives rejected: an `fsnotify` watcher (`internal/obsidian` has one, but it means a long-lived process); a `Stop` hook (adds a second hook for no extra freshness). Consequence: a long-running session's on-demand recall can miss memories written elsewhere since the last session start on the machine. `leankg memory sync` closes the gap manually.
 
 ### KD-6: The hook injects only what Claude Code does not load itself
@@ -131,6 +135,16 @@ A user-maintained list of regular expressions is applied inside `memory.Redact` 
 ### KD-11: Team mode uses a dedicated table with an owner column
 
 See section 6.7. Not built until OQ-1 is answered.
+
+### KD-12: Claude Code's files are the working copy; LeanKG is the authority, fed by hooks
+
+Supersedes KD-1 and KD-5 where they describe a one-way derived mirror. Claude Code keeps writing its native files under `~/.claude/projects/<slug>/memory/`, so native loading is unchanged. LeanKG's `cc-` banks hold the history. Three hook events copy changes in: PostToolUse on a Write or Edit of a memory `.md` file (scoped to that project, `internal/ccmemory/hook.go:114-118`, `:128-145`), SessionEnd (the session's project, `hook.go:119-120`), and SessionStart (all projects, then injection, `hook.go:121-122`). A row whose file disappears is copied to `ccarchive` before removal (`internal/ccmemory/sync.go:27`, `:509-523`), so deleting a file loses nothing; `memory restore` rebuilds files from the banks (`internal/ccmemory/restore.go:64`). Alternatives rejected:
+
+- Relocate the directory with `autoMemoryDirectory`: one path per settings scope, one shared `MEMORY.md` across projects, and symlinks are refused.
+- An MCP save tool: a memory is lost when the server is down, and built-in saving would have to be turned off.
+- A launchd watcher: a long-lived daemon for a change a hook already sees.
+
+Limits. The PostToolUse trigger assumes Claude Code writes memory files through the Write and Edit tools. That is observed, not documented by Claude Code, so it is stated as an assumption. A change made by a shell command waits for the next SessionEnd, SessionStart or `memory sync`. The PostToolUse hook is async, so its copy can land after the tool returns. Excluded projects are listed in `~/.config/leankg/memory-exclude`, one absolute path per line; a relative line, `.`, `/` or `~` alone stops the run with the file and line number. The matcher compares the as-written slug and the symlink-resolved slug (for a nonexistent path, of its longest existing ancestor with the rest appended), and the scrub-masked form of each; every slug is capped at 200 characters and matched by prefix. Known limits: `CLAUDE_CODE_PROJECT_DIR_NAME` and Unicode normalisation of paths are not handled, and `ProjectKey` in `internal/ccmemory/identity.go:21` does not resolve symlinks. Their rows are never archived, and their archive rows are purged (`internal/ccmemory/exclude.go:67-122`, `internal/ccmemory/sync.go:420-446`).
 
 ---
 
@@ -438,7 +452,7 @@ Errors:
 
 **Schema changes.** SQLite: none. Postgres: none.
 
-**CLI.** `leankg memory hook`. Reads the hook JSON from stdin (`cwd`, `session_id`). Falls back to `CLAUDE_PROJECT_DIR`, then the working directory.
+**CLI.** `leankg memory hook`. Reads the hook JSON from stdin (`cwd`, `session_id`). Empty stdin runs as SessionStart; valid JSON without a usable `cwd` falls back to `CLAUDE_PROJECT_DIR`, then the working directory.
 
 **Behavior rules.**
 
@@ -448,7 +462,7 @@ Errors:
 4. Output: one context line, the block from `InjectBanks`, one hint line (section 7.3). Nothing is printed when there is nothing to inject.
 5. The process always exits 0. Any error is one line on stderr.
 6. When telemetry consent is on, the sync and inject events carry the hook's session id, so the dashboard Memory page shows the `cc-` banks. With consent off nothing is recorded (`telemetry_hook.go:41-47`). The hook uses the existing `TransportStdio` constant and records only when consent is on.
-7. An unknown caller (empty or non-JSON stdin) falls back to the working directory. That matches no project bank, so nothing is excluded.
+7. Empty stdin is a SessionStart run with the fallback directory. Stdin that is not one JSON object, is cut off at 1 MiB, or is not complete within 500 ms does nothing and prints nothing (fails closed; `cmd/leankg/memoryhook.go`, `internal/ccmemory/hook.go` `ParseHookInput`).
 
 **Registration.** `leankg install --target claude-code --register-memory` merges one entry into `hooks.SessionStart` of `~/.claude/settings.json`: a synchronous command hook with `timeout` 10 and no matcher. It preserves every other hook and is idempotent. This is a plain `settings.json` hook, so it works where plugin-provided hooks are skipped.
 
@@ -460,7 +474,8 @@ Errors:
 | Central root absent and no memory files anywhere | empty | 0 |
 | Side index locked or rebuilding past the deadline | empty | 0 |
 | Deny-list invalid | block from stored rows; sync skipped | 0 |
-| stdin empty or not JSON | block for the fallback directory | 0 |
+| stdin empty | block for the fallback directory | 0 |
+| stdin not one JSON object, over 1 MiB, or late (500 ms) | empty | 0 |
 | Projects root unreadable | block from stored rows | 0 |
 
 ### 6.7 `team-store` (gated on OQ-1; specification only)
@@ -621,7 +636,7 @@ A per-repository stdio registration also works. It is not recommended at user sc
 | Authorization | `agent_recall` needs Viewer. Callers restricted to some projects are refused (KD-8). With the gate off every caller is Admin, which is acceptable only on loopback, as today. |
 | Cross-repository leakage | `project` and `reference` memories leave their repository only under `scope=all`. Untyped memories are never global. |
 | Ownership | Absent. Every row belongs to the one OS user (A8). Required before team mode. |
-| Deletion | Deleting the source file deletes the row on the next sync. `--rebuild` re-derives everything. Removing the `cc-` bank files and running sync is equivalent. |
+| Deletion | Deleting the source file copies the row to `ccarchive` (stamped `deleted_at`) and then removes it, at the next sync, PostToolUse or SessionEnd (KD-12). `memory restore --deleted` brings it back. A project whose memory directory is absent keeps its rows unless `--rebuild`. `--rebuild --project SLUG` forgets one project without archiving. Removing the `cc-` bank files drops the archive as well. |
 | File permissions | The central root is created by the existing code with its existing modes (`internal/memory/memory.go:100-108`); this plan does not change them. |
 | Telemetry | Off by default. When on, events carry counts, ids and hashes, not memory text (`internal/memory/telemetry_hook.go:94-105`). |
 | Claude Code config writes | `install --target claude-code --register-memory` writes the hook entry to `~/.claude/settings.json` and, as `install` already does, the leankg MCP server entry to `~/.claude.json`. With `--hook-only` only the hook entry is written (OQ-11, resolved). |

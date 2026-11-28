@@ -178,11 +178,13 @@ The guide is [Central agent memory](central-agent-memory.md). Placeholders below
 are `<leankg-binary>` and `<project-dir>`.
 
 ```bash
-leankg memory sync [--dry-run] [--rebuild] [--json]
+leankg memory sync [--dry-run] [--rebuild] [--project SLUG] [--json]
 leankg memory migrate [--project SLUG] [--dry-run] [--json]
+leankg memory restore --into DIR [--project SLUG] [--deleted] [--json]
 leankg memory recall <query...> [--scope project|global|all] [--type KIND] [--limit N] [--dir DIR] [--json]
-leankg memory hook                      # SessionStart hook; reads hook JSON on stdin
+leankg memory hook                      # SessionStart, PostToolUse and SessionEnd hook; reads hook JSON on stdin
 leankg install --target claude-code --register-memory [--hook-only]
+leankg install --target claude-code --unregister-memory
 ```
 
 The `memory` verb with no subcommand prints the usage and exits 1. An unknown
@@ -197,8 +199,12 @@ It waits for a sync that is already running.
 | Flag | Meaning |
 | --- | --- |
 | `--dry-run` | Print the plan; change no bank. On a missing central root it works in a temporary directory that it removes, so the root is not created. |
-| `--rebuild` | Delete every `cc-` row, then sync from scratch. The only way to delete when the scan is empty. |
+| `--project SLUG` | Limit the run to this project slug. With `--rebuild`, forget that project's rows without archiving them. |
+| `--rebuild` | Delete every `cc-` row, then sync from scratch. The only way to delete when the scan is empty. Rows of files that have gone are archived to `ccarchive`, except under `--project`. |
 | `--json` | Print the result as JSON. |
+
+Removed rows are copied to bank `ccarchive` (with `deleted_at`) before they are
+deleted. Rows of a project on the exclude list are deleted without a copy.
 
 Text output: a count line, then one line per bank. A withheld delete prints a
 `WARNING` line. JSON result (fields as the code emits them):
@@ -254,6 +260,24 @@ JSON result:
 Exit codes: 0 when verified, or on a dry run. 1 when verification fails
 (mismatches are listed) or on error.
 
+### memory restore
+
+Rebuilds Claude Code memory files from the central banks. It writes
+`<slug>/memory/<file>.md` and a `MEMORY.md` index per project under `--into`.
+The guide is [Restore](central-agent-memory.md#restore).
+
+| Flag | Meaning |
+| --- | --- |
+| `--into DIR` | Required. Directory to write under. Refused when it is the Claude Code projects directory or inside it. |
+| `--project SLUG` | Restore only this project slug. |
+| `--deleted` | Also restore rows kept in bank `ccarchive`. A live row wins over an archive copy of the same file. |
+| `--json` | Print the counts as JSON. |
+
+Text output: `memory restore: N written, N skipped, N archived-included`. JSON
+result: `{"written": 0, "skipped": 0, "archived_included": 0}`. An existing file is
+never overwritten and counts as skipped. Every row is checked before the first
+write, so one refused row writes nothing. A missing `--into` exits 2.
+
 ### memory recall
 
 Ranks the central memories for a query. It calls the same function as the
@@ -292,9 +316,21 @@ valid scopes. When the central root has no index yet, it exits 1 with
 
 ### memory hook
 
-The `SessionStart` hook. It reads the hook JSON on stdin (`cwd` is used; stdin
-is waited for at most 500 ms). Without a usable `cwd` it falls back to
+One binary handles three events, chosen by `hook_event_name` in the hook JSON on
+stdin. Other events fall through to the SessionStart behaviour.
+
+| Event | Registered as | What it does | Stdout |
+| --- | --- | --- | --- |
+| `SessionStart` | sync, timeout 10 | Sync, then inject (below). | The memory block |
+| `PostToolUse` | matcher `Write\|Edit`, async | If `tool_input.file_path` is a memory `.md` file (not `MEMORY.md`), sync that project only. | None |
+| `SessionEnd` | timeout 10 | Sync the session's project only. | None |
+
+Empty stdin runs as SessionStart. Stdin that is not one JSON object, is cut off
+at 1 MiB, or is not complete within 500 ms makes the hook do nothing and print
+nothing (fails closed). Valid JSON without a usable `cwd` falls back to
 `CLAUDE_PROJECT_DIR`, then to the working directory.
+
+SessionStart does this:
 
 1. Sync the `cc-` banks at every session start. The sync takes a non-waiting
    lock; when another sync holds it, the sync step is skipped and the stored rows
@@ -312,13 +348,26 @@ inside the process; `settings.json` allows 10 s.
 ### install --register-memory
 
 `leankg install --target claude-code --register-memory` writes the leankg MCP
-entry (as `install` always does) and merges one `SessionStart` command hook
-(`<leankg-binary> memory hook`, `timeout` 10, no matcher) into the Claude Code
-settings file: `$CLAUDE_CONFIG_DIR/settings.json` when `CLAUDE_CONFIG_DIR` is
-set, else `~/.claude/settings.json`. Other hooks are preserved, and a second run changes
-nothing. Only `claude-code` accepts the flag; any other target fails with an
+entry (as `install` always does) and merges three command hooks, each running
+`<leankg-binary> memory hook`, into the Claude Code settings file:
+`$CLAUDE_CONFIG_DIR/settings.json` when `CLAUDE_CONFIG_DIR` is set, else
+`~/.claude/settings.json`. The events are `SessionStart` (`timeout` 10, no
+matcher), `PostToolUse` (matcher `Write|Edit`, `async`) and `SessionEnd`
+(`timeout` 10). Other hooks are preserved, and a second run changes nothing.
+Before a change the settings file is copied to
+`settings.json.leankg-bak-<YYYYMMDD-HHMMSS>` (GMT+7, same directory, mode kept). Only `claude-code` accepts the flag; any other target fails with an
 error before anything is written. The target name is `claude-code`, not
 `claude`, which the command rejects as unknown.
+
+### install --unregister-memory
+
+`leankg install --target claude-code --unregister-memory` removes the three
+memory hooks that leankg wrote, matched by the `memory hook` command. Other hooks
+and settings stay. An event left empty is dropped, and a file with nothing to
+remove is not rewritten. It is the rollback for `--register-memory`. The
+settings file is backed up first, as above. It cannot be combined with
+`--register-memory`, `--register-cwd`, `--hook-only`, `--http`, `--url` or
+`--project` (exit 2, nothing written). Only `claude-code` accepts it.
 
 `--hook-only` (with `--register-memory`) merges the same hook and writes no MCP
 config, so `~/.claude.json` is left as it is. Use it when you manage the MCP
@@ -337,8 +386,16 @@ entry yourself or already registered leankg at user scope. It needs
   and the MCP entry that `install` always writes into `~/.claude.json`. With
   `--hook-only` only the hook entry is written.
 - Deletes are withheld when the projects root is missing or holds no memory
-  files while central rows exist. The run reports `deletes_withheld: true` and
-  deletes nothing. `--rebuild` is the only way to clear those rows.
+  files while central rows exist, and a scoped run withholds the delete of a
+  project's last memory file. The run reports `deletes_withheld: true` and
+  deletes nothing. `--rebuild` is the only way to clear those rows. A project
+  whose memory directory is absent keeps its rows too, unless `--rebuild`.
+  The table in [central agent memory](central-agent-memory.md#archive-and-deletion)
+  lists each case.
+- A row whose file is gone is copied to `ccarchive` before it is deleted. Rows
+  of excluded projects, and the forget of `--project SLUG --rebuild`, are deleted
+  without a copy; excluded projects' archive rows are purged. `restore` reads the
+  archive only with `--deleted`.
 - `migrate` never modifies Claude Code's files. A dry run never creates the
   central root.
 - Deny-list: `<central root>/scrub.txt` (`~/.leankg/memory/scrub.txt`). One
