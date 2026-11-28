@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.38.0](https://github.com/FreePeak/LeanKG/compare/v0.37.2...v0.38.0) (2026-11-28)
+
+
+### Features
+
+* **ccmemory:** discover, identity, sync plan and apply, migrate (CAM-04, CAM-05, CAM-09, CAM-10, CAM-20) ([517c4c4](https://github.com/FreePeak/LeanKG/commit/517c4c45dea635e67fb0b41b26f863d6dc678d84))
+* **ccmemory:** scoped recall over the central banks (CAM-12) ([2786fe5](https://github.com/FreePeak/LeanKG/commit/2786fe503d7d9243aeb1b6725da94ee46e52274a))
+* central agent memory recall (CAM-12..CAM-15) ([1653344](https://github.com/FreePeak/LeanKG/commit/1653344f7885f8ecb0250ecadbe8c8360e6d2777))
+* central agent memory SessionStart hook, install registration and docs (CAM-16..CAM-19) ([6ac7e04](https://github.com/FreePeak/LeanKG/commit/6ac7e04705f59ce583e192d39f57fa8cdf40e43b))
+* central agent memory sync and migrate (CAM-02..CAM-11, CAM-20) ([14bb486](https://github.com/FreePeak/LeanKG/commit/14bb486eae12b7e0bf9cefb2f69e1decf0f1a9cb))
+* **cli:** leankg memory hook with telemetry (CAM-16, CAM-18) ([8898b49](https://github.com/FreePeak/LeanKG/commit/8898b49e83c9d61b79cbebad4592978322b840dd))
+* **cli:** leankg memory recall (CAM-15) ([e4214d2](https://github.com/FreePeak/LeanKG/commit/e4214d24e7295f9868b32ea31de3d135e6d9c9da))
+* **cli:** leankg memory sync and migrate (CAM-11, CAM-20) ([f1b7c38](https://github.com/FreePeak/LeanKG/commit/f1b7c38c2a668b45138170d67eb2eec8c24e8411))
+* **core:** agent_recall memory query command (CAM-13) ([f6faad0](https://github.com/FreePeak/LeanKG/commit/f6faad0cd1db80e62a669aed9da12ed2daed775d))
+* hook-only install mode and deny-list loading in serve (follow-ups to central agent memory) ([49ab52b](https://github.com/FreePeak/LeanKG/commit/49ab52b19a3c251506b00a45dd58cf3623e6499b))
+* **install:** add --hook-only to register the memory hook without the MCP entry ([2f9ab03](https://github.com/FreePeak/LeanKG/commit/2f9ab030b64c7bf01632da4c018f22ae8f306a19))
+* **install:** register the memory SessionStart hook (CAM-17) ([6b6065e](https://github.com/FreePeak/LeanKG/commit/6b6065ed7c547120593679a84d16c870843368f0))
+* **mcp:** answer agent_recall server-level and wire serve (CAM-14) ([20ef3f8](https://github.com/FreePeak/LeanKG/commit/20ef3f85576e8fc88955849393e096a190521f9c))
+* **memory:** batch document delete and InjectBanks (CAM-07, CAM-08) ([3695afc](https://github.com/FreePeak/LeanKG/commit/3695afc4fc423f940dc463bf11ab85467c84db61))
+* **memory:** user deny-list in Redact and global root helper (CAM-06) ([fcb0089](https://github.com/FreePeak/LeanKG/commit/fcb00891083afdabdf849e1d57084d3f14349157))
+* **serve:** load the central deny-list at startup ([df05397](https://github.com/FreePeak/LeanKG/commit/df05397432da4aab3657f4a1a3d9b02c51648cb3))
+* **sessionlink:** export Claude Code projects root and slug (CAM-02) ([662cbfd](https://github.com/FreePeak/LeanKG/commit/662cbfd02dd790807f475a7c4104b4b306443142))
+
+
+### Bug Fixes
+
+* **ccmemory:** discovery honors the sync budget; a cancelled scan writes and deletes nothing ([364ed5b](https://github.com/FreePeak/LeanKG/commit/364ed5b31f7386f15b486d8fd09242dc5d72dcdd))
+* **ccmemory:** install the deny-list before the migrate scope check ([a6da4d1](https://github.com/FreePeak/LeanKG/commit/a6da4d1a898a331bd269e158f6e05912f69cb964))
+* **ccmemory:** match scoped sync against the masked project slug (CAM-10) ([1484b69](https://github.com/FreePeak/LeanKG/commit/1484b698896aa9ccb33503cdbd723c18e27b2923))
+* **ccmemory:** never delete rows of a project whose scan failed (CAM-10, CAM-20) ([70a8e7e](https://github.com/FreePeak/LeanKG/commit/70a8e7e842aaf13e5df8bbc05a8ed2f337694e43))
+* **ccmemory:** no home path in handle errors; reject relative identity; cap recall limit (CAM-12, CAM-13) ([09166e4](https://github.com/FreePeak/LeanKG/commit/09166e4b93fc13dde1d904140e8d564c783e2ad8))
+* **core:** name no project on a cross-repository agent_recall answer; one command constant (CAM-13) ([1f41c54](https://github.com/FreePeak/LeanKG/commit/1f41c54cb3cbe5b7a37dae98d061367aadb88b78))
+* **core:** refuse agent_recall for restricted callers on every transport (CAM-13, CAM-14) ([b969a25](https://github.com/FreePeak/LeanKG/commit/b969a25381e83831ec87d08a07138712b5efef58))
+* **install:** honor CLAUDE_CONFIG_DIR, match only the leankg binary, keep file mode, reject non-object settings (CAM-17) ([d98d7f4](https://github.com/FreePeak/LeanKG/commit/d98d7f422642b15842a7ac7abff202bc27925373))
+* **memory:** compact one-line hook injection; never let an oversize memory suppress the block (CAM-16) ([8297856](https://github.com/FreePeak/LeanKG/commit/82978566ff7cca7df0a63b49ad5f312c7b6e7bbc))
+* **memory:** limit post-sync compaction to cc- banks (CAM-11, CAM-20) ([11349b4](https://github.com/FreePeak/LeanKG/commit/11349b4b0deccc903e1df6b0bad24477c4914758))
+* **memory:** recover in the memory hook; widen wall-clock test margins (CAM-16) ([a71e4ce](https://github.com/FreePeak/LeanKG/commit/a71e4ce42cbf5e4cd238a9b0d1a90421b41ca676))
+* **memory:** review fixes for hook-only install and deny-list ([5a9e431](https://github.com/FreePeak/LeanKG/commit/5a9e431e359a7103258771d58803ad82bf3dd1fc))
+* **memory:** run post-sync compaction inside the sync lock; reject empty-matching deny-list patterns (CAM-06, CAM-11) ([1d20868](https://github.com/FreePeak/LeanKG/commit/1d2086862872c89aa03ce951ef0afe3b73fc0b79))
+* **serve:** wire central memory only when it cannot be reached anonymously (CAM-14) ([49a707a](https://github.com/FreePeak/LeanKG/commit/49a707aaf7a079f21872ecc640ebae83d9402933))
+
 ## [0.37.2](https://github.com/FreePeak/LeanKG/compare/v0.37.1...v0.37.2) (2026-11-25)
 
 
