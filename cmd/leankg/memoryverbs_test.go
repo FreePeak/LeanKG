@@ -24,10 +24,28 @@ import (
 // memory root and the Claude Code projects root under that tree.
 func memorySyncEnv(t *testing.T) (central, projects string) {
 	t.Helper()
-	home := t.TempDir()
+	home := shortTempDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 	return filepath.Join(home, ".leankg", "memory"), filepath.Join(home, ".claude", "projects")
+}
+
+// shortTempDir returns a fresh directory under /tmp, resolved through symlinks.
+// The memory hint names the caller directory cut to 120 characters, and
+// t.TempDir follows TMPDIR, which CI sets to a much longer path, so hook fixtures
+// root themselves here instead.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "lk-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
 }
 
 // writeMemoryDoc writes one Claude Code memory file under projects/<slug>/memory.

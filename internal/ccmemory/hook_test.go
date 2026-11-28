@@ -28,7 +28,7 @@ const (
 // again when the test ends. It returns the home directory.
 func hookFixtureEnv(t *testing.T) string {
 	t.Helper()
-	home := t.TempDir()
+	home := shortTempDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 	absent := filepath.Join(t.TempDir(), "no-scrub.txt")
@@ -184,6 +184,43 @@ func TestMemoryHookHintCwdIsOneLineAndBounded(t *testing.T) {
 	if n := len(out); n >= 10000 {
 		t.Errorf("stdout is %d characters, want under 10000", n)
 	}
+}
+
+// TestMemoryHookHintCwdLongRealPathIsCutTo120 pins the hint for a real caller
+// path longer than 120 characters: the hint names its first 117 characters and
+// ends with "...", whatever TMPDIR is.
+func TestMemoryHookHintCwdLongRealPathIsCutTo120(t *testing.T) {
+	home := hookFixtureEnv(t)
+	projects := claudecode.ProjectsRoot(home)
+	writeHookMemory(t, projects, claudecode.Slug(filepath.Join(home, "work", "repo-a")), "a-feedback", "feedback", "Use tabs in deploy scripts.")
+	callerB := "/work/" + strings.Repeat("r", 150)
+
+	out, errOut := runHook(t, home, callerB)
+	if errOut != "" {
+		t.Fatalf("stderr = %q, want empty", errOut)
+	}
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	want := fmt.Sprintf(wantHintFormat, "/work/"+strings.Repeat("r", 111)+"...")
+	if got := lines[len(lines)-1]; got != want {
+		t.Errorf("hint line = %q\nwant %q", got, want)
+	}
+}
+
+// shortTempDir returns a fresh directory under /tmp, resolved through symlinks.
+// The hint names the caller directory cut to 120 characters, and t.TempDir
+// follows TMPDIR, which CI sets to a much longer path.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "lk-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
 }
 
 func TestMemoryHookFiveHundredMemoriesStayUnderTenThousandCharactersInTime(t *testing.T) {
