@@ -241,10 +241,17 @@ scope, because each session's server opens its own store.
   central banks; `agent_recall` answers from the default engine.
 - **Deny-list in `serve` is read once.** `serve` loads `scrub.txt` when it starts
   and masks the writes its listeners accept from then on. An edit takes effect
-  after a restart. `memory sync`, `migrate` and the session hook read the file on
-  every run. If the file has an invalid line, `serve` starts without a deny-list
-  and logs one line on stderr that names the file and the line number, never a
-  pattern.
+  after a restart. `memory sync`, `migrate`, `memory recall` and the session hook
+  read the file on every run.
+- **Hosted serve does not load the deny-list.** `serve --hosted` skips
+  `scrub.txt` entirely: its central root is the operator's personal memory and
+  it answers every token holder, so the operator's patterns would rewrite tenant
+  writes. Hosted writes are not masked by this file.
+- **A bad deny-list fails open on `serve`.** If `scrub.txt` has an invalid line
+  or cannot be read, `serve` still starts, with no deny-list at all, and logs one
+  line on stderr. The line names the file and the reason, never a pattern or the
+  home path. Writes made while the list is missing are not masked. Fix the file
+  and restart `serve`; a restart is the only way the list is loaded again.
 - **Keyword recall on the CLI.** `leankg memory recall` has no embedder, so it
   ranks by keyword only. Over MCP the dense arm is used when an embedder and a
   calibrated floor are configured.

@@ -64,9 +64,13 @@ With neither `--stdio` nor an address, the default is
 
 At startup `serve` loads the deny-list `<central root>/scrub.txt` (see
 [Memory](#memory)) once and applies it to every memory write it accepts. A
-missing file is a no-op. A file with an invalid line does not stop the server:
-it logs one line that names the file and the line number, then starts with no
-deny-list. Restart `serve` after editing the file.
+missing file is a no-op. `serve --hosted` loads no deny-list at all.
+Restart `serve` after editing the file.
+
+Fail-open: a `scrub.txt` with an invalid line, or one that cannot be read, does
+not stop the server. It logs one line that names the file and the reason, then
+starts with no deny-list, so writes are not masked until the file is fixed and
+`serve` is restarted.
 
 ## Authentication
 

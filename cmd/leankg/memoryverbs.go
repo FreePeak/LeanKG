@@ -198,6 +198,12 @@ func cmdMemoryRecall(ctx context.Context, args []string) error {
 	if err != nil {
 		return verbFatal(err)
 	}
+	// The deny-list is read on every run, so a pattern added after a row was
+	// stored masks the recalled text too. A bad file is one stderr line and the
+	// recall still runs, as serve does.
+	if err := ccmemory.InstallDenyList(memory.GlobalRoot(home)); err != nil {
+		fmt.Fprintf(os.Stderr, "deny-list not loaded, recall without it: %v\n", err)
+	}
 	h := ccmemory.NewHandle(home, nil)
 	defer h.Close()
 	mem, err := h.Get(ctx)

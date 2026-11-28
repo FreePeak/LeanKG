@@ -65,10 +65,10 @@ func TestInstallServeDenyList(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	run := func(t *testing.T, home string) []string {
+	run := func(t *testing.T, hosted bool) []string {
 		t.Helper()
 		var lines []string
-		installServeDenyList(home, func(format string, args ...any) {
+		installServeDenyList(hosted, func(format string, args ...any) {
 			lines = append(lines, fmt.Sprintf(format, args...))
 		})
 		return lines
@@ -80,11 +80,25 @@ func TestInstallServeDenyList(t *testing.T) {
 		t.Setenv("HOME", home)
 		t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 		writeScrub(t, home, denied+"\n")
-		if lines := run(t, home); len(lines) != 0 {
+		if lines := run(t, false); len(lines) != 0 {
 			t.Fatalf("logged %q for a valid file, want nothing", lines)
 		}
 		if got := memory.Redact(text); strings.Contains(got, denied) || !strings.Contains(got, "[SCRUBBED]") {
 			t.Fatalf("Redact(%q) = %q, want the term masked", text, got)
+		}
+	})
+
+	t.Run("hosted serve loads nothing", func(t *testing.T) {
+		resetDenyList(t)
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+		writeScrub(t, home, denied+"\n")
+		if lines := run(t, true); len(lines) != 0 {
+			t.Fatalf("logged %q on a hosted serve, want nothing", lines)
+		}
+		if got := memory.Redact(text); got != text {
+			t.Fatalf("hosted Redact(%q) = %q, want the text unchanged (the operator's list must not mask tenant writes)", text, got)
 		}
 	})
 
@@ -93,7 +107,7 @@ func TestInstallServeDenyList(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 		t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
-		if lines := run(t, home); len(lines) != 0 {
+		if lines := run(t, false); len(lines) != 0 {
 			t.Fatalf("logged %q for a missing file, want nothing", lines)
 		}
 		if got := memory.Redact(text); got != text {
@@ -107,7 +121,7 @@ func TestInstallServeDenyList(t *testing.T) {
 		t.Setenv("HOME", home)
 		t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 		writeScrub(t, home, denied+"\nPLACEHOLDER_BAD_TERM(\n")
-		lines := run(t, home)
+		lines := run(t, false)
 		if len(lines) != 1 {
 			t.Fatalf("logged %d lines %q, want exactly one", len(lines), lines)
 		}
@@ -132,7 +146,7 @@ func TestInstallServeDenyList(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(memory.GlobalRoot(home), "scrub.txt"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		lines := run(t, home)
+		lines := run(t, false)
 		if len(lines) != 1 {
 			t.Fatalf("logged %d lines %q, want exactly one", len(lines), lines)
 		}

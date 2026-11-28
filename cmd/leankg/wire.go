@@ -2,14 +2,12 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"strings"
 
-	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/maintain"
@@ -158,8 +156,9 @@ func cmdInstall(ctx context.Context, args []string) error {
 	if *target == "" {
 		return fmt.Errorf("install requires --target (%s)", strings.Join(Clients(), "|"))
 	}
-	if *hookOnly && (!*registerMemory || *registerCWD || *httpMode || *url != "" || *project != "") {
-		return cliexit.Usage(errors.New("--hook-only needs --register-memory and no --register-cwd, --http, --url or --project"))
+	opts := InstallOptions{HTTP: *httpMode, URL: *url, Project: *project, RegisterCWD: *registerCWD, RegisterMemory: *registerMemory, HookOnly: *hookOnly}
+	if err := checkHookOnlyScope(opts); err != nil {
+		return err
 	}
 	if *registerMemory && *target != ClientClaudeCode {
 		return fmt.Errorf("register-memory for %s: %w", *target, ErrUnsupportedClient)
@@ -179,7 +178,7 @@ func cmdInstall(ctx context.Context, args []string) error {
 		cfg.Mode = "stdio"
 		cfg.Project = *project
 	}
-	opts := InstallOptions{HTTP: *httpMode, URL: cfg.URL, Project: *project, RegisterCWD: *registerCWD, RegisterMemory: *registerMemory, HookOnly: *hookOnly}
+	opts.URL = cfg.URL
 	if err := Install(home, *target, opts); err != nil {
 		return err
 	}

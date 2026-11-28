@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -163,13 +164,20 @@ func DenyListPath(central string) string {
 }
 
 // InstallDenyList loads the central deny-list and installs it process-wide.
-// Every read and write of a sync, migrate, hook or serve run is masked by it, so
-// the callers install it before they read the central root. A file that does
-// not load leaves the installed list unchanged and returns the error.
+// Every read and write of a sync, migrate, hook, serve or recall run is masked
+// by it, so the callers install it before they read the central root. A file
+// that does not load leaves the installed list unchanged and returns the error.
+// The error names the file and the reason only: its text reaches stderr.
 func InstallDenyList(central string) error {
-	patterns, digest, err := memory.LoadScrubFile(DenyListPath(central))
+	path := DenyListPath(central)
+	patterns, digest, err := memory.LoadScrubFile(path)
 	if err != nil {
-		return err
+		reason := err
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			reason = pe.Err // the path error carries the full path; keep the OS reason
+		}
+		return fmt.Errorf("%s: %w", filepath.Base(path), reason)
 	}
 	memory.SetScrubPatterns(patterns, digest)
 	return nil

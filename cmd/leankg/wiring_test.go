@@ -494,22 +494,29 @@ func TestTelemetrySinksAreRaceFree(t *testing.T) {
 	wg.Wait()
 }
 
-// runInstallVerb runs the install verb in-process with HOME pinned to a temp
-// dir, so the real ~/.claude is never touched.
+// runInstallVerb runs the install verb in-process with HOME pinned to a fresh
+// temp dir, so the real ~/.claude is never touched.
 func runInstallVerb(t *testing.T, args ...string) (home string, err error) {
 	t.Helper()
 	home = t.TempDir()
+	return home, runInstallVerbIn(t, home, args...)
+}
+
+// runInstallVerbIn runs the install verb in-process with HOME pinned to home.
+// A second run that must reuse the first run's files passes the same home.
+func runInstallVerbIn(t *testing.T, home string, args ...string) error {
+	t.Helper()
 	t.Setenv("HOME", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
-	return home, cmdInstall(context.Background(), args)
+	return cmdInstall(context.Background(), args)
 }
 
 // TestInstallVerbRegisterMemoryWritesHook: --register-memory on claude-code
 // writes one SessionStart memory hook (timeout 10, no matcher), and a second
-// run leaves settings.json byte-identical.
+// run against the same home leaves settings.json byte-identical.
 func TestInstallVerbRegisterMemoryWritesHook(t *testing.T) {
-	home, err := runInstallVerb(t, "--target", "claude-code", "--register-memory")
-	if err != nil {
+	home := t.TempDir()
+	if err := runInstallVerbIn(t, home, "--target", "claude-code", "--register-memory"); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(home, ".claude", "settings.json")
@@ -534,7 +541,7 @@ func TestInstallVerbRegisterMemoryWritesHook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runInstallVerb(t, "--target", "claude-code", "--register-memory"); err != nil {
+	if err := runInstallVerbIn(t, home, "--target", "claude-code", "--register-memory"); err != nil {
 		t.Fatal(err)
 	}
 	second, err := os.ReadFile(path)
@@ -652,12 +659,13 @@ func TestInstallVerbHookOnlyUsageErrors(t *testing.T) {
 		{"--target", "claude-code", "--hook-only", "--register-memory", "--register-cwd"},
 		{"--target", "claude-code", "--hook-only", "--register-memory", "--http"},
 		{"--target", "claude-code", "--hook-only", "--register-memory", "--project", "PLACEHOLDER_PROJECT"},
+		{"--target", "claude-code", "--hook-only", "--register-memory", "--url", "PLACEHOLDER_URL"},
 	}
 	for _, args := range cases {
 		home, err := runInstallVerb(t, args...)
 		var stderr bytes.Buffer
-		if code := cliexit.Finish(err, &stderr); code != 2 || !strings.Contains(stderr.String(), "--hook-only") {
-			t.Fatalf("%v: exit = %d, stderr = %q; want usage exit 2 naming --hook-only", args, code, stderr.String())
+		if code := cliexit.Finish(err, &stderr); code != 2 || !strings.Contains(stderr.String(), errHookOnlyScope.Error()) {
+			t.Fatalf("%v: exit = %d, stderr = %q; want usage exit 2 with %q", args, code, stderr.String(), errHookOnlyScope)
 		}
 		entries, rerr := os.ReadDir(home)
 		if rerr != nil {
@@ -687,11 +695,11 @@ func TestInstallVerbHookOnlyUnsupportedTarget(t *testing.T) {
 	}
 }
 
-// TestInstallVerbHookOnlyIdempotent: a second --hook-only run leaves the
-// settings file byte-identical.
+// TestInstallVerbHookOnlyIdempotent: a second --hook-only run against the same
+// home leaves the settings file byte-identical.
 func TestInstallVerbHookOnlyIdempotent(t *testing.T) {
-	home, err := runInstallVerb(t, "--target", "claude-code", "--register-memory", "--hook-only")
-	if err != nil {
+	home := t.TempDir()
+	if err := runInstallVerbIn(t, home, "--target", "claude-code", "--register-memory", "--hook-only"); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(home, ".claude", "settings.json")
@@ -699,7 +707,7 @@ func TestInstallVerbHookOnlyIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runInstallVerb(t, "--target", "claude-code", "--register-memory", "--hook-only"); err != nil {
+	if err := runInstallVerbIn(t, home, "--target", "claude-code", "--register-memory", "--hook-only"); err != nil {
 		t.Fatal(err)
 	}
 	second, err := os.ReadFile(path)

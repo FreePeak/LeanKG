@@ -275,19 +275,24 @@ func newScopedMCPServer(engine *core.Engine, router *projects.Router) *leankgmcp
 	return srv
 }
 
-// installServeDenyList loads <central root>/scrub.txt for serve. A missing file
-// installs nothing and logs nothing. A file that does not load installs no list
-// and logs one line that names the file and the reason. The reason never holds a
-// pattern or the home path: a line number is named, and a read error is reduced
-// to its cause. serve runs on either way.
-func installServeDenyList(home string, logf func(string, ...any)) {
-	central := memory.GlobalRoot(home)
-	if err := ccmemory.InstallDenyList(central); err != nil {
-		var pe *os.PathError
-		if errors.As(err, &pe) {
-			err = pe.Err
-		}
-		logf("%s not loaded, serving without the deny-list: %v", filepath.Base(ccmemory.DenyListPath(central)), err)
+// installServeDenyList loads <central root>/scrub.txt for serve. A hosted serve
+// loads nothing: its central root is the operator's personal memory and it
+// answers every token holder, so the operator's patterns would mask tenant
+// writes. A missing file installs nothing and logs nothing. A file that does not
+// load installs no list and logs one line; the error names the file and the
+// reason, never a pattern or the home path (ccmemory.InstallDenyList). serve runs
+// on either way.
+func installServeDenyList(hosted bool, logf func(string, ...any)) {
+	if hosted {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		logf("deny-list not loaded, serving without it: resolve home: %v", err)
+		return
+	}
+	if err := ccmemory.InstallDenyList(memory.GlobalRoot(home)); err != nil {
+		logf("deny-list not loaded, serving without it: %v", err)
 	}
 }
 
@@ -565,12 +570,8 @@ afterSidecars:
 
 	// The deny-list masks every memory write of this process, so it is loaded
 	// before any memory opens. It is read once here: restart serve after
-	// editing scrub.txt.
-	if home, err := os.UserHomeDir(); err != nil {
-		log.Printf("deny-list not loaded, serving without it: resolve home: %v", err)
-	} else {
-		installServeDenyList(home, log.Printf)
-	}
+	// editing scrub.txt. A hosted serve loads none (installServeDenyList).
+	installServeDenyList(*hosted, log.Printf)
 
 	var mem *memory.Memory
 	if *withMemory {

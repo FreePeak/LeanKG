@@ -6,7 +6,26 @@
 // escape hatch and the only way a --project flag is emitted.
 package main
 
-import "os"
+import (
+	"errors"
+	"os"
+
+	"github.com/FreePeak/LeanKG/internal/cliexit"
+)
+
+// errHookOnlyScope refuses --hook-only with a flag it cannot honour: it writes
+// only the memory hook, so --register-cwd, --http, --url and --project have
+// nothing to write. cmdInstall and Install share this one message.
+var errHookOnlyScope = errors.New("--hook-only needs --register-memory and no --register-cwd, --http, --url or --project")
+
+// checkHookOnlyScope returns the usage refusal (exit 2) when opts sets HookOnly
+// with a flag outside its scope, and nil otherwise.
+func checkHookOnlyScope(opts InstallOptions) error {
+	if opts.HookOnly && (!opts.RegisterMemory || opts.RegisterCWD || opts.HTTP || opts.URL != "" || opts.Project != "") {
+		return cliexit.Usage(errHookOnlyScope)
+	}
+	return nil
+}
 
 // InstallOptions tunes Install.
 type InstallOptions struct {
@@ -32,6 +51,9 @@ func CurrentCommand() string {
 // the matching Claude Code SessionStart hook. With opts.HookOnly it writes only
 // the memory hook. Unknown targets are rejected with the valid set named.
 func Install(homeDir, target string, opts InstallOptions) error {
+	if err := checkHookOnlyScope(opts); err != nil {
+		return err
+	}
 	if opts.HookOnly {
 		return RegisterMemory(homeDir, target, CurrentCommand())
 	}
