@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.39.0](https://github.com/FreePeak/LeanKG/compare/v0.38.0...v0.39.0) (2026-11-28)
+
+
+### Features
+
+* **ccmemory:** make LeanKG the Claude Code memory authority ([f2a73d9](https://github.com/FreePeak/LeanKG/commit/f2a73d98eaf847615387456fbb7304611688b1c1))
+* **ccmemory:** make LeanKG the Claude Code memory authority ([aa0c17a](https://github.com/FreePeak/LeanKG/commit/aa0c17a42ad501630cf52d80e23b6a3547dd5bb9))
+
 ## [0.38.0](https://github.com/FreePeak/LeanKG/compare/v0.37.2...v0.38.0) (2026-11-28)
 
 
