@@ -243,7 +243,7 @@ func noRelease() {}
 // version is reported as the MCP serverInfo version. It must match the release
 // stamp in cmd/leankg/VERSION — release-please bumps both via their
 // x-release-please-version markers; version_test.go fails on drift.
-const version = "0.39.0" // x-release-please-version
+const version = "0.39.1" // x-release-please-version
 
 // serverInstructions is returned during MCP initialization. MCP clients may
 // add this to the model's system prompt; the shorter toolGuidance below keeps
