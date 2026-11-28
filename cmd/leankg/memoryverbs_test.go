@@ -157,7 +157,7 @@ func TestMemorySyncIsRegisteredAndListedInUsage(t *testing.T) {
 	}
 	stderr := captureStderr(t, usage)
 	for _, line := range []string{
-		"leankg memory sync [--dry-run] [--rebuild] [--json]",
+		"leankg memory sync [--dry-run] [--rebuild] [--project SLUG] [--json]",
 		"leankg memory migrate [--project SLUG] [--dry-run] [--json]",
 	} {
 		if !strings.Contains(stderr, line) {
@@ -300,8 +300,20 @@ func TestMemorySyncRebuildRefillsCCBanks(t *testing.T) {
 	if res.Deleted != len(clean)+1 || res.Upserted != 3 {
 		t.Errorf("rebuild deleted %d upserted %d, want %d and 3", res.Deleted, res.Upserted, len(clean)+1)
 	}
-	if got := bankRows(t, central); !reflect.DeepEqual(got, clean) {
-		t.Errorf("rows after rebuild = %v, want %v", got, clean)
+	// The stale row's file is gone, so the rebuild archives it instead of erasing it.
+	var live, archived []string
+	for _, row := range bankRows(t, central) {
+		if strings.HasPrefix(row, ccmemory.ArchiveBank+" ") {
+			archived = append(archived, row)
+		} else {
+			live = append(live, row)
+		}
+	}
+	if !reflect.DeepEqual(live, clean) {
+		t.Errorf("live rows after rebuild = %v, want %v", live, clean)
+	}
+	if !slices.ContainsFunc(archived, func(row string) bool { return strings.HasPrefix(row, ccmemory.ArchiveBank+" ccm-stale ") }) {
+		t.Errorf("archive rows = %v, want a copy of ccm-stale", archived)
 	}
 }
 
@@ -1015,5 +1027,205 @@ func TestMemoryRecallMasksPatternAddedAfterRowsWereStored(t *testing.T) {
 	}
 	if !strings.Contains(out, "[SCRUBBED]") {
 		t.Fatalf("recall output has no mask marker:\n%s", out)
+	}
+}
+
+// TestSyncProjectFlagScopesToSlug runs `memory sync --project` for one project.
+// That project's new and removed files are applied; another project's new file
+// is not imported and its removed file's row stays.
+func TestSyncProjectFlagScopesToSlug(t *testing.T) {
+	central, projects := memorySyncEnv(t)
+	seedMemoryFixture(t, projects)
+	if code, out := runMemorySync(t); code != 0 {
+		t.Fatalf("seed sync exit = %d, want 0\n%s", code, out)
+	}
+	writeMemoryDoc(t, projects, "-work-alpha", "new-alpha.md", "project", "Alpha new note.")
+	writeMemoryDoc(t, projects, "-work-beta", "new-beta.md", "project", "Beta new note.")
+	for _, f := range []string{"project.md", "reference.md"} {
+		slug := "-work-alpha"
+		if f == "reference.md" {
+			slug = "-work-beta"
+		}
+		if err := os.Remove(filepath.Join(projects, slug, "memory", f)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	code, out := runMemorySync(t, "--project", "-work-beta", "--json")
+	if code != 0 {
+		t.Fatalf("scoped sync exit = %d, want 0\n%s", code, out)
+	}
+	res := decodeSyncResult(t, out)
+	if res.Upserted != 1 || res.Deleted != 1 {
+		t.Errorf("scoped sync upserted %d deleted %d, want 1 and 1", res.Upserted, res.Deleted)
+	}
+	rows := strings.Join(bankRows(t, central), "\n")
+	for _, id := range []string{ccmemory.DocID("-work-beta", "new-beta.md")} {
+		if !strings.Contains(rows, " "+id+" ") {
+			t.Errorf("beta's new file %s was not imported", id)
+		}
+	}
+	for _, id := range []string{ccmemory.DocID("-work-alpha", "new-alpha.md"), ccmemory.DocID("-work-alpha", "project.md")} {
+		if strings.Contains(rows, " "+id+" ") != (id == ccmemory.DocID("-work-alpha", "project.md")) {
+			t.Errorf("alpha row %s is in the wrong state after a -work-beta scoped sync", id)
+		}
+	}
+}
+
+// TestRebuildScopedProjectDeletes is the explicit forget of one project. A
+// scoped rebuild hard-deletes that project's rows, re-imports the files still
+// present, archives nothing, and leaves every other project's rows alone.
+func TestRebuildScopedProjectDeletes(t *testing.T) {
+	central, projects := memorySyncEnv(t)
+	seedMemoryFixture(t, projects)
+	writeMemoryDoc(t, projects, "-work-beta", "scratch.md", "project", "Beta scratch notes.")
+	if code, out := runMemorySync(t); code != 0 {
+		t.Fatalf("seed sync exit = %d, want 0\n%s", code, out)
+	}
+	before := bankRows(t, central)
+	if err := os.Remove(filepath.Join(projects, "-work-beta", "memory", "scratch.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out := runMemorySync(t, "--rebuild", "--project", "-work-beta", "--json")
+	if code != 0 {
+		t.Fatalf("scoped rebuild exit = %d, want 0\n%s", code, out)
+	}
+	res := decodeSyncResult(t, out)
+	if res.Deleted != 2 || res.Upserted != 1 {
+		t.Errorf("scoped rebuild deleted %d upserted %d, want 2 and 1", res.Deleted, res.Upserted)
+	}
+
+	scratch := ccmemory.DocID("-work-beta", "scratch.md")
+	var want []string
+	for _, row := range before {
+		if !strings.Contains(row, " "+scratch+" ") {
+			want = append(want, row)
+		}
+	}
+	if got := bankRows(t, central); !reflect.DeepEqual(got, want) {
+		t.Errorf("rows after scoped rebuild = %v, want %v (no archive copy, other projects untouched)", got, want)
+	}
+}
+
+func TestMemoryRestoreIsRegisteredAndInUsage(t *testing.T) {
+	if _, ok := memorySubcommands["restore"]; !ok {
+		t.Fatal(`memory subcommand "restore" is not registered`)
+	}
+	stderr := captureStderr(t, usage)
+	if !strings.Contains(stderr, "leankg memory restore --into DIR [--project SLUG] [--deleted] [--json]") {
+		t.Fatalf("main usage does not list the restore verb:\n%s", stderr)
+	}
+}
+
+func TestMemoryRestoreRequiresIntoExitsTwo(t *testing.T) {
+	memorySyncEnv(t)
+	var code int
+	stderr := captureStderr(t, func() { code = runVerb(context.Background(), []string{"memory", "restore"}) })
+	if code != 2 || !strings.Contains(stderr, "--into") {
+		t.Fatalf("exit = %d, want 2 with a message naming --into:\n%s", code, stderr)
+	}
+}
+
+// TestMemoryRestoreWritesFilesAndPrintsCountsOnly restores after the Claude Code
+// memory tree is wiped. The text output is counts only, never a memory body.
+func TestMemoryRestoreWritesFilesAndPrintsCountsOnly(t *testing.T) {
+	_, projects := memorySyncEnv(t)
+	seedMemoryFixture(t, projects)
+	if code, out := runMemorySync(t); code != 0 {
+		t.Fatalf("seed sync exit = %d, want 0\n%s", code, out)
+	}
+	if err := os.RemoveAll(projects); err != nil {
+		t.Fatal(err)
+	}
+
+	into := t.TempDir()
+	var code int
+	out := captureStdout(t, func() {
+		code = runVerb(context.Background(), []string{"memory", "restore", "--into", into})
+	})
+	if code != 0 {
+		t.Fatalf("restore exit = %d, want 0\n%s", code, out)
+	}
+	if want := "memory restore: 3 written, 0 skipped, 0 archived-included\n"; out != want {
+		t.Errorf("stdout = %q, want %q", out, want)
+	}
+	if got := readFileString(t, filepath.Join(into, "-work-alpha", "memory", "user.md")); !strings.Contains(got, "Prefers terse answers.") {
+		t.Errorf("user.md body was not restored:\n%s", got)
+	}
+}
+
+// TestMemoryRestoreJSONCountsArchivedFile removes one memory file and syncs, so
+// its row is archived. With --deleted the JSON counts include it.
+func TestMemoryRestoreJSONCountsArchivedFile(t *testing.T) {
+	_, projects := memorySyncEnv(t)
+	seedMemoryFixture(t, projects)
+	if code, out := runMemorySync(t); code != 0 {
+		t.Fatalf("seed sync exit = %d, want 0\n%s", code, out)
+	}
+	if err := os.Remove(filepath.Join(projects, "-work-alpha", "memory", "project.md")); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := runMemorySync(t); code != 0 {
+		t.Fatalf("sync after removal exit = %d, want 0\n%s", code, out)
+	}
+
+	var code int
+	out := captureStdout(t, func() {
+		code = runVerb(context.Background(), []string{"memory", "restore", "--into", t.TempDir(), "--deleted", "--json"})
+	})
+	if code != 0 {
+		t.Fatalf("restore exit = %d, want 0\n%s", code, out)
+	}
+	var counts map[string]int
+	if err := json.Unmarshal([]byte(out), &counts); err != nil {
+		t.Fatalf("decode restore JSON: %v\n%s", err, out)
+	}
+	want := map[string]int{"written": 3, "skipped": 0, "skipped_excluded": 0, "archived_included": 1}
+	if !reflect.DeepEqual(counts, want) {
+		t.Errorf("restore JSON counts = %v, want %v", counts, want)
+	}
+}
+
+// TestMemoryRestoreRefusesProjectsDirExitsOne restores into the live projects
+// root. The run is refused with exit 1 and the tree is unchanged.
+func TestMemoryRestoreRefusesProjectsDirExitsOne(t *testing.T) {
+	_, projects := memorySyncEnv(t)
+	seedMemoryFixture(t, projects)
+	if code, out := runMemorySync(t); code != 0 {
+		t.Fatalf("seed sync exit = %d, want 0\n%s", code, out)
+	}
+	before := snapshotTree(t, projects)
+
+	var code int
+	stderr := captureStderr(t, func() {
+		code = runVerb(context.Background(), []string{"memory", "restore", "--into", projects})
+	})
+	if code != 1 || !strings.Contains(stderr, "projects directory") {
+		t.Fatalf("exit = %d, want 1 with a refusal:\n%s", code, stderr)
+	}
+	if after := snapshotTree(t, projects); !reflect.DeepEqual(before, after) {
+		t.Error("the projects tree changed during a refused restore")
+	}
+}
+
+// TestPrintMemorySyncSummaryWithheldDescribesUnseenDirectory: rows kept because a
+// project's memory directory was not found are not called scan failures, and the
+// warning says what each rebuild form does to them.
+func TestPrintMemorySyncSummaryWithheldDescribesUnseenDirectory(t *testing.T) {
+	out := captureStdout(t, func() {
+		printMemorySyncSummary(ccmemory.SyncResult{DeletesWithheld: true}, false)
+	})
+	for _, want := range []string{
+		"a project's memory directory was not found, so its rows were kept",
+		"memory sync --rebuild (unscoped) archives them",
+		"memory sync --rebuild --project SLUG forgets that project without an archive",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("summary lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Use --rebuild to clear them") {
+		t.Errorf("summary keeps the old warning:\n%s", out)
 	}
 }

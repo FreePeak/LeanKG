@@ -94,8 +94,29 @@ func TestMemoryHookResolveDirPrefersStdinCwd(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := ResolveHookDir([]byte(c.stdin), c.projectDir, c.wd); got != c.want {
+			if got := ResolveHookDir(ParseHookInput([]byte(c.stdin)), c.projectDir, c.wd); got != c.want {
 				t.Errorf("ResolveHookDir = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestParseHookInputFlagsNonEmptyUnparseableInput(t *testing.T) {
+	cases := []struct {
+		name       string
+		stdin      string
+		incomplete bool
+	}{
+		{"empty", "", false},
+		{"whitespace only", " \n", false},
+		{"valid event", `{"hook_event_name":"SessionStart"}`, false},
+		{"truncated JSON", `{"hook_event_name":"PostToolUse","tool_input":{"file_path":"/x`, true},
+		{"not JSON", "not json", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := ParseHookInput([]byte(c.stdin)).Incomplete; got != c.incomplete {
+				t.Errorf("Incomplete = %v, want %v", got, c.incomplete)
 			}
 		})
 	}
@@ -138,6 +159,30 @@ func TestMemoryHookInjectsOnlyOtherRepositoriesGlobalMemories(t *testing.T) {
 		if strings.Contains(out, leak) {
 			t.Errorf("stdout carries %q, which must not be injected:\n%s", leak, out)
 		}
+	}
+}
+
+// TestMemoryHookHintCwdIsOneLineAndBounded: a caller directory with a line break
+// and 5000 characters keeps the hint on one line, with the break removed and the
+// directory cut to 120 characters including the ellipsis.
+func TestMemoryHookHintCwdIsOneLineAndBounded(t *testing.T) {
+	home := hookFixtureEnv(t)
+	projects := claudecode.ProjectsRoot(home)
+	writeHookMemory(t, projects, claudecode.Slug(filepath.Join(home, "work", "repo-a")), "a-feedback", "feedback", "Use tabs in deploy scripts.")
+	callerB := "/work/a\nb " + strings.Repeat("c", 5000)
+
+	out, errOut := runHook(t, home, callerB)
+	if errOut != "" {
+		t.Fatalf("stderr = %q, want empty", errOut)
+	}
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	cleaned := []rune("/work/ab" + strings.Repeat("c", 5000))
+	want := fmt.Sprintf(wantHintFormat, string(cleaned[:117])+"...")
+	if got := lines[len(lines)-1]; got != want {
+		t.Errorf("hint line = %q\nwant %q", got, want)
+	}
+	if n := len(out); n >= 10000 {
+		t.Errorf("stdout is %d characters, want under 10000", n)
 	}
 }
 
@@ -325,6 +370,44 @@ func TestMemoryHookSpentSyncBudgetOnFirstRunCreatesNothing(t *testing.T) {
 	}
 }
 
+// TestMemoryHookExcludedProjectRowsAreNeverInjected: a project added to the
+// exclude list after its rows were stored must not be injected, even when the
+// sync step cannot run (lock held, budget spent, invalid deny-list).
+func TestMemoryHookExcludedProjectRowsAreNeverInjected(t *testing.T) {
+	cases := map[string]func(t *testing.T, home string){
+		"sync lock held": func(t *testing.T, home string) {
+			release, err := flock.Lock(filepath.Join(memory.GlobalRoot(home), syncLockFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(release)
+		},
+		"sync budget spent": func(t *testing.T, _ string) { spendSyncBudget(t) },
+		"invalid deny-list": func(t *testing.T, home string) {
+			writeFile(t, filepath.Join(memory.GlobalRoot(home), scrubFile), "([\n")
+		},
+	}
+	for name, block := range cases {
+		t.Run(name, func(t *testing.T) {
+			home := hookFixtureEnv(t)
+			projects := claudecode.ProjectsRoot(home)
+			callerB := filepath.Join(home, "work", "repo-b")
+			repoA := filepath.Join(home, "work", "repo-a")
+			writeHookMemory(t, projects, claudecode.Slug(repoA), "a-feedback", "feedback", "Use tabs in deploy scripts.")
+			if out, _ := runHook(t, home, callerB); !strings.Contains(out, "a-feedback") {
+				t.Fatalf("precondition: first run must store and inject a-feedback:\n%s", out)
+			}
+
+			setExcludeFile(t, repoA+"\n")
+			block(t, home)
+			out, _ := runHook(t, home, callerB)
+			if strings.Contains(out, "a-feedback") {
+				t.Errorf("stdout injects a-feedback from an excluded project:\n%s", out)
+			}
+		})
+	}
+}
+
 func TestMemoryHookSecondRunChangesNothingAndCompactsNothing(t *testing.T) {
 	home := hookFixtureEnv(t)
 	projects := claudecode.ProjectsRoot(home)
@@ -504,5 +587,158 @@ func TestHookLineFallsBackToFirstContentLine(t *testing.T) {
 	e := memory.Entry{Content: "\n  memory row 09 about the vector index  \nmore body"}
 	if got, want := hookLine(e), "- memory row 09 about the vector index"; got != want {
 		t.Errorf("hookLine = %q, want %q", got, want)
+	}
+}
+
+// runHookEvent runs one hook pass with opts and returns stdout and stderr.
+func runHookEvent(t *testing.T, opts HookOptions) (string, string) {
+	t.Helper()
+	var out, errw bytes.Buffer
+	opts.Stdout, opts.Stderr = &out, &errw
+	RunHook(context.Background(), opts)
+	return out.String(), errw.String()
+}
+
+// centralMemory opens the central memory root under home to read its rows.
+func centralMemory(t *testing.T, home string) *memory.Memory {
+	t.Helper()
+	mem, err := memory.Open(context.Background(), home, false)
+	if err != nil {
+		t.Fatalf("memory.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = mem.Close() })
+	return mem
+}
+
+func TestMemoryHookParseHookInputReadsFourFields(t *testing.T) {
+	in := ParseHookInput([]byte(`{"hook_event_name":"PostToolUse","cwd":"/work/repo-b","session_id":"s-1","tool_name":"Edit","tool_input":{"file_path":"/home/u/.claude/projects/x/memory/a.md"}}`))
+	want := HookInput{Event: "PostToolUse", Cwd: "/work/repo-b", SessionID: "s-1", FilePath: "/home/u/.claude/projects/x/memory/a.md"}
+	if in != want {
+		t.Errorf("ParseHookInput = %+v, want %+v", in, want)
+	}
+	if got := ParseHookInput([]byte("not json")); got != (HookInput{Incomplete: true}) {
+		t.Errorf("ParseHookInput(not JSON) = %+v, want only Incomplete set", got)
+	}
+}
+
+// TestPostToolUseNonMemoryPathOpensNothing: an edit to a file that is not a
+// project memory file returns before the central root is opened, so a run that
+// would otherwise sync leaves no central tree behind.
+func TestPostToolUseNonMemoryPathOpensNothing(t *testing.T) {
+	cases := []struct {
+		name string
+		file func(home, projects, slug string) string
+	}{
+		{"MEMORY.md is the index", func(_, p, s string) string { return memFile(p, s, "MEMORY.md") }},
+		{"not a markdown file", func(_, p, s string) string { return memFile(p, s, "notes.txt") }},
+		{"markdown outside a memory directory", func(_, p, s string) string { return filepath.Join(p, s, "notes.md") }},
+		{"nested below the memory directory", func(_, p, s string) string { return filepath.Join(p, s, "memory", "sub", "x.md") }},
+		{"outside the projects root", func(h, _, _ string) string { return filepath.Join(h, "work", "repo-a", "memory", "x.md") }},
+		{"relative path", func(_, _, _ string) string { return filepath.Join("memory", "x.md") }},
+		{"empty path", func(_, _, _ string) string { return "" }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			home := hookFixtureEnv(t)
+			projects := claudecode.ProjectsRoot(home)
+			slug := claudecode.Slug(filepath.Join(home, "work", "repo-a"))
+			writeHookMemory(t, projects, slug, "a-feedback", "feedback", "Use tabs.")
+
+			out, errw := runHookEvent(t, HookOptions{Home: home, Event: EventPostToolUse, FilePath: c.file(home, projects, slug)})
+			if out != "" || errw != "" {
+				t.Errorf("stdout %q, stderr %q; want both empty", out, errw)
+			}
+			if _, err := os.Stat(memory.GlobalRoot(home)); !os.IsNotExist(err) {
+				t.Errorf("central root was opened or created (stat err = %v)", err)
+			}
+		})
+	}
+}
+
+// TestPostToolUseSyncsOnlyThatSlug: an edit to one project's memory file syncs
+// that project alone; another project's memory file stays unsynced.
+func TestPostToolUseSyncsOnlyThatSlug(t *testing.T) {
+	home := hookFixtureEnv(t)
+	projects := claudecode.ProjectsRoot(home)
+	slugA := claudecode.Slug(filepath.Join(home, "work", "repo-a"))
+	slugB := claudecode.Slug(filepath.Join(home, "work", "repo-b"))
+	writeHookMemory(t, projects, slugA, "a-project", "project", "Freeze on Friday.")
+	writeHookMemory(t, projects, slugB, "b-project", "project", "Ship on Tuesday.")
+
+	out, errw := runHookEvent(t, HookOptions{Home: home, Event: EventPostToolUse, FilePath: memFile(projects, slugA, "a-project.md")})
+	if out != "" || errw != "" {
+		t.Fatalf("stdout %q, stderr %q; want both empty", out, errw)
+	}
+	mem := centralMemory(t, home)
+	if n := ccRowCount(t, mem); n != 1 {
+		t.Errorf("cc- rows = %d, want 1: only repository A's file is synced", n)
+	}
+	if _, ok := bankRows(t, mem, ProjectBank(slugA))[DocID(slugA, "a-project.md")]; !ok {
+		t.Error("repository A's row is missing from its project bank")
+	}
+}
+
+// TestSessionEndCatchesRm: a file removed with rm is reconciled when the
+// session ends, for the session's own project only, and the event prints nothing.
+func TestSessionEndCatchesRm(t *testing.T) {
+	home := hookFixtureEnv(t)
+	projects := claudecode.ProjectsRoot(home)
+	callerB := filepath.Join(home, "work", "repo-b")
+	slugA := claudecode.Slug(filepath.Join(home, "work", "repo-a"))
+	slugB := claudecode.Slug(callerB)
+	writeHookMemory(t, projects, slugA, "a-feedback", "feedback", "Use tabs in deploy scripts.")
+	writeHookMemory(t, projects, slugA, "a-project", "project", "Freeze on Friday.")
+	writeHookMemory(t, projects, slugB, "b-project", "project", "Ship on Tuesday.")
+	// B keeps a second file: a scoped run whose project has no documents left
+	// withholds its deletes (BuildPlan), so the test removes one of two.
+	writeHookMemory(t, projects, slugB, "b-note", "project", "Deploys go through staging.")
+	runHook(t, home, callerB) // SessionStart: stores all four rows
+	if n := ccRowCount(t, centralMemory(t, home)); n != 4 {
+		t.Fatalf("setup: cc- rows = %d, want 4", n)
+	}
+
+	if err := os.Remove(memFile(projects, slugB, "b-project.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(memFile(projects, slugA, "a-project.md")); err != nil {
+		t.Fatal(err)
+	}
+	out, errw := runHookEvent(t, HookOptions{Home: home, Event: EventSessionEnd, CallerDir: callerB})
+	if out != "" || errw != "" {
+		t.Errorf("stdout %q, stderr %q; want both empty", out, errw)
+	}
+	mem := centralMemory(t, home)
+	rowsB := bankRows(t, mem, ProjectBank(slugB))
+	if _, ok := rowsB[DocID(slugB, "b-project.md")]; ok {
+		t.Error("B's removed file still has a row: SessionEnd did not reconcile it")
+	}
+	if _, ok := rowsB[DocID(slugB, "b-note.md")]; !ok {
+		t.Error("B's remaining file lost its row")
+	}
+	if _, ok := bankRows(t, mem, ProjectBank(slugA))[DocID(slugA, "a-project.md")]; !ok {
+		t.Error("repository A's stale row was removed by repository B's session end")
+	}
+}
+
+// TestSessionStartInjectsNothingWhenExcludeUnreadable: an exclude list that
+// cannot be read stops the run before any stored row is injected.
+func TestSessionStartInjectsNothingWhenExcludeUnreadable(t *testing.T) {
+	home := hookFixtureEnv(t)
+	projects := claudecode.ProjectsRoot(home)
+	callerB := filepath.Join(home, "work", "repo-b")
+	writeHookMemory(t, projects, claudecode.Slug(filepath.Join(home, "work", "repo-a")), "a-feedback", "feedback", "Use tabs in deploy scripts.")
+	out, _ := runHook(t, home, callerB)
+	if !strings.Contains(out, "a-feedback") {
+		t.Fatalf("setup: stdout lacks the stored row:\n%s", out)
+	}
+
+	// A directory is not a readable file, so the exclude loader fails.
+	t.Setenv(excludeFileEnv, t.TempDir())
+	out, errw := runHook(t, home, callerB)
+	if out != "" {
+		t.Errorf("stdout = %q, want nothing: an unreadable exclude list injects nothing", out)
+	}
+	if n := strings.Count(strings.TrimSuffix(errw, "\n"), "\n") + 1; errw == "" || n != 1 {
+		t.Errorf("stderr has %d lines, want exactly one: %q", n, errw)
 	}
 }

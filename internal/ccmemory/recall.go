@@ -84,6 +84,11 @@ func Recall(ctx context.Context, mem *memory.Memory, req RecallRequest) (RecallR
 			return RecallResult{}, fmt.Errorf("ccmemory: recall: unknown type %q; valid types: %s", t, strings.Join(validTypes, ", "))
 		}
 	}
+	// An unreadable exclude list fails the recall: its rows may be excluded.
+	ex, err := loadExcludeList()
+	if err != nil {
+		return RecallResult{}, err
+	}
 	limit := req.Limit
 	switch {
 	case limit <= 0:
@@ -106,7 +111,7 @@ func Recall(ctx context.Context, mem *memory.Memory, req RecallRequest) (RecallR
 		project, projectBank = req.Caller, ProjectBank(req.Caller)
 	}
 	banks := scopeBanks(scope, projectBank, central)
-	rows, err := mem.RecallFiltered(ctx, banks, req.Query, limit, rowFilter(req.Types))
+	rows, err := mem.RecallFiltered(ctx, banks, req.Query, limit, rowFilter(req.Types, ex))
 	if err != nil {
 		return RecallResult{}, err
 	}
@@ -140,13 +145,16 @@ func scopeBanks(scope, projectBank string, central []string) []string {
 	return banks
 }
 
-// rowFilter keeps the rows of the requested types (none means all) and drops
-// a row whose content_id was already kept. RecallFiltered offers each candidate
-// once, in rank order, before the limit, so the first row of a content_id is
-// the best-ranked one.
-func rowFilter(types []string) func(memory.Entry) bool {
+// rowFilter drops the rows of excluded projects, keeps the rows of the requested
+// types (none means all) and drops a row whose content_id was already kept.
+// RecallFiltered offers each candidate once, in rank order, before the limit,
+// so the first row of a content_id is the best-ranked one.
+func rowFilter(types []string, ex excludeList) func(memory.Entry) bool {
 	seen := map[string]bool{}
 	return func(e memory.Entry) bool {
+		if ex.excludes(metaString(e, "project")) {
+			return false
+		}
 		if len(types) > 0 && !slices.Contains(types, metaString(e, "kind")) {
 			return false
 		}

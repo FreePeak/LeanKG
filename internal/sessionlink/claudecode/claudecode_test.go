@@ -157,9 +157,25 @@ func TestProjectsRootFallsBackToHome(t *testing.T) {
 	}
 }
 
+// TestSlug pins Claude Code's project directory name: every character outside
+// [A-Za-z0-9] becomes its own '-', with no collapsing. The first case is the
+// symlink-resolved form of a synthetic working directory, as Claude Code named
+// it on macOS (/tmp resolves to /private/tmp).
 func TestSlug(t *testing.T) {
-	if got := Slug("/a/b.c"); got != "-a-b-c" {
-		t.Fatalf("Slug(/a/b.c) = %q, want -a-b-c", got)
+	for _, tc := range []struct{ cwd, want string }{
+		{"/a/b.c", "-a-b-c"},
+		{"/private/tmp/tmp.nhqY1EBK2e/syn_proj x@y+z.v2", "-private-tmp-tmp-nhqY1EBK2e-syn-proj-x-y-z-v2"},
+		{"/a/b_c", "-a-b-c"},
+		{"/a/b c", "-a-b-c"},
+		{"/a/b@c+d", "-a-b-c-d"},
+		{"/a/b__c", "-a-b--c"},
+		{"/a/x--y", "-a-x--y"},
+		{"/a/café", "-a-caf-"},
+		{"/a/\U0001F600", "-a---"}, // a non-BMP rune is two UTF-16 code units
+	} {
+		if got := Slug(tc.cwd); got != tc.want {
+			t.Errorf("Slug(%q) = %q, want %q", tc.cwd, got, tc.want)
+		}
 	}
 }
 

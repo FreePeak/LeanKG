@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -286,7 +287,7 @@ func TestWriteClientHTTPShapes(t *testing.T) {
 // argument (roots/list was dropped 2026-11-18). A hardcoded
 // absolute path is a stale machine moment waiting to happen — measured
 // 2026-10-11 on this machine: three configs carrying
-// `?project=/workspace-freepeak` (a Docker mount that exists nowhere on the
+// `?project=/workspace-other` (a Docker mount that exists nowhere on the
 // host) made every initialize fail with `unknown project`, so the clients
 // that read them dropped leankg from their tool list entirely.
 func TestWriteClientHTTPURLHasNoQuery(t *testing.T) {
@@ -736,8 +737,8 @@ func TestWriteClientCodexEmptyExeFallsBack(t *testing.T) {
 	}
 }
 
-// TestRegisterMemoryCreatesHook pins the fresh-settings.json shape: one
-// synchronous command hook with timeout 10 and no matcher key.
+// TestRegisterMemoryCreatesHook pins the fresh-settings.json shape: the three
+// memory hook events (see memoryHookEvents).
 func TestRegisterMemoryCreatesHook(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", "") // settings live under home, whatever the caller exports
@@ -745,17 +746,7 @@ func TestRegisterMemoryCreatesHook(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := readJSON(t, filepath.Join(home, ".claude", "settings.json"))
-	want := map[string]any{
-		"hooks": map[string]any{
-			"SessionStart": []any{
-				map[string]any{
-					"hooks": []any{
-						map[string]any{"type": "command", "command": testExe + " memory hook", "timeout": float64(10)},
-					},
-				},
-			},
-		},
-	}
+	want := map[string]any{"hooks": memoryHookEvents(testExe)}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got  %#v\nwant %#v", got, want)
 	}
@@ -859,6 +850,89 @@ func TestRegisterMemoryReplacesStaleBinaryPath(t *testing.T) {
 	hook := ss[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
 	if hook["command"] != testExe+" memory hook" {
 		t.Fatalf("command = %v, want %s", hook["command"], testExe+" memory hook")
+	}
+}
+
+// spacedExe is an executable path with a space in its directory name.
+const spacedExe = "/opt/my tools/leankg"
+
+// TestRegisterMemoryQuotesExecutablePathWithSpace: the hook command is run by a
+// shell, so a path with a space is written as one quoted word.
+func TestRegisterMemoryQuotesExecutablePathWithSpace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	if err := RegisterMemory(home, ClientClaudeCode, spacedExe); err != nil {
+		t.Fatal(err)
+	}
+	got := readJSON(t, filepath.Join(home, ".claude", "settings.json"))
+	want := map[string]any{"hooks": memoryHookEvents(`'/opt/my tools/leankg'`)}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got  %#v\nwant %#v", got, want)
+	}
+}
+
+// TestUnregisterMemoryRemovesQuotedExecutablePathWithSpace: the quoted entry
+// register writes is removed again, and the file is left as it was.
+func TestUnregisterMemoryRemovesQuotedExecutablePathWithSpace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeed(t, path, `{"model": "PLACEHOLDER_MODEL"}`)
+	before := readJSON(t, path)
+	if err := RegisterMemory(home, ClientClaudeCode, spacedExe); err != nil {
+		t.Fatal(err)
+	}
+	if err := UnregisterMemory(home, ClientClaudeCode, spacedExe); err != nil {
+		t.Fatal(err)
+	}
+	if after := readJSON(t, path); !reflect.DeepEqual(after, before) {
+		t.Fatalf("after unregister = %#v\nwant %#v", after, before)
+	}
+}
+
+// TestRegisterMemoryReplacesLegacyUnquotedEntryWithSpace: an entry an earlier
+// release wrote, unquoted, for the same executable is replaced, not duplicated.
+func TestRegisterMemoryReplacesLegacyUnquotedEntryWithSpace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeedJSON(t, path, map[string]any{"hooks": memoryHookEvents(spacedExe)})
+	if err := RegisterMemory(home, ClientClaudeCode, spacedExe); err != nil {
+		t.Fatal(err)
+	}
+	got := readJSON(t, path)
+	if want := memoryHookEvents(`'/opt/my tools/leankg'`); !reflect.DeepEqual(got["hooks"], want) {
+		t.Fatalf("hooks = %#v\nwant %#v", got["hooks"], want)
+	}
+}
+
+// TestUnregisterMemoryRemovesLegacyUnquotedEntryWithSpace: entries an earlier
+// release registered are still removed.
+func TestUnregisterMemoryRemovesLegacyUnquotedEntryWithSpace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeedJSON(t, path, map[string]any{"hooks": memoryHookEvents(spacedExe)})
+	if err := UnregisterMemory(home, ClientClaudeCode, spacedExe); err != nil {
+		t.Fatal(err)
+	}
+	if got := readJSON(t, path); len(got) != 0 {
+		t.Fatalf("after unregister = %#v, want no hooks left", got)
+	}
+}
+
+// TestRegisterMemoryReplacesStaleQuotedBinaryPath: a quoted leankg entry for an
+// old path with a space is a generated entry and is replaced.
+func TestRegisterMemoryReplacesStaleQuotedBinaryPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeedJSON(t, path, map[string]any{"hooks": memoryHookEvents(`'/old dir/leankg'`)})
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	if got := readJSON(t, path); !reflect.DeepEqual(got, map[string]any{"hooks": memoryHookEvents(testExe)}) {
+		t.Fatalf("settings = %#v, want only the current entries", got)
 	}
 }
 
@@ -999,5 +1073,205 @@ func TestRegisterRejectsNonObjectSettings(t *testing.T) {
 				t.Fatalf("settings changed to %q, want %q unchanged", got, content)
 			}
 		})
+	}
+}
+
+// memoryHookEvents is the hooks object RegisterMemory writes on a fresh file:
+// SessionStart, PostToolUse on Write|Edit (async) and SessionEnd.
+func memoryHookEvents(exe string) map[string]any {
+	withTimeout := map[string]any{"type": "command", "command": exe + " memory hook", "timeout": float64(10)}
+	async := map[string]any{"type": "command", "command": exe + " memory hook", "async": true}
+	return map[string]any{
+		"SessionStart": []any{map[string]any{"hooks": []any{withTimeout}}},
+		"PostToolUse":  []any{map[string]any{"matcher": "Write|Edit", "hooks": []any{async}}},
+		"SessionEnd":   []any{map[string]any{"hooks": []any{withTimeout}}},
+	}
+}
+
+// foreignHookSeed holds hooks leankg does not own: a Python hook running
+// `memory hook` (its executable is not a leankg binary), a Bash PostToolUse
+// hook and a PreToolUse hook. The non-hook key must survive too.
+const foreignHookSeed = `{
+  "model": "PLACEHOLDER_MODEL",
+  "hooks": {
+    "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo pre"}]}],
+    "SessionStart": [{"matcher": "startup", "hooks": [{"type": "command", "command": "python3 /opt/acme/hook.py memory hook"}]}],
+    "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo done"}]}]
+  }
+}
+`
+
+// TestRegisterMemoryWritesThreeEvents: a fresh settings file gets the memory
+// hook under SessionStart, PostToolUse (Write|Edit, async) and SessionEnd, all
+// running `leankg memory hook`.
+func TestRegisterMemoryWritesThreeEvents(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	got := readJSON(t, filepath.Join(home, ".claude", "settings.json"))["hooks"]
+	if want := memoryHookEvents(testExe); !reflect.DeepEqual(got, map[string]any{
+		"SessionStart": want["SessionStart"],
+		"PostToolUse":  want["PostToolUse"],
+		"SessionEnd":   want["SessionEnd"],
+	}) {
+		t.Fatalf("hooks = %#v\nwant %#v", got, want)
+	}
+}
+
+// TestRegisterMemoryIsIdempotent: a second run leaves the file byte-identical
+// and each of the three events still holds exactly one memory entry.
+func TestRegisterMemoryIsIdempotent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	path := filepath.Join(home, ".claude", "settings.json")
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("re-run changed bytes\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+	hooks := readJSON(t, path)["hooks"].(map[string]any)
+	for _, event := range []string{"SessionStart", "PostToolUse", "SessionEnd"} {
+		if n, _ := hooks[event].([]any); len(n) != 1 {
+			t.Fatalf("%s = %#v, want one entry", event, hooks[event])
+		}
+	}
+}
+
+// TestRegisterMemoryLeavesForeignHooks: foreign hooks on every event survive
+// in place, ahead of the leankg entry, and unrelated keys are untouched.
+func TestRegisterMemoryLeavesForeignHooks(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeed(t, path, foreignHookSeed)
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	root := readJSON(t, path)
+	if root["model"] != "PLACEHOLDER_MODEL" {
+		t.Fatalf("model = %v, want PLACEHOLDER_MODEL", root["model"])
+	}
+	hooks := root["hooks"].(map[string]any)
+	preTool := hooks["PreToolUse"].([]any)
+	if len(preTool) != 1 {
+		t.Fatalf("PreToolUse = %#v, want the seeded entry only", preTool)
+	}
+	foreignSS := map[string]any{"matcher": "startup", "hooks": []any{map[string]any{"type": "command", "command": "python3 /opt/acme/hook.py memory hook"}}}
+	foreignPost := map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": "echo done"}}}
+	ss := hooks["SessionStart"].([]any)
+	if len(ss) != 2 || !reflect.DeepEqual(ss[0], foreignSS) {
+		t.Fatalf("SessionStart = %#v, want foreign entry then leankg entry", ss)
+	}
+	post := hooks["PostToolUse"].([]any)
+	if len(post) != 2 || !reflect.DeepEqual(post[0], foreignPost) {
+		t.Fatalf("PostToolUse = %#v, want foreign entry then leankg entry", post)
+	}
+	if n := len(hooks["SessionEnd"].([]any)); n != 1 {
+		t.Fatalf("SessionEnd entries = %d, want 1", n)
+	}
+}
+
+// TestSettingsBackupCreatedBeforeChange: the first change to an existing
+// settings file leaves a byte-identical copy beside it, named
+// settings.json.leankg-bak-<stamp>. A no-op run and a fresh file make none.
+func TestSettingsBackupCreatedBeforeChange(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	path := filepath.Join(home, ".claude", "settings.json")
+	seed := `{"model": "PLACEHOLDER_MODEL"}` + "\n"
+	writeSeed(t, path, seed)
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	backups, _ := filepath.Glob(path + ".leankg-bak-*")
+	if len(backups) != 1 {
+		t.Fatalf("backups = %v, want exactly one", backups)
+	}
+	if got, _ := os.ReadFile(backups[0]); string(got) != seed {
+		t.Fatalf("backup content = %q, want the pre-change %q", got, seed)
+	}
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := filepath.Glob(path + ".leankg-bak-*"); len(again) != 1 {
+		t.Fatalf("no-op run made backups %v, want still one", again)
+	}
+	fresh := t.TempDir()
+	if err := RegisterMemory(fresh, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	if none, _ := filepath.Glob(filepath.Join(fresh, ".claude", "*.leankg-bak-*")); len(none) != 0 {
+		t.Fatalf("fresh file made backups %v, want none", none)
+	}
+	// Stamps are GMT+7 (Asia/Ho_Chi_Minh): 00:00 UTC is 07:00 there.
+	if got := backupStamp(time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)); got != "20260102-070000" {
+		t.Fatalf("backupStamp = %q, want 20260102-070000 (GMT+7)", got)
+	}
+}
+
+// TestRegisterMemoryKeepsSymlinkedSettings: a settings.json that is a symlink
+// (dotfiles setups) stays a symlink. The change and the backup land beside the
+// file the link points to.
+func TestRegisterMemoryKeepsSymlinkedSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	target := filepath.Join(home, "dotfiles", "settings.json")
+	seed := `{"model": "PLACEHOLDER_MODEL"}` + "\n"
+	writeSeed(t, target, seed)
+	link := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("settings.json is no longer a symlink (lstat err %v)", err)
+	}
+	if got := readJSON(t, target); got["hooks"] == nil {
+		t.Fatalf("the change did not reach the linked file: %#v", got)
+	}
+	backups, _ := filepath.Glob(target + ".leankg-bak-*")
+	if len(backups) != 1 {
+		t.Fatalf("backups beside the linked file = %v, want exactly one", backups)
+	}
+	if got, _ := os.ReadFile(backups[0]); string(got) != seed {
+		t.Fatalf("backup content = %q, want the pre-change %q", got, seed)
+	}
+}
+
+// TestUnregisterMemoryRestoresFile: register then unregister leaves the hooks
+// exactly as the foreign seed had them. Only the backup file differs.
+func TestUnregisterMemoryRestoresFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeed(t, path, foreignHookSeed)
+	before := readJSON(t, path)
+	if err := RegisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	if err := UnregisterMemory(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	if after := readJSON(t, path); !reflect.DeepEqual(after, before) {
+		t.Fatalf("after unregister = %#v\nwant %#v", after, before)
 	}
 }

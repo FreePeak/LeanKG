@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/memory"
+	"github.com/FreePeak/LeanKG/internal/sessionlink/claudecode"
 )
 
 // sharedStyle is one body written in two repositories. Same bytes, same
@@ -263,5 +264,34 @@ func TestRecallWithoutCentralBanksAsksForSync(t *testing.T) {
 	_, err := Recall(context.Background(), mem, RecallRequest{Query: "tabs"})
 	if err == nil || !strings.Contains(err.Error(), "leankg memory sync") {
 		t.Fatalf("no central banks: got %v, want an error telling the caller to run leankg memory sync", err)
+	}
+}
+
+// TestRecallOmitsExcludedProjectRows syncs a project's memory, then excludes the
+// project. The row is still stored until the next sync, so recall must filter it.
+func TestRecallOmitsExcludedProjectRows(t *testing.T) {
+	projects, mem := applySetup(t)
+	excluded := claudecode.Slug(syntheticExcluded)
+	writeFile(t, memFile(projects, excluded, "marker-note.md"), "---\nname: Marker note\ndescription: Synthetic marker.\nmetadata:\n  type: project\n---\nsyntheticmarkerzeta body\n")
+	runSync(t, mem, syncOpts(projects, mem))
+	req := RecallRequest{Query: "syntheticmarkerzeta", Scope: scopeAll}
+	if got := recallOK(t, mem, req); got.Count != 1 {
+		t.Fatalf("setup: recall before the exclusion returned %d rows, want 1", got.Count)
+	}
+
+	setExcludeFile(t, syntheticExcluded+"\n")
+	if got := recallOK(t, mem, req); got.Count != 0 {
+		t.Errorf("recall after the exclusion returned %d rows, want 0", got.Count)
+	}
+}
+
+// TestRecallFailsClosedOnUnreadableExcludeList makes the exclude file unreadable.
+// Recall must return an error, not rows that the list may exclude.
+func TestRecallFailsClosedOnUnreadableExcludeList(t *testing.T) {
+	mem := recallFixture(t)
+	t.Setenv(excludeFileEnv, t.TempDir())
+
+	if _, err := Recall(context.Background(), mem, RecallRequest{Query: "tabs", Scope: scopeAll}); err == nil {
+		t.Error("Recall with an unreadable exclude file returned nil error, want an error")
 	}
 }

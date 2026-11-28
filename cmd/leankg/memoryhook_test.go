@@ -32,19 +32,20 @@ func hookVerbFixture(t *testing.T) (home, callerB string) {
 }
 
 // setHookStdin replaces os.Stdin with a pipe holding content. keepOpen leaves
-// the write end open, so a reader waits for input that never comes.
+// the write end open, so a reader waits for input that never comes. The content
+// is written by a goroutine, so content larger than the pipe buffer does not block.
 func setHookStdin(t *testing.T, content string, keepOpen bool) {
 	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := io.WriteString(w, content); err != nil {
-		t.Fatal(err)
-	}
-	if !keepOpen {
-		_ = w.Close()
-	}
+	go func() {
+		_, _ = io.WriteString(w, content)
+		if !keepOpen {
+			_ = w.Close()
+		}
+	}()
 	old := os.Stdin
 	os.Stdin = r
 	t.Cleanup(func() {
@@ -108,16 +109,80 @@ func TestMemoryHookWritesBlockForCallerFromStdinJSON(t *testing.T) {
 	assertHookBlockFor(t, stdout, callerB)
 }
 
-func TestMemoryHookFallsBackToProjectDirOnNonJSONStdin(t *testing.T) {
+// TestMemoryHookUnknownEventRunsAsSessionStart: an event the hook does not handle
+// gets the SessionStart block, as an empty stdin does.
+func TestMemoryHookUnknownEventRunsAsSessionStart(t *testing.T) {
 	_, callerB := hookVerbFixture(t)
-	t.Setenv("CLAUDE_PROJECT_DIR", callerB)
-	setHookStdin(t, "not json", false)
+	setHookStdin(t, `{"hook_event_name":"Notification","session_id":"s-1","cwd":"`+callerB+`"}`, false)
 
 	code, stdout, stderr := runMemoryHook(t)
 	if code != 0 || stderr != "" {
 		t.Fatalf("exit %d, stderr %q; want 0 and empty", code, stderr)
 	}
 	assertHookBlockFor(t, stdout, callerB)
+}
+
+// TestMemoryHookPostToolUseTakesFilePathFromStdin: a PostToolUse event for a
+// memory file syncs that project and prints nothing. The same stdin as
+// SessionStart would print the block.
+func TestMemoryHookPostToolUseTakesFilePathFromStdin(t *testing.T) {
+	home, callerB := hookVerbFixture(t)
+	file := filepath.Join(claudecode.ProjectsRoot(home), claudecode.Slug(filepath.Join(home, "work", "repo-a")), "memory", "a-feedback.md")
+	setHookStdin(t, `{"hook_event_name":"PostToolUse","session_id":"s-1","cwd":"`+callerB+`","tool_name":"Edit","tool_input":{"file_path":"`+file+`"}}`, false)
+
+	code, stdout, stderr := runMemoryHook(t)
+	if code != 0 || stdout != "" || stderr != "" {
+		t.Errorf("exit %d, stdout %q, stderr %q; want 0 and both empty", code, stdout, stderr)
+	}
+}
+
+// assertHookDoesNothing runs the hook on the stdin already set and asserts it
+// exits 0 with no stdout and no stderr: no sync, no injected block.
+func assertHookDoesNothing(t *testing.T) {
+	t.Helper()
+	code, stdout, stderr := runMemoryHook(t)
+	if code != 0 || stdout != "" || stderr != "" {
+		t.Errorf("exit %d, stdout %q, stderr %q; want 0 and both empty", code, stdout, stderr)
+	}
+}
+
+// TestMemoryHookInvalidJSONDoesNothing: stdin that is not valid JSON is not a
+// SessionStart event, so the hook neither syncs nor injects, even with
+// CLAUDE_PROJECT_DIR set.
+func TestMemoryHookInvalidJSONDoesNothing(t *testing.T) {
+	_, callerB := hookVerbFixture(t)
+	t.Setenv("CLAUDE_PROJECT_DIR", callerB)
+	setHookStdin(t, "not json", false)
+	assertHookDoesNothing(t)
+}
+
+// TestMemoryHookTruncatedStdinDoesNothing: a PostToolUse event whose JSON is cut
+// off does not fall through to SessionStart.
+func TestMemoryHookTruncatedStdinDoesNothing(t *testing.T) {
+	_, callerB := hookVerbFixture(t)
+	setHookStdin(t, `{"hook_event_name":"PostToolUse","tool_input":{"file_path":"`+filepath.Join(callerB, "big.go"), false)
+	assertHookDoesNothing(t)
+}
+
+// TestMemoryHookOverCapStdinDoesNothing: a PostToolUse event for a large
+// non-memory file, whose stdin is longer than the 1 MiB cap, does not run a sync
+// or print a block.
+func TestMemoryHookOverCapStdinDoesNothing(t *testing.T) {
+	_, callerB := hookVerbFixture(t)
+	big := `{"hook_event_name":"PostToolUse","session_id":"s-1","cwd":"` + callerB +
+		`","tool_name":"Write","tool_input":{"file_path":"` + filepath.Join(callerB, "big.go") +
+		`"},"tool_response":"` + strings.Repeat("x", hookStdinLimit) + `"}`
+	setHookStdin(t, big, false)
+	assertHookDoesNothing(t)
+}
+
+// TestMemoryHookStdinWithoutEOFDoesNothing: stdin that holds no data and never
+// closes is read to the bounded wait, and then the hook does nothing: it cannot
+// tell an empty input from a late one.
+func TestMemoryHookStdinWithoutEOFDoesNothing(t *testing.T) {
+	hookVerbFixture(t)
+	setHookStdin(t, "", true)
+	assertHookDoesNothing(t)
 }
 
 func TestMemoryHookFallsBackToWorkingDirectoryOnEmptyStdin(t *testing.T) {
