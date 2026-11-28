@@ -69,7 +69,7 @@ func runHook(t *testing.T, home, callerDir string) (string, string) {
 // hookBlockEntries returns the "- [kind] name" heads of the entries in stdout.
 func hookBlockEntries(out string) []string {
 	var heads []string
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if strings.HasPrefix(line, "- [") {
 			heads = append(heads, strings.SplitN(line, " - ", 2)[0])
 		}
@@ -530,7 +530,7 @@ func TestMemoryHookLinesAreCappedAt240Characters(t *testing.T) {
 
 	out, _ := runHook(t, home, filepath.Join(home, "work", "repo-b"))
 	var lines int
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if !strings.HasPrefix(line, "- [") {
 			continue
 		}

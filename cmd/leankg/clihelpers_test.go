@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/embed/embedtest"
@@ -51,6 +52,10 @@ func TestMain(m *testing.M) {
 	// or LEANKG_PG_URL must never route a test to a shared Postgres.
 	os.Setenv("LEANKG_DB_ENGINE", store.EngineSQLite)
 	os.Unsetenv("LEANKG_PG_URL")
+	// The Claude config dir defaults to $HOME/.claude. An operator's
+	// CLAUDE_CONFIG_DIR would redirect settings.json and transcript roots away
+	// from the temp HOME the install and telemetry tests build.
+	os.Unsetenv("CLAUDE_CONFIG_DIR")
 	buildDir := ""
 	if !testing.Short() {
 		var err error
@@ -85,6 +90,19 @@ func TestSuitePinsSQLiteEngine(t *testing.T) {
 	}
 	if _, ok := os.LookupEnv("LEANKG_PG_URL"); ok {
 		t.Errorf("LEANKG_PG_URL is set in the test process; want it unset")
+	}
+}
+
+// TestSuiteResolvesClaudeSettingsInsideTemp guards the Claude config leak: the
+// install and telemetry tests build settings under a temp home, but
+// claudeSettingsPath follows CLAUDE_CONFIG_DIR first. An operator's value
+// (in this repo's shell, a symlink to the real ~/.claude/settings.json) would
+// redirect those writes into the real config, so the path must stay under the
+// temp home.
+func TestSuiteResolvesClaudeSettingsInsideTemp(t *testing.T) {
+	home := t.TempDir()
+	if got := claudeSettingsPath(home); !strings.HasPrefix(got, home+string(filepath.Separator)) {
+		t.Errorf("claudeSettingsPath(%q) = %q, outside the temp home (CLAUDE_CONFIG_DIR=%q)", home, got, os.Getenv("CLAUDE_CONFIG_DIR"))
 	}
 }
 
