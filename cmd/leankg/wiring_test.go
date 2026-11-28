@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/telemetry"
 )
 
@@ -584,5 +585,128 @@ func TestInstallVerbRegisterMemoryUsage(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "-register-memory") {
 		t.Fatalf("usage lacks -register-memory:\n%s", buf.String())
+	}
+}
+
+// TestInstallVerbHookOnlyWritesHookNoMCPConfig: --hook-only with
+// --register-memory adds the memory SessionStart hook and leaves the MCP config
+// file (~/.claude.json) byte-identical, here seeded with a foreign key.
+func TestInstallVerbHookOnlyWritesHookNoMCPConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	mcpPath := filepath.Join(home, ".claude.json")
+	writeSeed(t, mcpPath, "{\"projects\": {}}\n")
+	if err := cmdInstall(context.Background(), []string{"--target", "claude-code", "--register-memory", "--hook-only"}); err != nil {
+		t.Fatal(err)
+	}
+	ss := readJSON(t, filepath.Join(home, ".claude", "settings.json"))["hooks"].(map[string]any)["SessionStart"].([]any)
+	if len(ss) != 1 {
+		t.Fatalf("SessionStart entries = %d, want 1: %#v", len(ss), ss)
+	}
+	hook := ss[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	if cmd, _ := hook["command"].(string); !strings.HasSuffix(cmd, " memory hook") {
+		t.Fatalf("command = %q, want suffix %q", cmd, " memory hook")
+	}
+	got, err := os.ReadFile(mcpPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "{\"projects\": {}}\n" {
+		t.Fatalf("--hook-only changed the MCP config to %q", got)
+	}
+}
+
+// TestInstallVerbHookOnlyAbsentMCPConfigStaysAbsent: with no MCP config file,
+// --hook-only still writes none.
+func TestInstallVerbHookOnlyAbsentMCPConfigStaysAbsent(t *testing.T) {
+	home, err := runInstallVerb(t, "--target", "claude-code", "--register-memory", "--hook-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("--hook-only created ~/.claude.json: stat err = %v", err)
+	}
+}
+
+// TestInstallVerbRegisterMemoryStillWritesMCPConfig: without --hook-only,
+// --register-memory keeps writing the leankg MCP entry to ~/.claude.json.
+func TestInstallVerbRegisterMemoryStillWritesMCPConfig(t *testing.T) {
+	home, err := runInstallVerb(t, "--target", "claude-code", "--register-memory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	servers, _ := readJSON(t, filepath.Join(home, ".claude.json"))["mcpServers"].(map[string]any)
+	if _, ok := servers["leankg"]; !ok {
+		t.Fatalf("~/.claude.json has no leankg MCP entry: %#v", servers)
+	}
+}
+
+// TestInstallVerbHookOnlyUsageErrors: --hook-only without --register-memory, or
+// combined with a flag that writes an MCP entry or a second hook, is a usage
+// error (exit 2) and writes nothing.
+func TestInstallVerbHookOnlyUsageErrors(t *testing.T) {
+	cases := [][]string{
+		{"--target", "claude-code", "--hook-only"},
+		{"--target", "claude-code", "--hook-only", "--register-cwd"},
+		{"--target", "claude-code", "--hook-only", "--register-memory", "--register-cwd"},
+		{"--target", "claude-code", "--hook-only", "--register-memory", "--http"},
+		{"--target", "claude-code", "--hook-only", "--register-memory", "--project", "PLACEHOLDER_PROJECT"},
+	}
+	for _, args := range cases {
+		home, err := runInstallVerb(t, args...)
+		var stderr bytes.Buffer
+		if code := cliexit.Finish(err, &stderr); code != 2 || !strings.Contains(stderr.String(), "--hook-only") {
+			t.Fatalf("%v: exit = %d, stderr = %q; want usage exit 2 naming --hook-only", args, code, stderr.String())
+		}
+		entries, rerr := os.ReadDir(home)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("%v: wrote %d entries under HOME, want none", args, len(entries))
+		}
+	}
+}
+
+// TestInstallVerbHookOnlyUnsupportedTarget: --hook-only on a client without a
+// hook mechanism returns ErrUnsupportedClient before any file is written.
+func TestInstallVerbHookOnlyUnsupportedTarget(t *testing.T) {
+	for _, target := range []string{"cursor", "codex", "gemini", "opencode", "omp", "xdev"} {
+		home, err := runInstallVerb(t, "--target", target, "--register-memory", "--hook-only")
+		if !errors.Is(err, ErrUnsupportedClient) {
+			t.Fatalf("%s: err = %v, want ErrUnsupportedClient", target, err)
+		}
+		entries, rerr := os.ReadDir(home)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("%s: wrote %d entries under HOME, want none", target, len(entries))
+		}
+	}
+}
+
+// TestInstallVerbHookOnlyIdempotent: a second --hook-only run leaves the
+// settings file byte-identical.
+func TestInstallVerbHookOnlyIdempotent(t *testing.T) {
+	home, err := runInstallVerb(t, "--target", "claude-code", "--register-memory", "--hook-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, ".claude", "settings.json")
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runInstallVerb(t, "--target", "claude-code", "--register-memory", "--hook-only"); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatalf("second --hook-only run changed settings.json:\nfirst:  %s\nsecond: %s", first, second)
 	}
 }

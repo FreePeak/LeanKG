@@ -57,7 +57,15 @@ only read.
    This merges one `SessionStart` entry into the Claude Code settings file:
    `$CLAUDE_CONFIG_DIR/settings.json` when `CLAUDE_CONFIG_DIR` is set, else
    `~/.claude/settings.json`. Other hooks are kept, and a second run changes
-   nothing. If you prefer to edit the file by hand, the entry is:
+   nothing. The same command also writes the leankg MCP entry to `~/.claude.json`.
+   If you manage that entry yourself, or already registered leankg at user
+   scope, add `--hook-only`. It merges the same hook and writes no MCP config:
+
+   ```bash
+   <leankg-binary> install --target claude-code --register-memory --hook-only
+   ```
+
+   If you prefer to edit the file by hand, the entry is:
 
    ```json
    {

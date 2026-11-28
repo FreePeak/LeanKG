@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"strings"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/maintain"
@@ -149,11 +151,15 @@ func cmdInstall(ctx context.Context, args []string) error {
 	project := fs.String("project", "", "explicit project path (stdio escape hatch)")
 	registerCWD := fs.Bool("register-cwd", false, "write a session-start hook running `leankg index --hook <project>` (claude-code)")
 	registerMemory := fs.Bool("register-memory", false, "write a session-start hook running `leankg memory hook` (claude-code)")
+	hookOnly := fs.Bool("hook-only", false, "with --register-memory: write only that hook, not the MCP entry (claude-code)")
 	if _, err := parseInterspersed("install", fs, args, 0); err != nil {
 		return err
 	}
 	if *target == "" {
 		return fmt.Errorf("install requires --target (%s)", strings.Join(Clients(), "|"))
+	}
+	if *hookOnly && (!*registerMemory || *registerCWD || *httpMode || *url != "" || *project != "") {
+		return cliexit.Usage(errors.New("--hook-only needs --register-memory and no --register-cwd, --http, --url or --project"))
 	}
 	if *registerMemory && *target != ClientClaudeCode {
 		return fmt.Errorf("register-memory for %s: %w", *target, ErrUnsupportedClient)
@@ -173,9 +179,13 @@ func cmdInstall(ctx context.Context, args []string) error {
 		cfg.Mode = "stdio"
 		cfg.Project = *project
 	}
-	opts := InstallOptions{HTTP: *httpMode, URL: cfg.URL, Project: *project, RegisterCWD: *registerCWD, RegisterMemory: *registerMemory}
+	opts := InstallOptions{HTTP: *httpMode, URL: cfg.URL, Project: *project, RegisterCWD: *registerCWD, RegisterMemory: *registerMemory, HookOnly: *hookOnly}
 	if err := Install(home, *target, opts); err != nil {
 		return err
+	}
+	if *hookOnly {
+		fmt.Printf("registered %s session-start memory hook (MCP config not written)\n", *target)
+		return nil
 	}
 	fmt.Printf("installed %s (%s)%s\n", *target, cfg.Mode, registerHint(*registerCWD))
 	return nil

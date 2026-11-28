@@ -172,7 +172,7 @@ leankg memory sync [--dry-run] [--rebuild] [--json]
 leankg memory migrate [--project SLUG] [--dry-run] [--json]
 leankg memory recall <query...> [--scope project|global|all] [--type KIND] [--limit N] [--dir DIR] [--json]
 leankg memory hook                      # SessionStart hook; reads hook JSON on stdin
-leankg install --target claude-code --register-memory
+leankg install --target claude-code --register-memory [--hook-only]
 ```
 
 The `memory` verb with no subcommand prints the usage and exits 1. An unknown
@@ -310,6 +310,13 @@ nothing. Only `claude-code` accepts the flag; any other target fails with an
 error before anything is written. The target name is `claude-code`, not
 `claude`, which the command rejects as unknown.
 
+`--hook-only` (with `--register-memory`) merges the same hook and writes no MCP
+config, so `~/.claude.json` is left as it is. Use it when you manage the MCP
+entry yourself or already registered leankg at user scope. It needs
+`--register-memory` and is a usage error (exit 2, nothing written) with
+`--register-cwd`, `--http`, `--url` or `--project`. Its output is
+`registered claude-code session-start memory hook (MCP config not written)`.
+
 ### Safety
 
 - The memory verbs read `~/.claude/projects` and write only under the central
@@ -317,7 +324,8 @@ error before anything is written. The target name is `claude-code`, not
   writes only to a temporary directory it removes. They never write into `~/.claude`.
 - `install --register-memory` writes exactly one hook entry into the Claude Code
   settings file (`$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json`),
-  and the MCP entry that `install` always writes into `~/.claude.json`.
+  and the MCP entry that `install` always writes into `~/.claude.json`. With
+  `--hook-only` only the hook entry is written.
 - Deletes are withheld when the projects root is missing or holds no memory
   files while central rows exist. The run reports `deletes_withheld: true` and
   deletes nothing. `--rebuild` is the only way to clear those rows.

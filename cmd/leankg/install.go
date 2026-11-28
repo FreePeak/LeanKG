@@ -15,6 +15,7 @@ type InstallOptions struct {
 	Project        string // optional --project escape hatch (stdio only)
 	RegisterCWD    bool   // also register the SessionStart index hook (claude-code only)
 	RegisterMemory bool   // also register the SessionStart memory hook (claude-code only)
+	HookOnly       bool   // with RegisterMemory: register only that hook and write no MCP entry
 }
 
 // CurrentCommand returns the stdio command path: the current executable when
@@ -28,9 +29,12 @@ func CurrentCommand() string {
 
 // Install writes the leankg MCP entry for target (one of Clients()) under
 // homeDir and, when opts.RegisterCWD or opts.RegisterMemory is set, registers
-// the matching Claude Code SessionStart hook. Unknown targets are rejected with
-// the valid set named.
+// the matching Claude Code SessionStart hook. With opts.HookOnly it writes only
+// the memory hook. Unknown targets are rejected with the valid set named.
 func Install(homeDir, target string, opts InstallOptions) error {
+	if opts.HookOnly {
+		return RegisterMemory(homeDir, target, CurrentCommand())
+	}
 	cfg := Config{Mode: "stdio", Exe: CurrentCommand(), Project: opts.Project}
 	if opts.HTTP {
 		cfg.Mode, cfg.Exe, cfg.URL = "http", "", opts.URL

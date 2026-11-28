@@ -624,7 +624,7 @@ A per-repository stdio registration also works. It is not recommended at user sc
 | Deletion | Deleting the source file deletes the row on the next sync. `--rebuild` re-derives everything. Removing the `cc-` bank files and running sync is equivalent. |
 | File permissions | The central root is created by the existing code with its existing modes (`internal/memory/memory.go:100-108`); this plan does not change them. |
 | Telemetry | Off by default. When on, events carry counts, ids and hashes, not memory text (`internal/memory/telemetry_hook.go:94-105`). |
-| Claude Code config writes | `install --target claude-code --register-memory` writes the hook entry to `~/.claude/settings.json` and, as `install` already does, the leankg MCP server entry to `~/.claude.json`. There is no hook-only path in this wave (OQ-11). |
+| Claude Code config writes | `install --target claude-code --register-memory` writes the hook entry to `~/.claude/settings.json` and, as `install` already does, the leankg MCP server entry to `~/.claude.json`. With `--hook-only` only the hook entry is written (OQ-11, resolved). |
 
 ---
 
@@ -695,7 +695,7 @@ There is no separate lint target; `go vet` is the repository's static gate. The 
 
 **Never**
 
-- Write into `~/.claude/` other than the one hook entry the install command owns (install also writes the MCP entry to `~/.claude.json`, as it already does; OQ-11).
+- Write into `~/.claude/` other than the one hook entry the install command owns (install also writes the MCP entry to `~/.claude.json`, as it already does, unless `--hook-only` is given; OQ-11).
 - Delete central rows on a failed or empty scan without `--rebuild`.
 - Put real host paths, usernames, hostnames or secrets in code, tests, fixtures or docs.
 - Let a hook path block a session, prompt the user, or start a server or an embedding sidecar.
@@ -820,7 +820,7 @@ Slices are ordered. Each is one commit. CAM-00 has no code.
 - [x] Task: CAM-17 Hook registration
   - Module: `cc-hook`
   - Acceptance: `install --target claude-code --register-memory` adds the entry of section 7.2 to a settings file, preserving every other key and hook; a second run changes nothing; the existing index hook entry and its tests are unaffected; other targets return the unsupported-client error.
-  - Note (2026-11-27): the install verb also writes the leankg MCP server entry to the client config file (`~/.claude.json`), because that is what `install` already does; there is no hook-only path in this wave (OQ-11).
+  - Note (2026-11-27): the install verb also writes the leankg MCP server entry to the client config file (`~/.claude.json`), because that is what `install` already does; `--hook-only` skips it (OQ-11, resolved 2026-11-28).
   - Verify: `go test ./cmd/leankg/ -run 'TestRegister|TestInstall' -count=1`
   - Files: `cmd/leankg/connect.go`, `cmd/leankg/connect_test.go`, `cmd/leankg/install.go`, `cmd/leankg/install_test.go`, `cmd/leankg/wire.go`
 
@@ -902,4 +902,4 @@ Gated, not to be started before OQ-1 is answered: `team-store` slices (migration
 | OQ-8 | In team mode, what identifies a project across machines without embedding a local path? | `team-store`. |
 | OQ-9 | Resolved 2026-11-27: reference memories are repository-scoped. | Nothing; one constant in `cc-source`. |
 | OQ-10 | Is the side effect in KD-8 (a stdio server creating a store in every repository) confirmed? If not, user-scope stdio registration is also acceptable. | Guide wording only. |
-| OQ-11 | Should `install --register-memory` have a hook-only mode that does not write the MCP entry? | Nothing in this wave; install writes the MCP entry today (CAM-17). |
+| OQ-11 | Should `install --register-memory` have a hook-only mode that does not write the MCP entry? | **Resolved 2026-11-28:** `install --target claude-code --register-memory --hook-only` writes only the SessionStart hook and no `~/.claude.json` entry (`cmd/leankg/wire.go`, `cmd/leankg/install.go`). |
