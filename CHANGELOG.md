@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.39.1](https://github.com/FreePeak/LeanKG/compare/v0.39.0...v0.39.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **memory:** keep the full caller directory in the hint up to 400 characters ([29403a1](https://github.com/FreePeak/LeanKG/commit/29403a1988a1a7f651d41fcf48d0937381ca76b7))
+* **memory:** keep the full caller directory in the hint up to 400 characters ([8076304](https://github.com/FreePeak/LeanKG/commit/8076304b3baf001147af283ae0e952c5dad4a32e))
+
 ## [0.39.0](https://github.com/FreePeak/LeanKG/compare/v0.38.0...v0.39.0) (2026-11-28)
 
 
