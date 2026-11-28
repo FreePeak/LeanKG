@@ -39,6 +39,8 @@ only read.
 
    A match is replaced with `[SCRUBBED]` when a memory is written and when it is
    read. Create the file before migrating, so secrets are masked on the way in.
+   A running `serve` reads the file once, at startup; restart it after you edit
+   the file.
 3. Preview the migration, then run it:
 
    ```bash
@@ -57,7 +59,15 @@ only read.
    This merges one `SessionStart` entry into the Claude Code settings file:
    `$CLAUDE_CONFIG_DIR/settings.json` when `CLAUDE_CONFIG_DIR` is set, else
    `~/.claude/settings.json`. Other hooks are kept, and a second run changes
-   nothing. If you prefer to edit the file by hand, the entry is:
+   nothing. The same command also writes the leankg MCP entry to `~/.claude.json`.
+   If you manage that entry yourself, or already registered leankg at user
+   scope, add `--hook-only`. It merges the same hook and writes no MCP config:
+
+   ```bash
+   <leankg-binary> install --target claude-code --register-memory --hook-only
+   ```
+
+   If you prefer to edit the file by hand, the entry is:
 
    ```json
    {
@@ -229,6 +239,19 @@ scope, because each session's server opens its own store.
   memory. `agent_recall` returns `central memory is not configured on this server`.
 - **`?project=` routing does not serve it.** Project routing does not select the
   central banks; `agent_recall` answers from the default engine.
+- **Deny-list in `serve` is read once.** `serve` loads `scrub.txt` when it starts
+  and masks the writes its listeners accept from then on. An edit takes effect
+  after a restart. `memory sync`, `migrate`, `memory recall` and the session hook
+  read the file on every run.
+- **Hosted serve does not load the deny-list.** `serve --hosted` skips
+  `scrub.txt` entirely: its central root is the operator's personal memory and
+  it answers every token holder, so the operator's patterns would rewrite tenant
+  writes. Hosted writes are not masked by this file.
+- **A bad deny-list fails open on `serve`.** If `scrub.txt` has an invalid line
+  or cannot be read, `serve` still starts, with no deny-list at all, and logs one
+  line on stderr. The line names the file and the reason, never a pattern or the
+  home path. Writes made while the list is missing are not masked. Fix the file
+  and restart `serve`; a restart is the only way the list is loaded again.
 - **Keyword recall on the CLI.** `leankg memory recall` has no embedder, so it
   ranks by keyword only. Over MCP the dense arm is used when an embedder and a
   calibrated floor are configured.

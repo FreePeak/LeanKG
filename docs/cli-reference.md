@@ -62,6 +62,16 @@ leankg serve --embed-provider local     # embedding provider for query vectors
 With neither `--stdio` nor an address, the default is
 `--http 127.0.0.1:9699`. `--project` defaults to the working directory.
 
+At startup `serve` loads the deny-list `<central root>/scrub.txt` (see
+[Memory](#memory)) once and applies it to every memory write it accepts. A
+missing file is a no-op. `serve --hosted` loads no deny-list at all.
+Restart `serve` after editing the file.
+
+Fail-open: a `scrub.txt` with an invalid line, or one that cannot be read, does
+not stop the server. It logs one line that names the file and the reason, then
+starts with no deny-list, so writes are not masked until the file is fixed and
+`serve` is restarted.
+
 ## Authentication
 
 ```bash
@@ -172,7 +182,7 @@ leankg memory sync [--dry-run] [--rebuild] [--json]
 leankg memory migrate [--project SLUG] [--dry-run] [--json]
 leankg memory recall <query...> [--scope project|global|all] [--type KIND] [--limit N] [--dir DIR] [--json]
 leankg memory hook                      # SessionStart hook; reads hook JSON on stdin
-leankg install --target claude-code --register-memory
+leankg install --target claude-code --register-memory [--hook-only]
 ```
 
 The `memory` verb with no subcommand prints the usage and exits 1. An unknown
@@ -310,6 +320,13 @@ nothing. Only `claude-code` accepts the flag; any other target fails with an
 error before anything is written. The target name is `claude-code`, not
 `claude`, which the command rejects as unknown.
 
+`--hook-only` (with `--register-memory`) merges the same hook and writes no MCP
+config, so `~/.claude.json` is left as it is. Use it when you manage the MCP
+entry yourself or already registered leankg at user scope. It needs
+`--register-memory` and is a usage error (exit 2, nothing written) with
+`--register-cwd`, `--http`, `--url` or `--project`. Its output is
+`registered claude-code session-start memory hook (MCP config not written)`.
+
 ### Safety
 
 - The memory verbs read `~/.claude/projects` and write only under the central
@@ -317,7 +334,8 @@ error before anything is written. The target name is `claude-code`, not
   writes only to a temporary directory it removes. They never write into `~/.claude`.
 - `install --register-memory` writes exactly one hook entry into the Claude Code
   settings file (`$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json`),
-  and the MCP entry that `install` always writes into `~/.claude.json`.
+  and the MCP entry that `install` always writes into `~/.claude.json`. With
+  `--hook-only` only the hook entry is written.
 - Deletes are withheld when the projects root is missing or holds no memory
   files while central rows exist. The run reports `deletes_withheld: true` and
   deletes nothing. `--rebuild` is the only way to clear those rows.
@@ -327,7 +345,8 @@ error before anything is written. The target name is `claude-code`, not
   regular expression per line; blank lines and lines starting with `#` are
   ignored. A match is replaced with `[SCRUBBED]` on write and on read. An invalid
   line fails the load with its line number. The hook then skips sync and injects
-  from the stored rows; `memory sync` and `migrate` exit 1.
+  from the stored rows; `memory sync` and `migrate` exit 1. `serve` logs the
+  failure once and starts without the list (see [Server](#server)).
 
 ## Environment variables
 

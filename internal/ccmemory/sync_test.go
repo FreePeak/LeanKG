@@ -945,3 +945,32 @@ func TestApplyCompactsCentralUnderSyncLock(t *testing.T) {
 	}
 	release()
 }
+
+// TestInstallDenyListReadErrorNamesOnlyTheFile: an unreadable scrub.txt reports
+// its basename and the OS reason. The central root and the home directory stay
+// out of the error, because it reaches sync, migrate and hook stderr.
+func TestInstallDenyListReadErrorNamesOnlyTheFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	central := filepath.Join(home, ".leankg", "memory")
+	// A directory where the file should be: reading it fails with a path error.
+	if err := os.MkdirAll(filepath.Join(central, scrubFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := InstallDenyList(central)
+
+	if err == nil {
+		t.Fatal("InstallDenyList on a directory = nil, want a read error")
+	}
+	msg := err.Error()
+	for _, leak := range []string{central, home} {
+		if strings.Contains(msg, leak) {
+			t.Fatalf("error %q leaks %q", msg, leak)
+		}
+	}
+	if !strings.Contains(msg, scrubFile) || !strings.Contains(msg, "is a directory") {
+		t.Fatalf("error %q, want the basename %q and the OS reason", msg, scrubFile)
+	}
+}

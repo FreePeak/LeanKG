@@ -275,6 +275,27 @@ func newScopedMCPServer(engine *core.Engine, router *projects.Router) *leankgmcp
 	return srv
 }
 
+// installServeDenyList loads <central root>/scrub.txt for serve. A hosted serve
+// loads nothing: its central root is the operator's personal memory and it
+// answers every token holder, so the operator's patterns would mask tenant
+// writes. A missing file installs nothing and logs nothing. A file that does not
+// load installs no list and logs one line; the error names the file and the
+// reason, never a pattern or the home path (ccmemory.InstallDenyList). serve runs
+// on either way.
+func installServeDenyList(hosted bool, logf func(string, ...any)) {
+	if hosted {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		logf("deny-list not loaded, serving without it: resolve home: %v", err)
+		return
+	}
+	if err := ccmemory.InstallDenyList(memory.GlobalRoot(home)); err != nil {
+		logf("deny-list not loaded, serving without it: %v", err)
+	}
+}
+
 // cmdServe labels serve's error for main. serve returns its error rather than
 // calling log.Fatal, so its defers (store close, telemetry flush, auto-config
 // job join) run before the process exits.
@@ -546,6 +567,11 @@ afterSidecars:
 
 	memory.SetRecorder(rec)
 	session.SetRecorder(rec)
+
+	// The deny-list masks every memory write of this process, so it is loaded
+	// before any memory opens. It is read once here: restart serve after
+	// editing scrub.txt. A hosted serve loads none (installServeDenyList).
+	installServeDenyList(*hosted, log.Printf)
 
 	var mem *memory.Memory
 	if *withMemory {

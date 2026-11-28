@@ -990,3 +990,30 @@ func TestMemoryMigrateLeavesForeignBankByteIdentical(t *testing.T) {
 		t.Fatalf("cc- rows after migrate = %d, want 3: %v", len(rows), rows)
 	}
 }
+
+// TestMemoryRecallMasksPatternAddedAfterRowsWereStored: a pattern written to
+// scrub.txt after a row was synced is applied by recall, which loads the file on
+// each run. The row was stored raw, so only the recall-time load can mask it.
+func TestMemoryRecallMasksPatternAddedAfterRowsWereStored(t *testing.T) {
+	resetDenyList(t)
+	central, projects := memorySyncEnv(t)
+	repo := t.TempDir()
+	const late = "PLACEHOLDER_LATE_TERM"
+	writeMemoryDoc(t, projects, claudecode.Slug(repo), "deploy.md", "feedback", "Run deploys through the "+late+" gateway.")
+	if code, out := runMemorySync(t); code != 0 {
+		t.Fatalf("memory sync exit = %d\n%s", code, out)
+	}
+	writeSeed(t, filepath.Join(central, "scrub.txt"), late+"\n")
+
+	code, out, stderr := runMemoryRecall(t, "gateway", "--dir", repo, "--json")
+
+	if code != 0 {
+		t.Fatalf("exit = %d\n%s", code, stderr)
+	}
+	if strings.Contains(out, late) {
+		t.Fatalf("recall output still holds the pattern added after the row was stored:\n%s", out)
+	}
+	if !strings.Contains(out, "[SCRUBBED]") {
+		t.Fatalf("recall output has no mask marker:\n%s", out)
+	}
+}

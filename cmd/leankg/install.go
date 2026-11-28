@@ -6,7 +6,26 @@
 // escape hatch and the only way a --project flag is emitted.
 package main
 
-import "os"
+import (
+	"errors"
+	"os"
+
+	"github.com/FreePeak/LeanKG/internal/cliexit"
+)
+
+// errHookOnlyScope refuses --hook-only with a flag it cannot honour: it writes
+// only the memory hook, so --register-cwd, --http, --url and --project have
+// nothing to write. cmdInstall and Install share this one message.
+var errHookOnlyScope = errors.New("--hook-only needs --register-memory and no --register-cwd, --http, --url or --project")
+
+// checkHookOnlyScope returns the usage refusal (exit 2) when opts sets HookOnly
+// with a flag outside its scope, and nil otherwise.
+func checkHookOnlyScope(opts InstallOptions) error {
+	if opts.HookOnly && (!opts.RegisterMemory || opts.RegisterCWD || opts.HTTP || opts.URL != "" || opts.Project != "") {
+		return cliexit.Usage(errHookOnlyScope)
+	}
+	return nil
+}
 
 // InstallOptions tunes Install.
 type InstallOptions struct {
@@ -15,6 +34,7 @@ type InstallOptions struct {
 	Project        string // optional --project escape hatch (stdio only)
 	RegisterCWD    bool   // also register the SessionStart index hook (claude-code only)
 	RegisterMemory bool   // also register the SessionStart memory hook (claude-code only)
+	HookOnly       bool   // with RegisterMemory: register only that hook and write no MCP entry
 }
 
 // CurrentCommand returns the stdio command path: the current executable when
@@ -28,9 +48,15 @@ func CurrentCommand() string {
 
 // Install writes the leankg MCP entry for target (one of Clients()) under
 // homeDir and, when opts.RegisterCWD or opts.RegisterMemory is set, registers
-// the matching Claude Code SessionStart hook. Unknown targets are rejected with
-// the valid set named.
+// the matching Claude Code SessionStart hook. With opts.HookOnly it writes only
+// the memory hook. Unknown targets are rejected with the valid set named.
 func Install(homeDir, target string, opts InstallOptions) error {
+	if err := checkHookOnlyScope(opts); err != nil {
+		return err
+	}
+	if opts.HookOnly {
+		return RegisterMemory(homeDir, target, CurrentCommand())
+	}
 	cfg := Config{Mode: "stdio", Exe: CurrentCommand(), Project: opts.Project}
 	if opts.HTTP {
 		cfg.Mode, cfg.Exe, cfg.URL = "http", "", opts.URL

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -344,5 +345,34 @@ func TestInstallRegisterMemoryRejectsNonObjectSettings(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(path); string(got) != "null\n" {
 		t.Fatalf("settings changed to %q", got)
+	}
+}
+
+// TestInstallHookOnlyRejectsMCPScope: Install itself refuses HookOnly combined
+// with a flag it cannot honour, before any file is written. cmdInstall checks
+// the same rule first; this pins the library entry point too.
+func TestInstallHookOnlyRejectsMCPScope(t *testing.T) {
+	cases := map[string]InstallOptions{
+		"http":         {HookOnly: true, RegisterMemory: true, HTTP: true},
+		"url":          {HookOnly: true, RegisterMemory: true, URL: "PLACEHOLDER_URL"},
+		"project":      {HookOnly: true, RegisterMemory: true, Project: "PLACEHOLDER_PROJECT"},
+		"register-cwd": {HookOnly: true, RegisterMemory: true, RegisterCWD: true},
+	}
+	for name, opts := range cases {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+			err := Install(home, ClientClaudeCode, opts)
+			if !errors.Is(err, errHookOnlyScope) {
+				t.Fatalf("Install(%+v) = %v, want %q", opts, err, errHookOnlyScope)
+			}
+			entries, rerr := os.ReadDir(home)
+			if rerr != nil {
+				t.Fatal(rerr)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("Install(%+v) wrote %d entries under HOME, want none", opts, len(entries))
+			}
+		})
 	}
 }
