@@ -21,6 +21,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
+	"unicode"
 
 	"github.com/FreePeak/LeanKG/internal/sessionlink/claudecode"
 )
@@ -137,7 +139,7 @@ func jsonContainer(client string) string {
 // docs/mcp-multi-project-scoping.md section 4). An absolute path
 // baked into a shared config is stale the moment that config leaves the
 // machine it was written on. Measured on this machine 2026-10-11: three
-// configs carrying `?project=/workspace-freepeak` — a Docker mount path that
+// configs carrying `?project=/workspace-other` — a Docker mount path that
 // exists nowhere on the host — failed every initialize with `unknown
 // project`, so the clients reading them dropped leankg from their tool list.
 // Stripping here means the one caller that can still pass such a URL cannot
@@ -293,19 +295,44 @@ func writeJSONEntry(path, container string, entry map[string]any) error {
 // writeJSONFile creates parent directories and atomically writes root as
 // pretty-printed JSON (two-space indent, trailing newline).
 func writeJSONFile(path string, root map[string]any) error {
+	data, err := encodeJSON(root)
+	if err != nil {
+		return err
+	}
+	return atomicWrite(path, data)
+}
+
+// encodeJSON renders root as pretty-printed JSON (two-space indent, trailing newline).
+func encodeJSON(root map[string]any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(root); err != nil {
-		return err
+		return nil, err
 	}
-	return atomicWrite(path, buf.Bytes())
+	return buf.Bytes(), nil
 }
 
-// atomicWrite writes data via a temp sibling then renames over path. A file that
+// resolveSymlink returns the file a symlink at path points to, so a write through
+// the link replaces the target and keeps the link. A path that is not a symlink,
+// or does not exist, is returned unchanged.
+func resolveSymlink(path string) (string, error) {
+	fi, err := os.Lstat(path)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		return path, nil
+	}
+	return filepath.EvalSymlinks(path)
+}
+
+// atomicWrite writes data via a temp sibling then renames over path. A symlink at
+// path is written through (the temp sibling goes beside the target). A file that
 // already exists keeps its mode; a new file gets 0644.
 func atomicWrite(path string, data []byte) error {
+	path, err := resolveSymlink(path)
+	if err != nil {
+		return err
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -440,6 +467,7 @@ func replaceTOMLSection(text, header string, lines []string) string {
 // the rest are generated legacy forms that are replaced in place. The other
 // fields shape the entry written for the hook.
 type sessionHook struct {
+	event    string // hook event key under "hooks", e.g. SessionStart
 	suffixes []string
 	matcher  string // "" writes no matcher key
 	async    bool
@@ -451,26 +479,56 @@ type sessionHook struct {
 // survive the shell. --hook keeps the run cheap and safe to fire on every
 // session start (see index's hook mode). The legacy suffix is the pre-async form.
 var indexHook = sessionHook{
+	event:    "SessionStart",
 	suffixes: []string{` index --hook "$CLAUDE_PROJECT_DIR"`, ` index "$CLAUDE_PROJECT_DIR"`},
 	matcher:  "startup|resume",
 	async:    true,
 }
 
-// memoryHook is the hook RegisterMemory owns: a synchronous `memory hook` run
-// with a 10 second budget on every session start, with no matcher.
-var memoryHook = sessionHook{
-	suffixes: []string{" memory hook"},
-	timeout:  10,
+// memoryHooks are the hooks RegisterMemory owns, all running `memory hook`:
+// a synchronous run with a 10 second budget at session start, an async run
+// after each Write or Edit, and a synchronous run at session end.
+var memoryHooks = []sessionHook{
+	{event: "SessionStart", suffixes: []string{" memory hook"}, timeout: 10},
+	{event: "PostToolUse", suffixes: []string{" memory hook"}, matcher: "Write|Edit", async: true},
+	{event: "SessionEnd", suffixes: []string{" memory hook"}, timeout: 10},
 }
 
 // command renders the hook command for exe. exe is the resolved current
 // executable (CurrentCommand()); bare "leankg" would depend on the hook's PATH
-// and silently no-op when it differs. An empty exe falls back to "leankg".
+// and silently no-op when it differs. An empty exe falls back to "leankg". The
+// shell runs the command, so an exe with a space or other special character is
+// quoted (shellQuote).
 func (h sessionHook) command(exe string) string {
 	if exe == "" {
 		exe = "leankg"
 	}
-	return exe + h.suffixes[0]
+	return shellQuote(exe) + h.suffixes[0]
+}
+
+// shellQuote returns s as one POSIX shell word. A word of plain path characters
+// is returned unchanged, so ordinary paths keep their command text; any other
+// word is single-quoted.
+func shellQuote(s string) string {
+	if !strings.ContainsFunc(s, needsShellQuote) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// needsShellQuote reports whether r would not be read literally in an unquoted
+// shell word.
+func needsShellQuote(r rune) bool {
+	return !(unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("/._-+:,@%", r))
+}
+
+// shellUnquote returns the word that a shellQuote form stands for, and whether s
+// was single-quoted. Any other s is returned unchanged with false.
+func shellUnquote(s string) (string, bool) {
+	if len(s) < 2 || s[0] != '\'' || s[len(s)-1] != '\'' {
+		return s, false
+	}
+	return strings.ReplaceAll(s[1:len(s)-1], `'\''`, "'"), true
 }
 
 // hookCommand renders the index hook command for exe (see indexHook).
@@ -479,29 +537,36 @@ func hookCommand(exe string) string {
 }
 
 // owns reports whether cmd is a hook this spec manages: the command it writes
-// now (also when the executable path holds whitespace), or a generated command
-// in any suffix form. A generated command names the leankg binary: a
-// whitespace-free executable whose base name is leankg (or leankg.exe) followed
-// by a suffix. Anything else, including another tool's ` memory hook`, is the
-// user's own wiring and is never matched.
+// now, or a generated command in any suffix form. A generated command names the
+// leankg binary, either as a single-quoted word (any path) or as an unquoted
+// whitespace-free word whose base name is leankg (or leankg.exe). An earlier
+// release wrote an unquoted command for an executable path with whitespace, so
+// that unquoted form is owned when it names the executable command writes.
+// Anything else, including another tool's ` memory hook`, is the user's own
+// wiring and is never matched.
 func (h sessionHook) owns(cmd, command string) bool {
 	if cmd == command {
 		return true
 	}
+	own, _ := shellUnquote(strings.TrimSuffix(command, h.suffixes[0]))
 	for _, suffix := range h.suffixes {
-		if exe, ok := strings.CutSuffix(cmd, suffix); ok && isLeankgBinary(exe) {
+		word, ok := strings.CutSuffix(cmd, suffix)
+		if !ok {
+			continue
+		}
+		if exe, quoted := shellUnquote(word); quoted {
+			if isLeankgBinary(exe) {
+				return true
+			}
+		} else if word == own || (isLeankgBinary(word) && !strings.ContainsAny(word, " \t\r\n")) {
 			return true
 		}
 	}
 	return false
 }
 
-// isLeankgBinary reports whether exe is a whitespace-free path whose base name
-// is leankg or leankg.exe.
+// isLeankgBinary reports whether the base name of exe is leankg or leankg.exe.
 func isLeankgBinary(exe string) bool {
-	if exe == "" || strings.ContainsAny(exe, " \t\r\n") {
-		return false
-	}
 	base := filepath.Base(exe)
 	return base == "leankg" || base == "leankg.exe"
 }
@@ -593,10 +658,96 @@ func (h sessionHook) withoutOwned(obj map[string]any, command string) (map[strin
 	return kept, true
 }
 
-// registerSessionHook is the one SessionStart merge both hooks use. It
-// merges-or-creates h under hooks.SessionStart in the Claude Code settings.json
-// (claudecode.ConfigDir: $CLAUDE_CONFIG_DIR, else <homeDir>/.claude),
-// preserving every other hook and setting. Idempotent: when that entry is
+// settingsZone is GMT+7 (Asia/Ho_Chi_Minh). A fixed offset is exact here
+// (Vietnam observes no DST) and needs no tzdata at runtime.
+var settingsZone = time.FixedZone("GMT+7", 7*60*60)
+
+// backupStamp renders now for a settings backup name, in GMT+7.
+func backupStamp(now time.Time) string {
+	return now.In(settingsZone).Format("20060102-150405")
+}
+
+// claudeSettingsPath is the Claude Code settings.json: $CLAUDE_CONFIG_DIR, else
+// <homeDir>/.claude (claudecode.ConfigDir).
+func claudeSettingsPath(homeDir string) string {
+	return filepath.Join(claudecode.ConfigDir(homeDir), "settings.json")
+}
+
+// hookEvents returns root["hooks"] as a map, creating it when absent. A
+// non-object value is an error naming path.
+func hookEvents(root map[string]any, path string) (map[string]any, error) {
+	hooks, ok := root["hooks"].(map[string]any)
+	if !ok {
+		if root["hooks"] != nil {
+			return nil, fmt.Errorf(`"hooks" in %s is not a JSON object`, path)
+		}
+		hooks = map[string]any{}
+		root["hooks"] = hooks
+	}
+	return hooks, nil
+}
+
+// hookEventList returns hooks[event] as a list (nil when absent). A non-array
+// value is an error naming path.
+func hookEventList(hooks map[string]any, event, path string) ([]any, error) {
+	list, ok := hooks[event].([]any)
+	if !ok && hooks[event] != nil {
+		return nil, fmt.Errorf(`"hooks.%s" in %s is not a JSON array`, event, path)
+	}
+	return list, nil
+}
+
+// writeSettings writes root to path. When the file exists and its bytes change,
+// the current bytes are first copied to path.leankg-bak-<stamp> so the change
+// can be rolled back. An unchanged file is not rewritten.
+func writeSettings(path string, root map[string]any) error {
+	data, err := encodeJSON(root)
+	if err != nil {
+		return err
+	}
+	// The backup and the write both go to the file a settings symlink points to.
+	path, err = resolveSymlink(path)
+	if err != nil {
+		return err
+	}
+	old, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+	case err != nil:
+		return err
+	case bytes.Equal(old, data):
+		return nil
+	default:
+		if err := backupSettings(path, old); err != nil {
+			return err
+		}
+	}
+	return atomicWrite(path, data)
+}
+
+// backupSettings copies old to a new backup beside path, with path's mode. A
+// name already taken in the same second gets a -N suffix, so an earlier backup
+// is never overwritten.
+func backupSettings(path string, old []byte) error {
+	mode := os.FileMode(0o644)
+	if fi, err := os.Stat(path); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	base := path + ".leankg-bak-" + backupStamp(time.Now())
+	dst := base
+	for n := 2; ; n++ {
+		if _, err := os.Stat(dst); err != nil {
+			break
+		}
+		dst = fmt.Sprintf("%s-%d", base, n)
+	}
+	return os.WriteFile(dst, old, mode)
+}
+
+// registerSessionHook is the one hook merge every register flag uses. For each
+// spec it merges-or-creates the hook under hooks[spec.event] in the Claude Code
+// settings.json (claudecode.ConfigDir: $CLAUDE_CONFIG_DIR, else <homeDir>/.claude),
+// preserving every other hook and setting. Idempotent: when every entry is
 // already the only managed hook present the file is left untouched. Generated
 // entries (the current or a legacy command form, duplicates included) are
 // replaced in place by one current entry; a customised command is user wiring
@@ -604,60 +755,121 @@ func (h sessionHook) withoutOwned(obj map[string]any, command string) (map[strin
 // return an error wrapping ErrUnsupportedClient. label names the caller in
 // that error. exe is the resolved binary path to embed (empty falls back to
 // "leankg"); the project itself is resolved at hook runtime.
-func registerSessionHook(homeDir, client, label string, h sessionHook, exe string) error {
+func registerSessionHook(homeDir, client, label string, specs []sessionHook, exe string) error {
 	if client != ClientClaudeCode {
 		return fmt.Errorf("%s for %s: %w", label, client, ErrUnsupportedClient)
 	}
-	path := filepath.Join(claudecode.ConfigDir(homeDir), "settings.json")
+	path := claudeSettingsPath(homeDir)
 	root, err := readJSONConfig(path)
 	if err != nil {
 		return err
 	}
-	hooks, ok := root["hooks"].(map[string]any)
-	if !ok {
-		if root["hooks"] != nil {
-			return fmt.Errorf(`"hooks" in %s is not a JSON object`, path)
-		}
-		hooks = map[string]any{}
-		root["hooks"] = hooks
+	hooks, err := hookEvents(root, path)
+	if err != nil {
+		return err
 	}
-	sessionStart, ok := hooks["SessionStart"].([]any)
-	if !ok {
-		if hooks["SessionStart"] != nil {
-			return fmt.Errorf(`"hooks.SessionStart" in %s is not a JSON array`, path)
+	changed := false
+	for _, h := range specs {
+		list, err := hookEventList(hooks, h.event, path)
+		if err != nil {
+			return err
 		}
-		sessionStart = nil
-	}
-	command := h.command(exe)
-	if h.onlyCurrent(sessionStart, command) {
-		return nil // identical hook already present, and no duplicate or legacy copy
-	}
-	next := make([]any, 0, len(sessionStart)+1)
-	placed := false
-	for _, item := range sessionStart {
-		obj, ok := item.(map[string]any)
-		if !ok {
-			next = append(next, item)
-			continue
+		command := h.command(exe)
+		if h.onlyCurrent(list, command) {
+			continue // identical hook already present, and no duplicate or legacy copy
 		}
-		kept, owned := h.withoutOwned(obj, command)
-		if !owned {
-			next = append(next, item)
-			continue
-		}
-		if kept != nil {
-			next = append(next, kept) // its foreign hooks survive in place
+		next := make([]any, 0, len(list)+1)
+		placed := false
+		for _, item := range list {
+			obj, ok := item.(map[string]any)
+			if !ok {
+				next = append(next, item)
+				continue
+			}
+			kept, owned := h.withoutOwned(obj, command)
+			if !owned {
+				next = append(next, item)
+				continue
+			}
+			if kept != nil {
+				next = append(next, kept) // its foreign hooks survive in place
+			}
+			if !placed {
+				next = append(next, h.entry(exe))
+				placed = true
+			}
 		}
 		if !placed {
 			next = append(next, h.entry(exe))
-			placed = true
+		}
+		hooks[h.event] = next
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return writeSettings(path, root)
+}
+
+// unregisterSessionHooks removes every hook the specs own from the Claude Code
+// settings.json, leaving foreign hooks and settings in place. An event left
+// empty is dropped, and so is an emptied hooks object. A file with nothing to
+// remove is not rewritten. Client and error rules match registerSessionHook.
+func unregisterSessionHooks(homeDir, client, label string, specs []sessionHook, exe string) error {
+	if client != ClientClaudeCode {
+		return fmt.Errorf("%s for %s: %w", label, client, ErrUnsupportedClient)
+	}
+	path := claudeSettingsPath(homeDir)
+	root, err := readJSONConfig(path)
+	if err != nil {
+		return err
+	}
+	hooks, err := hookEvents(root, path)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for _, h := range specs {
+		list, err := hookEventList(hooks, h.event, path)
+		if err != nil {
+			return err
+		}
+		command := h.command(exe)
+		var next []any
+		owned := false
+		for _, item := range list {
+			obj, ok := item.(map[string]any)
+			if !ok {
+				next = append(next, item)
+				continue
+			}
+			kept, found := h.withoutOwned(obj, command)
+			if !found {
+				next = append(next, item)
+				continue
+			}
+			owned = true
+			if kept != nil {
+				next = append(next, kept)
+			}
+		}
+		if !owned {
+			continue
+		}
+		changed = true
+		if len(next) == 0 {
+			delete(hooks, h.event)
+		} else {
+			hooks[h.event] = next
 		}
 	}
-	if !placed {
-		next = append(next, h.entry(exe))
+	if !changed {
+		return nil
 	}
-	hooks["SessionStart"] = next
-	return writeJSONFile(path, root)
+	if len(hooks) == 0 {
+		delete(root, "hooks")
+	}
+	return writeSettings(path, root)
 }
 
 // RegisterCWD merges-or-creates the Claude Code SessionStart hook that
@@ -667,14 +879,19 @@ func registerSessionHook(homeDir, client, label string, h sessionHook, exe strin
 //
 // See registerSessionHook for the merge rules. Only claude-code supports it.
 func RegisterCWD(homeDir, client, exe string) error {
-	return registerSessionHook(homeDir, client, "register-cwd", indexHook, exe)
+	return registerSessionHook(homeDir, client, "register-cwd", []sessionHook{indexHook}, exe)
 }
 
-// RegisterMemory merges-or-creates the Claude Code SessionStart memory hook:
-//
-//	{"hooks": [{"type": "command", "command": exe + " memory hook", "timeout": 10}]}
-//
-// See registerSessionHook for the merge rules. Only claude-code supports it.
+// RegisterMemory merges-or-creates the three memory hooks (see memoryHooks):
+// SessionStart and SessionEnd with timeout 10, and PostToolUse on Write|Edit
+// (async). Each runs exe + " memory hook". See registerSessionHook for the
+// merge rules. Only claude-code supports it.
 func RegisterMemory(homeDir, client, exe string) error {
-	return registerSessionHook(homeDir, client, "register-memory", memoryHook, exe)
+	return registerSessionHook(homeDir, client, "register-memory", memoryHooks, exe)
+}
+
+// UnregisterMemory removes the memory hooks RegisterMemory writes, and only
+// those. See unregisterSessionHooks. Only claude-code supports it.
+func UnregisterMemory(homeDir, client, exe string) error {
+	return unregisterSessionHooks(homeDir, client, "unregister-memory", memoryHooks, exe)
 }

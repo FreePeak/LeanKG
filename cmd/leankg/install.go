@@ -27,14 +27,28 @@ func checkHookOnlyScope(opts InstallOptions) error {
 	return nil
 }
 
+// errUnregisterScope refuses --unregister-memory with a flag it cannot combine:
+// it only removes the memory hooks and writes nothing else.
+var errUnregisterScope = errors.New("--unregister-memory cannot be combined with --register-memory, --register-cwd, --hook-only, --http, --url or --project")
+
+// checkUnregisterScope returns the usage refusal (exit 2) when opts sets
+// UnregisterMemory with another install flag, and nil otherwise.
+func checkUnregisterScope(opts InstallOptions) error {
+	if opts.UnregisterMemory && (opts.RegisterMemory || opts.RegisterCWD || opts.HookOnly || opts.HTTP || opts.URL != "" || opts.Project != "") {
+		return cliexit.Usage(errUnregisterScope)
+	}
+	return nil
+}
+
 // InstallOptions tunes Install.
 type InstallOptions struct {
-	HTTP           bool   // advertise a remote HTTP transport instead of stdio
-	URL            string // remote MCP endpoint URL (required when HTTP)
-	Project        string // optional --project escape hatch (stdio only)
-	RegisterCWD    bool   // also register the SessionStart index hook (claude-code only)
-	RegisterMemory bool   // also register the SessionStart memory hook (claude-code only)
-	HookOnly       bool   // with RegisterMemory: register only that hook and write no MCP entry
+	HTTP             bool   // advertise a remote HTTP transport instead of stdio
+	URL              string // remote MCP endpoint URL (required when HTTP)
+	Project          string // optional --project escape hatch (stdio only)
+	RegisterCWD      bool   // also register the SessionStart index hook (claude-code only)
+	RegisterMemory   bool   // also register the memory hooks (claude-code only)
+	HookOnly         bool   // with RegisterMemory: register only those hooks and write no MCP entry
+	UnregisterMemory bool   // remove the memory hooks only (claude-code only)
 }
 
 // CurrentCommand returns the stdio command path: the current executable when
@@ -53,6 +67,12 @@ func CurrentCommand() string {
 func Install(homeDir, target string, opts InstallOptions) error {
 	if err := checkHookOnlyScope(opts); err != nil {
 		return err
+	}
+	if err := checkUnregisterScope(opts); err != nil {
+		return err
+	}
+	if opts.UnregisterMemory {
+		return UnregisterMemory(homeDir, target, CurrentCommand())
 	}
 	if opts.HookOnly {
 		return RegisterMemory(homeDir, target, CurrentCommand())

@@ -3,6 +3,7 @@ package ccmemory
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -17,7 +18,9 @@ import (
 
 	"github.com/FreePeak/LeanKG/internal/flock"
 	"github.com/FreePeak/LeanKG/internal/memory"
+	"github.com/FreePeak/LeanKG/internal/sessionlink/claudecode"
 	"github.com/FreePeak/LeanKG/internal/telemetry"
+	_ "modernc.org/sqlite"
 )
 
 // sameKeys reports whether got and want hold the same keys in the same order.
@@ -972,5 +975,245 @@ func TestInstallDenyListReadErrorNamesOnlyTheFile(t *testing.T) {
 	}
 	if !strings.Contains(msg, scrubFile) || !strings.Contains(msg, "is a directory") {
 		t.Fatalf("error %q, want the basename %q and the OS reason", msg, scrubFile)
+	}
+}
+
+// vectorCount counts the vector rows stored for one entry id in the memory index.
+func vectorCount(t *testing.T, mem *memory.Memory, entryID string) int {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(mem.Root(), "index.db"))
+	if err != nil {
+		t.Fatalf("open index.db: %v", err)
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM memory_vectors WHERE entry_id = ?`, entryID).Scan(&n); err != nil {
+		t.Fatalf("count vectors for %s: %v", entryID, err)
+	}
+	return n
+}
+
+// seedVector gives one stored row a vector in the bank the index holds it under,
+// as the dense arm would.
+func seedVector(t *testing.T, mem *memory.Memory, entryID string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(mem.Root(), "index.db"))
+	if err != nil {
+		t.Fatalf("open index.db: %v", err)
+	}
+	defer db.Close()
+	var bank string
+	if err := db.QueryRow(`SELECT bank FROM memory_fts WHERE kind = 'bank' AND entry_id = ?`, entryID).Scan(&bank); err != nil {
+		t.Fatalf("find the bank of row %s: %v", entryID, err)
+	}
+	if _, err := db.Exec(`INSERT OR REPLACE INTO memory_vectors (model, bank, entry_id, vec) VALUES ('test-model', ?, ?, ?)`,
+		bank, entryID, []byte{0, 0, 0, 0}); err != nil {
+		t.Fatalf("seed vector for %s: %v", entryID, err)
+	}
+}
+
+// TestSyncPurgesExcludedRows syncs a project's memories, then excludes the
+// project. The next sync must hard-delete its rows and their vectors, and keep
+// every other row and its vector.
+func TestSyncPurgesExcludedRows(t *testing.T) {
+	projects, mem := applySetup(t)
+	excluded := claudecode.Slug(syntheticExcluded)
+	writeFile(t, memFile(projects, excluded, "user-note.md"), "---\ntype: user\n---\nsynthetic user body\n")
+	writeFile(t, memFile(projects, excluded, "project-note.md"), "---\ntype: project\n---\nsynthetic project body\n")
+	runSync(t, mem, syncOpts(projects, mem))
+
+	excludedID := []string{DocID(excluded, "user-note.md"), DocID(excluded, "project-note.md")}
+	keptID := DocID("-work-alpha", "prefer-tabs.md")
+	for _, id := range append(slices.Clone(excludedID), keptID) {
+		seedVector(t, mem, id)
+	}
+	if _, ok := bankRows(t, mem, GlobalBank)[excludedID[0]]; !ok {
+		t.Fatal("setup: the excluded user note was not synced before the exclusion")
+	}
+
+	setExcludeFile(t, syntheticExcluded+"\n")
+	res := runSync(t, mem, syncOpts(projects, mem))
+
+	if res.Deleted != 2 || res.DeletesWithheld {
+		t.Errorf("sync after exclusion: deleted %d withheld %v, want 2 and false", res.Deleted, res.DeletesWithheld)
+	}
+	if _, ok := bankRows(t, mem, GlobalBank)[excludedID[0]]; ok {
+		t.Error("excluded user note still has a row in cc-global")
+	}
+	if _, ok := bankRows(t, mem, ProjectBank(excluded))[excludedID[1]]; ok {
+		t.Error("excluded project note still has a row in its project bank")
+	}
+	for _, id := range excludedID {
+		if n := vectorCount(t, mem, id); n != 0 {
+			t.Errorf("vectors for excluded row %s = %d, want 0", id, n)
+		}
+	}
+	if n := vectorCount(t, mem, keptID); n != 1 {
+		t.Errorf("vectors for a kept row = %d, want 1", n)
+	}
+	if n := ccRowCount(t, mem); n != 6 {
+		t.Errorf("cc- rows after purge = %d, want the 6 fixture rows", n)
+	}
+}
+
+// archivedRows returns the rows of the archive bank keyed by document id. The
+// archive bank name is spelled out here so the test pins the on-disk name.
+func archivedRows(t *testing.T, mem *memory.Memory) map[string]memory.Entry {
+	t.Helper()
+	return bankRows(t, mem, "ccarchive")
+}
+
+// TestDeletedFileArchivesRow removes a memory file after a sync. Its row must
+// leave the cc- bank and keep a copy in ccarchive stamped with deleted_at.
+func TestDeletedFileArchivesRow(t *testing.T) {
+	projects, mem := applySetup(t)
+	runSync(t, mem, syncOpts(projects, mem))
+	id := DocID("-work-beta", "deploy-window.md")
+	live, ok := bankRows(t, mem, ProjectBank("-work-beta"))[id]
+	if !ok {
+		t.Fatal("setup: deploy-window.md has no row")
+	}
+
+	if err := os.Remove(memFile(projects, "-work-beta", "deploy-window.md")); err != nil {
+		t.Fatal(err)
+	}
+	res := runSync(t, mem, syncOpts(projects, mem))
+
+	if res.Deleted != 1 || res.DeletesWithheld {
+		t.Fatalf("counts = %+v, want deleted 1 and not withheld", res)
+	}
+	if _, ok := bankRows(t, mem, ProjectBank("-work-beta"))[id]; ok {
+		t.Error("removed file still has a live row")
+	}
+	archived, ok := archivedRows(t, mem)[id]
+	if !ok {
+		t.Fatalf("ccarchive has no copy of %s", id)
+	}
+	if archived.Content != live.Content {
+		t.Errorf("archived content = %q, want %q", archived.Content, live.Content)
+	}
+	deletedAt, _ := archived.Metadata["deleted_at"].(string)
+	if _, err := time.Parse(time.RFC3339, deletedAt); err != nil {
+		t.Errorf("archived deleted_at = %q, want RFC3339: %v", deletedAt, err)
+	}
+}
+
+// TestExcludedRowsAreNeverArchived excludes a project after its rows were
+// synced, and removes one other memory file in the same run. The removed file
+// must be archived, which shows archiving ran in this sync. The excluded
+// project's rows must be hard-deleted and must never reach ccarchive.
+func TestExcludedRowsAreNeverArchived(t *testing.T) {
+	projects, mem := applySetup(t)
+	excluded := claudecode.Slug(syntheticExcluded)
+	writeFile(t, memFile(projects, excluded, "user-note.md"), "---\ntype: user\n---\nsynthetic user body\n")
+	writeFile(t, memFile(projects, excluded, "project-note.md"), "---\ntype: project\n---\nsynthetic project body\n")
+	runSync(t, mem, syncOpts(projects, mem))
+
+	setExcludeFile(t, syntheticExcluded+"\n")
+	if err := os.Remove(memFile(projects, "-work-beta", "deploy-window.md")); err != nil {
+		t.Fatal(err)
+	}
+	res := runSync(t, mem, syncOpts(projects, mem))
+
+	if res.Deleted != 3 {
+		t.Fatalf("deleted = %d, want 2 purged excluded rows and 1 removed file", res.Deleted)
+	}
+	archived := archivedRows(t, mem)
+	if _, ok := archived[DocID("-work-beta", "deploy-window.md")]; !ok {
+		t.Fatal("setup: the removed file was not archived, so archiving did not run in this sync")
+	}
+	for id, row := range archived {
+		project, _ := row.Metadata["project"].(string)
+		if project == excluded || project == memory.Redact(excluded) {
+			t.Errorf("ccarchive holds a row of the excluded project: %s", id)
+		}
+		if strings.Contains(row.Content, "synthetic") {
+			t.Errorf("ccarchive holds excluded content: %q", row.Content)
+		}
+	}
+	for _, id := range []string{DocID(excluded, "user-note.md"), DocID(excluded, "project-note.md")} {
+		if _, ok := archived[id]; ok {
+			t.Errorf("ccarchive holds excluded row %s", id)
+		}
+	}
+}
+
+// TestMissingMemoryDirKeepsRows removes a project's whole directory after a
+// sync. An absent directory is not a deletion: the project's rows stay, nothing
+// is archived, and the run reports deletes withheld.
+func TestMissingMemoryDirKeepsRows(t *testing.T) {
+	projects, mem := applySetup(t)
+	runSync(t, mem, syncOpts(projects, mem))
+	before := ccRowCount(t, mem)
+	if err := os.RemoveAll(filepath.Join(projects, "-work-beta")); err != nil {
+		t.Fatal(err)
+	}
+
+	res := runSync(t, mem, syncOpts(projects, mem))
+
+	if res.Deleted != 0 || !res.DeletesWithheld {
+		t.Fatalf("sync with a missing memory dir: deleted %d withheld %v, want 0 and true", res.Deleted, res.DeletesWithheld)
+	}
+	if after := ccRowCount(t, mem); after != before {
+		t.Errorf("cc- rows = %d, want %d kept", after, before)
+	}
+	if n := len(archivedRows(t, mem)); n != 0 {
+		t.Errorf("ccarchive rows = %d, want 0: an absent directory archives nothing", n)
+	}
+}
+
+// TestSyncPurgesExcludedArchiveRows archives a memory file of a project, then
+// excludes the project. The next sync must hard-delete the archive copy too.
+func TestSyncPurgesExcludedArchiveRows(t *testing.T) {
+	projects, mem := applySetup(t)
+	excluded := claudecode.Slug(syntheticExcluded)
+	id := DocID(excluded, "user-note.md")
+	writeFile(t, memFile(projects, excluded, "user-note.md"), "---\ntype: user\n---\nsynthetic user body\n")
+	runSync(t, mem, syncOpts(projects, mem))
+	if err := os.Remove(memFile(projects, excluded, "user-note.md")); err != nil {
+		t.Fatal(err)
+	}
+	runSync(t, mem, syncOpts(projects, mem))
+	if _, ok := archivedRows(t, mem)[id]; !ok {
+		t.Fatal("setup: the removed excluded note was not archived")
+	}
+
+	setExcludeFile(t, syntheticExcluded+"\n")
+	runSync(t, mem, syncOpts(projects, mem))
+
+	if _, ok := archivedRows(t, mem)[id]; ok {
+		t.Error("ccarchive still holds a row of the excluded project after the exclusion")
+	}
+}
+
+// TestSyncPurgesExcludedRowsWhenScrubMasksSlug stores a project's rows under a
+// scrub pattern that masks part of its slug, then excludes the project. The
+// stored slug is masked, so the purge must match the redacted form too.
+func TestSyncPurgesExcludedRowsWhenScrubMasksSlug(t *testing.T) {
+	projects, mem := applySetup(t)
+	writeFile(t, DenyListPath(mem.Root()), "synthetic-excluded\n")
+	if err := InstallDenyList(mem.Root()); err != nil {
+		t.Fatal(err)
+	}
+	excluded := claudecode.Slug(syntheticExcluded)
+	id := DocID(excluded, "user-note.md")
+	writeFile(t, memFile(projects, excluded, "user-note.md"), "---\ntype: user\n---\nsynthetic user body\n")
+	runSync(t, mem, syncOpts(projects, mem))
+	stored, ok := bankRows(t, mem, GlobalBank)[id]
+	if !ok {
+		t.Fatal("setup: the excluded note was not synced")
+	}
+	if stored.Metadata["project"] == excluded {
+		t.Fatal("setup: the stored slug is not masked, so the scrub pattern did not apply")
+	}
+
+	setExcludeFile(t, syntheticExcluded+"\n")
+	res := runSync(t, mem, syncOpts(projects, mem))
+
+	if _, ok := bankRows(t, mem, GlobalBank)[id]; ok {
+		t.Error("excluded row survived the purge when its stored slug is masked by the scrub list")
+	}
+	if res.DeletesWithheld {
+		t.Error("purge reported deletes withheld")
 	}
 }

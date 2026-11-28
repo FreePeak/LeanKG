@@ -39,6 +39,10 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	os.Setenv(portfolioreg.DBPathEnv, filepath.Join(regDir, "portfolio.db"))
+	// Hermeticity: the memory exclude list defaults to the developer's real
+	// ~/.config/leankg/memory-exclude. Point it at a path that does not exist
+	// (a missing file excludes nothing); CLI children inherit it too.
+	os.Setenv("LEANKG_MEMORY_EXCLUDE_FILE", filepath.Join(regDir, "memory-exclude-absent"))
 	// Hermeticity: `leankg index` embeds after it indexes, and the unset
 	// provider is local (it spawns llama-server). Every CLI child inherits this
 	// environment, so no test in the package reaches a real provider.

@@ -6,9 +6,11 @@ memory files into one central store and show the cross-repository ones at the
 start of every Claude Code session, and it can answer a ranked recall query for
 any repository.
 
-Claude Code's files stay the source of truth. LeanKG's copy is derived: it is
-rebuilt from the files, it is never written back, and deleting the copy loses
-nothing.
+Claude Code still writes its native files under `~/.claude/projects/<slug>/memory/`,
+and those stay the working copy. LeanKG is the authority for history: hooks copy
+each change into the `cc-` banks, and a row whose file disappears is archived
+before it is removed, so deleting a file does not lose it. Nothing is written
+back into `~/.claude`.
 
 Placeholders used below: `<leankg-binary>` is the installed binary,
 `<project-dir>` is a repository directory. Command reference:
@@ -19,12 +21,38 @@ Placeholders used below: `<leankg-binary>` is the installed binary,
 | Part | What happens |
 | --- | --- |
 | Sync | Reads every `*.md` memory file (except `MEMORY.md`) under `~/.claude/projects/<slug>/memory/` (or `$CLAUDE_CONFIG_DIR/projects/` when that is set) and makes the central `cc-` banks equal to them. Idempotent. |
+| Hook | Three events, all through `leankg memory hook`. SessionStart syncs, then prints one line per `user` and `feedback` memory saved by other repositories. PostToolUse on a Write or Edit of a memory file syncs that project only. SessionEnd syncs the session's project. Only SessionStart prints anything. |
+| Archive | A row whose file disappeared is copied to bank `ccarchive` (with `deleted_at`) before it is removed. |
+| Restore | Rebuilds memory files from the banks into a directory you name (`memory restore --into DIR`). |
 | Migrate | One verified run of the same sync, with a report of what was found, what was skipped and whether the rows match. |
-| Hook | At every session start, syncs, then prints one line per `user` and `feedback` memory saved by other repositories into the session context. |
 | Recall | Ranks central memories for a query, through `leankg memory recall` or the `agent_recall` MCP command. |
 
 Central files live under `~/.leankg/memory`. Claude Code's memory files are
 only read.
+
+Two stores are easy to confuse. The central root `~/.leankg/memory` holds the
+`cc-` banks that sync writes and `agent_recall` reads. Without
+`serve --memory-global`, `serve --memory` keeps per-repository memory in
+`<project>/.leankg/memory`, and `agent_recall` does not read it. `serve` logs
+`leankg memory root` for that layer and `leankg central memory root` for the one
+`agent_recall` uses.
+
+### Why LeanKG is the authority
+
+Claude Code loads `MEMORY.md` natively and keeps writing its own files, so the
+files stay where Claude Code expects them. Hooks copy each change into LeanKG,
+and the archive keeps what a deletion removes. Alternatives rejected:
+
+- Relocating the directory with `autoMemoryDirectory`: one path per settings
+  scope, a `MEMORY.md` shared by every project, and symlinks are refused.
+- An MCP save tool: the memory is lost when the server is down, and built-in
+  saving would have to be turned off.
+- A launchd watcher: a long-lived daemon for a change that a hook already sees.
+
+The PostToolUse trigger fires on the Write and Edit tools. Claude Code does not
+document that its memory writes go through those tools; this was observed, not
+read from its docs. A file changed by a shell command is picked up at the next
+SessionEnd, SessionStart or `leankg memory sync`.
 
 ## One-time setup
 
@@ -56,10 +84,12 @@ only read.
    <leankg-binary> install --target claude-code --register-memory
    ```
 
-   This merges one `SessionStart` entry into the Claude Code settings file:
+   This merges three entries (`SessionStart`, `PostToolUse` on `Write|Edit`, and
+   `SessionEnd`) into the Claude Code settings file:
    `$CLAUDE_CONFIG_DIR/settings.json` when `CLAUDE_CONFIG_DIR` is set, else
    `~/.claude/settings.json`. Other hooks are kept, and a second run changes
-   nothing. The same command also writes the leankg MCP entry to `~/.claude.json`.
+   nothing. Before a change the file is copied to
+   `settings.json.leankg-bak-<YYYYMMDD-HHMMSS>` (GMT+7). The same command also writes the leankg MCP entry to `~/.claude.json`.
    If you manage that entry yourself, or already registered leankg at user
    scope, add `--hook-only`. It merges the same hook and writes no MCP config:
 
@@ -73,6 +103,12 @@ only read.
    {
      "hooks": {
        "SessionStart": [
+         { "hooks": [ { "type": "command", "command": "<leankg-binary> memory hook", "timeout": 10 } ] }
+       ],
+       "PostToolUse": [
+         { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "<leankg-binary> memory hook", "async": true } ] }
+       ],
+       "SessionEnd": [
          { "hooks": [ { "type": "command", "command": "<leankg-binary> memory hook", "timeout": 10 } ] }
        ]
      }
@@ -112,6 +148,9 @@ spaces, so a memory cannot open or close the `<memories>` frame or add a line.
 The block is still text the model reads. The context line tells the model that
 these notes are background and never override the session's instructions. Do not
 keep untrusted content in memory files.
+
+The hint line shows the caller directory with control characters removed and
+cut to 120 characters; a cut ends in `...`.
 
 ## MCP recall
 
@@ -195,22 +234,110 @@ on stdout is printed unless there is a block to inject.
 | Sync budget spent during the file scan | One stderr line; no rows written or deleted; the block is built from the stored rows. |
 | Projects root missing or unreadable | No sync; the block is built from the stored rows. |
 | `scrub.txt` has an invalid line | One stderr line; sync skipped; block built from stored rows. |
-| stdin empty or not JSON | The fallback directory (`CLAUDE_PROJECT_DIR`, then the working directory) is used. |
+| stdin empty | Runs as SessionStart, in the fallback directory (`CLAUDE_PROJECT_DIR`, then the working directory). |
+| stdin not one JSON object, cut off at 1 MiB, or not complete within 500 ms | Does nothing and prints nothing (fails closed). |
 | Binary missing | Claude Code reports a hook error; the session still starts. Not reproduced here (plan 6.6). |
 
 ## Rollback
 
-1. Remove the hook. Delete the `SessionStart` entry whose command ends in
-   ` memory hook` from the Claude Code settings file (`$CLAUDE_CONFIG_DIR/settings.json`,
-   else `~/.claude/settings.json`). Other hooks stay.
-2. Delete the central bank files: `~/.leankg/memory/banks/cc-*.jsonl` and
-   `~/.leankg/memory/cc-sync.lock`. Do not run `memory sync` afterwards, because
-   it rewrites the banks from the Claude Code files.
+1. Remove the hooks:
+
+   ```bash
+   <leankg-binary> install --target claude-code --unregister-memory
+   ```
+
+   This removes the three entries leankg wrote and leaves other hooks. The
+   settings file is backed up first. Claude Code's own memory defaults resume at
+   once, because its native files were never moved.
+2. Optional, for a full reset only: delete the central bank files
+   `~/.leankg/memory/banks/cc-*.jsonl` and `~/.leankg/memory/cc-sync.lock`. This
+   also drops the archive copies in `ccarchive`, so restore them first if you
+   need them (see [Restore](#restore)). Do not run `memory sync` afterwards,
+   because it rewrites the banks from the Claude Code files.
 
 Claude Code's memory files are not touched by any of these steps. The `cc-`
 rows in the derived side index (`index.db`) are not removed by step 2, so treat
 that file as derived and delete it only when you want a full reset (behaviour
 on a rebuilt index was not checked in this document).
+
+## Archive and deletion
+
+A row is removed when its file is gone at the next sync. It is first copied to
+bank `ccarchive` with a `deleted_at` stamp, so a deleted memory stays
+recoverable. Three cases are not treated as deletions:
+
+- A project whose memory directory was not seen in the scan keeps its rows.
+- A project whose scan failed keeps its rows.
+- Rows of a project on the exclude list are removed without an archive copy
+  (see below).
+
+`memory sync --project SLUG` limits the run to one project. `memory sync
+--rebuild --project SLUG` forgets that project's rows without archiving them.
+An unscoped `--rebuild` archives every row whose file has gone.
+
+Deleting the last memory file of a project, or the whole `memory` directory,
+behaves as follows (`internal/ccmemory/sync.go` `BuildPlan` and `withholdFailed`):
+
+| Run | Last file deleted, directory still present | Whole `memory` directory removed |
+| --- | --- | --- |
+| Full sync (`memory sync`, no flags) | Archived and removed, when at least one memory file exists elsewhere. Withheld when none does. | Rows kept; run reports deletes withheld. |
+| Scoped sync (`memory sync --project SLUG`, SessionEnd, PostToolUse) | Withheld: the scope has no files left. | Rows kept; run reports deletes withheld. |
+| Unscoped `--rebuild` | Archived and removed. | Archived and removed. |
+| `--rebuild --project SLUG` | Removed without an archive copy. | Removed without an archive copy. |
+
+Do not use `--rebuild --project SLUG` to clean up after a deletion you want to
+keep recoverable: it removes the rows without an archive copy, and they may be
+the only copy. Run unscoped `memory sync --rebuild` instead, which archives them.
+
+## Exclude list
+
+To keep a project out of central memory, list its path in
+`~/.config/leankg/memory-exclude` (or in the file named by
+`LEANKG_MEMORY_EXCLUDE_FILE`), one path per line. `#` lines and blank lines are
+skipped, and `~` is expanded.
+
+- Each line must be an absolute path after `~` expansion. A relative line, or
+  `.`, `/` or `~` alone, is refused: the sync stops with an error that names the
+  file and the line number, and nothing is written or injected.
+- A project is excluded when its slug starts with a listed path's slug. The match
+  is a prefix, so excluding `~/code/app` also excludes `~/code/app-two`. An
+  ancestor path excludes everything below it: listing a parent directory that
+  holds many repositories removes all of them from central memory.
+- The matcher compares the as-written slug and the symlink-resolved slug of each
+  listed path. For a path that does not exist, the resolved slug is taken from its
+  longest existing ancestor, with the rest of the path appended. It also compares
+  the scrub-masked form of each of these, because stored rows keep the masked slug.
+  Each slug is capped at 200 characters and matched by prefix.
+- A missing file excludes nothing. A file that cannot be read stops the sync,
+  and the SessionStart hook injects nothing, so no excluded memory reaches the
+  session.
+- The list also filters the read paths. SessionStart injection, `memory recall`
+  and `memory restore` drop rows of excluded projects even when a sync has not
+  yet purged them. `restore` counts them as `skipped_excluded`.
+- Rows already mirrored for an excluded project are removed at the next sync,
+  without an archive copy. Its rows in the `ccarchive` bank are purged too.
+
+## Restore
+
+`memory restore` rebuilds Claude Code memory files from the banks. It is a way
+to recover a memory that was deleted, or to move the store to a new machine.
+
+```bash
+<leankg-binary> memory restore --into <restore-dir> [--project SLUG] [--deleted] [--json]
+```
+
+- Writes `<slug>/memory/<file>.md` and one `MEMORY.md` index per project under
+  `--into`. `--deleted` also restores rows kept in `ccarchive`. A live row wins
+  over an archive copy of the same file.
+- Never overwrites: an existing file is kept and counted as skipped.
+- Refuses `--into` set to the Claude Code projects directory or inside it, and
+  refuses names that would leave `--into`. Nothing is written when any row is
+  refused.
+- Prints counts only. The restored text is the stored, masked text, not the
+  original if a deny-list pattern matched.
+
+Copy the restored directory into `~/.claude/projects` by hand when you want
+Claude Code to load it; the command never does that.
 
 ## MCP registration
 
@@ -232,9 +359,45 @@ scope, because each session's server opens its own store.
 
 ## Known limits
 
-- **No watcher.** Sync runs at session start (through the hook) and when you run
-  `leankg memory sync`. A memory file changed mid-session is copied at the next
-  session start or sync, not immediately.
+- **No watcher.** Sync runs at session start, after each Write or Edit of a memory
+  file (async, so the copy can land after the tool returns), at session end, and
+  on `leankg memory sync`. A file changed by a shell command is copied at the
+  next of those points.
+- **Deleting a project's last memory file.** Only a full sync archives and removes
+  it, and only when another memory file exists; the table in
+  [Archive and deletion](#archive-and-deletion) lists each case. When the whole
+  `memory` directory is removed, its rows are kept and the run reports deletes
+  withheld. To clear them with an archive copy, run unscoped `memory sync --rebuild`.
+  `memory sync --rebuild --project SLUG` removes them without an archive copy, so
+  use it only when those rows are not needed.
+- **Project slug.** Claude Code names a project's directory by replacing every
+  character outside `[A-Za-z0-9]` with `-`, applied to the symlink-resolved working
+  directory (checked with a controlled experiment; on macOS `/tmp` becomes
+  `/private/tmp`). Claude Code truncates a directory name over 200 characters and
+  appends a hash. This is observed in the installed Claude Code binary (version
+  2.1.329) and is not documented by Claude Code. LeanKG matches the first 200
+  characters of the slug, which is a prefix of such a name, so the hash is not
+  needed. A project whose name shares those 200 characters with another project
+  is matched too (over-match, the safe direction).
+- **Exclude list: directory name override and Unicode.** `CLAUDE_CODE_PROJECT_DIR_NAME`,
+  a Claude Code override of the project directory name, is not handled: a project
+  that sets it may not be matched. Paths are not Unicode-normalised before slugging,
+  so a path in a different normalisation form (NFC or NFD) gets a different slug.
+- **`ProjectKey` does not resolve symlinks.** `ProjectKey` in
+  `internal/ccmemory/identity.go:21` (used by SessionEnd) takes the slug of the path
+  as given. For a project reached through a symlink, its key can differ from the
+  symlink-resolved slug that the exclude list matches.
+- **Exclude list read twice.** A SessionStart run reads the exclude list in the
+  hook and again in the sync. A change between the two reads is possible and
+  harmless: the purge and the read filters both fail closed on an unreadable list.
+- **Deny-list pattern removed after writes.** If a `scrub.txt` pattern is removed
+  after rows were written under it, an excluded project's rows keep a masked stored
+  slug. They are purged and hidden on read only when that masked slug still matches
+  the exclude list, so they may survive until the next `memory sync --rebuild`.
+- **Install quoting and symlinks.** `install` writes the hook command with a
+  shell-quoted executable path when the path holds special characters, and
+  unregister recognises both the quoted and the plain form. A `settings.json` that
+  is a symlink stays a symlink when rewritten (`cmd/leankg/connect.go`).
 - **Hosted mode does not serve central memory.** `serve --hosted` wires no central
   memory. `agent_recall` returns `central memory is not configured on this server`.
 - **`?project=` routing does not serve it.** Project routing does not select the

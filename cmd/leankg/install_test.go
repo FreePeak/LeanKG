@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -374,5 +375,25 @@ func TestInstallHookOnlyRejectsMCPScope(t *testing.T) {
 				t.Fatalf("Install(%+v) wrote %d entries under HOME, want none", opts, len(entries))
 			}
 		})
+	}
+}
+
+// TestUnregisterMemoryRejectsCombinedFlags: --unregister-memory with a flag it
+// cannot combine (--register-memory here) is a usage error, and nothing is
+// written under HOME, through both Install and the cmdInstall flag parsing.
+func TestUnregisterMemoryRejectsCombinedFlags(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	err := Install(home, ClientClaudeCode, InstallOptions{UnregisterMemory: true, RegisterMemory: true})
+	if !errors.Is(err, errUnregisterScope) {
+		t.Fatalf("Install = %v, want %q", err, errUnregisterScope)
+	}
+	err = cmdInstall(context.Background(), []string{"--target", ClientClaudeCode, "--unregister-memory", "--register-memory"})
+	if !errors.Is(err, errUnregisterScope) {
+		t.Fatalf("cmdInstall = %v, want %q", err, errUnregisterScope)
+	}
+	if entries, _ := os.ReadDir(home); len(entries) != 0 {
+		t.Fatalf("combined flags wrote %d entries under HOME, want none", len(entries))
 	}
 }

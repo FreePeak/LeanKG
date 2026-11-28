@@ -60,7 +60,8 @@ type Discovery struct {
 	Docs        []Doc
 	Skipped     []Skipped
 	RootMissing bool
-	FailedSlugs []string // projects whose memory directory could not be scanned, sorted by slug
+	FailedSlugs []string        // projects whose memory directory could not be scanned, sorted by slug
+	Seen        map[string]bool // slugs whose memory directory was present, failed scan or not
 }
 
 // ParseDoc builds a Doc from one memory file's content. Frontmatter is read
@@ -104,11 +105,24 @@ func memoryDirOf(projectsRoot, slug string) string {
 // is recorded in Skipped and FailedSlugs. A project with no memory directory
 // is neither. A missing root sets RootMissing and is not an error.
 //
+// Projects on the exclude list are skipped before their directory is read. An
+// exclude list that cannot be read is an error.
+//
 // ctx is checked before the scan and before each project directory and each
 // file. A cancelled ctx ends the scan with ctx.Err() and no partial Discovery:
 // a scan that stopped early says nothing about the files it did not reach, so
 // the caller must not treat it as complete.
 func Discover(ctx context.Context, root string) (Discovery, error) {
+	ex, err := loadExcludeList()
+	if err != nil {
+		return Discovery{}, err
+	}
+	return discover(ctx, root, ex)
+}
+
+// discover is Discover with the exclude list already read, so one sync pass
+// reads the file once and purges with the list it scanned with.
+func discover(ctx context.Context, root string, ex excludeList) (Discovery, error) {
 	if err := ctx.Err(); err != nil {
 		return Discovery{}, err
 	}
@@ -129,6 +143,9 @@ func Discover(ctx context.Context, root string) (Discovery, error) {
 		if err := ctx.Err(); err != nil {
 			return Discovery{}, err
 		}
+		if ex.excludes(s.Name()) {
+			continue
+		}
 		memDir := memoryDirOf(root, s.Name())
 		fi, err := os.Stat(memDir)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -138,6 +155,7 @@ func Discover(ctx context.Context, root string) (Discovery, error) {
 		if err != nil || !fi.IsDir() {
 			continue // no memory directory for this project
 		}
+		d.see(s.Name())
 		files, err := os.ReadDir(memDir)
 		if err != nil {
 			d.fail(s.Name(), memDir, err)
@@ -169,6 +187,14 @@ func Discover(ctx context.Context, root string) (Discovery, error) {
 func (d *Discovery) fail(slug, memDir string, err error) {
 	d.Skipped = append(d.Skipped, Skipped{Path: memDir, Reason: "unreadable directory: " + err.Error()})
 	d.FailedSlugs = append(d.FailedSlugs, slug)
+}
+
+// see records that the memory directory of slug is present.
+func (d *Discovery) see(slug string) {
+	if d.Seen == nil {
+		d.Seen = map[string]bool{}
+	}
+	d.Seen[slug] = true
 }
 
 // readDoc reads one memory file. A non-empty reason means the file is skipped.

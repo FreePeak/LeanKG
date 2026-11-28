@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -22,9 +21,10 @@ const (
 // memoryHookRun is the hook's run. It is a variable so a test can make it panic.
 var memoryHookRun = ccmemory.RunHook
 
-// cmdMemoryHook is the SessionStart hook (plan 6.6). It always returns nil, so
-// the process exits 0 on every path; failures are one line on stderr. A panic
-// is recovered here as well, after the deferred telemetry flush has run.
+// cmdMemoryHook is the memory hook (plan 6.6) for SessionStart, PostToolUse and
+// SessionEnd. It always returns nil, so the process exits 0 on every path;
+// failures are one line on stderr. A panic is recovered here as well, after the
+// deferred telemetry flush has run.
 func cmdMemoryHook(ctx context.Context, _ []string) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -36,8 +36,17 @@ func cmdMemoryHook(ctx context.Context, _ []string) (err error) {
 	deadline := time.Now().Add(ccmemory.HookDeadline)
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
-	stdin := readHookStdin(os.Stdin, hookStdinWait)
-	ctx, flush := withMemoryTelemetryFlush(ctx, telemetry.Identity{ClientName: "claude-code", ClientSessionID: hookSessionID(stdin)}, func() {
+	raw, complete := readHookStdin(os.Stdin, hookStdinWait)
+	in := ccmemory.ParseHookInput(raw)
+	if !complete {
+		in.Incomplete = true
+	}
+	if in.Incomplete {
+		// Input that is cut off, late or not JSON is not a known event: it must
+		// not fall through to SessionStart and sync or inject.
+		return nil
+	}
+	ctx, flush := withMemoryTelemetryFlush(ctx, telemetry.Identity{ClientName: "claude-code", ClientSessionID: in.SessionID}, func() {
 		closeTelemetryBefore(deadline, os.Stderr)
 	})
 	defer flush()
@@ -49,37 +58,37 @@ func cmdMemoryHook(ctx context.Context, _ []string) (err error) {
 	wd, _ := os.Getwd()
 	memoryHookRun(ctx, ccmemory.HookOptions{
 		Home:      home,
-		CallerDir: ccmemory.ResolveHookDir(stdin, os.Getenv("CLAUDE_PROJECT_DIR"), wd),
+		CallerDir: ccmemory.ResolveHookDir(in, os.Getenv("CLAUDE_PROJECT_DIR"), wd),
+		Event:     in.Event,
+		FilePath:  in.FilePath,
 		Stdout:    os.Stdout,
 		Stderr:    os.Stderr,
 	})
 	return nil
 }
 
-// hookSessionID is the session_id of the hook JSON on stdin, or "" when the input
-// is empty or not JSON.
-func hookSessionID(stdin []byte) string {
-	var in struct {
-		SessionID string `json:"session_id"`
+// readHookStdin reads r to EOF. complete is false when the input is longer than
+// hookStdinLimit, when the read fails, or when wait ends first; the bytes are
+// then returned as nil or as what was read. The read goroutine is left behind on
+// a timeout; the process exits without it.
+func readHookStdin(r io.Reader, wait time.Duration) (b []byte, complete bool) {
+	type result struct {
+		b   []byte
+		err error
 	}
-	if json.Unmarshal(stdin, &in) != nil {
-		return ""
-	}
-	return in.SessionID
-}
-
-// readHookStdin reads r to EOF, or returns what it has after wait. The read
-// goroutine is left behind on a timeout; the process exits without it.
-func readHookStdin(r io.Reader, wait time.Duration) []byte {
-	got := make(chan []byte, 1)
+	got := make(chan result, 1)
 	go func() {
-		b, _ := io.ReadAll(io.LimitReader(r, hookStdinLimit))
-		got <- b
+		// One byte past the cap tells an input of exactly the cap from a longer one.
+		b, err := io.ReadAll(io.LimitReader(r, hookStdinLimit+1))
+		got <- result{b, err}
 	}()
 	select {
-	case b := <-got:
-		return b
+	case res := <-got:
+		if res.err != nil || len(res.b) > hookStdinLimit {
+			return nil, false
+		}
+		return res.b, true
 	case <-time.After(wait):
-		return nil
+		return nil, false
 	}
 }

@@ -150,14 +150,18 @@ func cmdInstall(ctx context.Context, args []string) error {
 	registerCWD := fs.Bool("register-cwd", false, "write a session-start hook running `leankg index --hook <project>` (claude-code)")
 	registerMemory := fs.Bool("register-memory", false, "write a session-start hook running `leankg memory hook` (claude-code)")
 	hookOnly := fs.Bool("hook-only", false, "with --register-memory: write only that hook, not the MCP entry (claude-code)")
+	unregisterMemory := fs.Bool("unregister-memory", false, "remove the memory hooks this tool wrote, leaving other hooks (claude-code)")
 	if _, err := parseInterspersed("install", fs, args, 0); err != nil {
 		return err
 	}
 	if *target == "" {
 		return fmt.Errorf("install requires --target (%s)", strings.Join(Clients(), "|"))
 	}
-	opts := InstallOptions{HTTP: *httpMode, URL: *url, Project: *project, RegisterCWD: *registerCWD, RegisterMemory: *registerMemory, HookOnly: *hookOnly}
+	opts := InstallOptions{HTTP: *httpMode, URL: *url, Project: *project, RegisterCWD: *registerCWD, RegisterMemory: *registerMemory, HookOnly: *hookOnly, UnregisterMemory: *unregisterMemory}
 	if err := checkHookOnlyScope(opts); err != nil {
+		return err
+	}
+	if err := checkUnregisterScope(opts); err != nil {
 		return err
 	}
 	if *registerMemory && *target != ClientClaudeCode {
@@ -181,6 +185,10 @@ func cmdInstall(ctx context.Context, args []string) error {
 	opts.URL = cfg.URL
 	if err := Install(home, *target, opts); err != nil {
 		return err
+	}
+	if *unregisterMemory {
+		fmt.Printf("unregistered %s session-start memory hooks\n", *target)
+		return nil
 	}
 	if *hookOnly {
 		fmt.Printf("registered %s session-start memory hook (MCP config not written)\n", *target)

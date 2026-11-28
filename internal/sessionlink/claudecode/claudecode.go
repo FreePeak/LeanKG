@@ -50,9 +50,24 @@ func (adapter) Detect(home string) bool {
 
 func (adapter) Roots(home string) []string { return []string{ProjectsRoot(home)} }
 
-// Slug maps a working directory to the store's directory name.
+// Slug maps a working directory to the store's directory name, as Claude Code
+// does: every character outside [A-Za-z0-9] becomes its own '-', with no
+// collapsing. Claude Code replaces UTF-16 code units, so a non-BMP rune gives
+// two dashes.
 func Slug(cwd string) string {
-	return strings.NewReplacer("/", "-", ".", "-").Replace(cwd)
+	var b strings.Builder
+	b.Grow(len(cwd))
+	for _, r := range cwd {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r > 0xFFFF:
+			b.WriteString("--")
+		default:
+			b.WriteByte('-')
+		}
+	}
+	return b.String()
 }
 
 // Locate finds the transcript for c. An exact client session id is used when

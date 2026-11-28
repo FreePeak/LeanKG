@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/FreePeak/LeanKG/internal/flock"
 	"github.com/FreePeak/LeanKG/internal/memory"
@@ -19,6 +21,10 @@ import (
 
 // CentralBankPrefix marks the only banks sync may ever plan writes against.
 const CentralBankPrefix = "cc-"
+
+// ArchiveBank keeps a copy of every row sync deletes because its memory file
+// vanished. It has no cc- prefix, so sync, recall and the session hook never read it.
+const ArchiveBank = "ccarchive"
 
 // Key identifies one central memory row: the bank it lives in and its document id.
 type Key struct {
@@ -31,6 +37,7 @@ type Key struct {
 type Plan struct {
 	Upserts         []Key
 	Deletes         []Key
+	Archives        []Key // the Deletes that keep a copy in ArchiveBank first
 	DeletesWithheld bool
 }
 
@@ -199,6 +206,11 @@ func syncPass(ctx context.Context, mem *memory.Memory, opts SyncOptions, after f
 	if err := ctx.Err(); err != nil {
 		return res, syncState{}, err
 	}
+	// Read before the lock and any write: a list that cannot be read stops the run.
+	ex, err := loadExcludeList()
+	if err != nil {
+		return res, syncState{}, err
+	}
 	// A dry run only reads, so it takes no lock and creates no file under the root.
 	if !opts.DryRun {
 		release, err := takeLock(opts)
@@ -210,7 +222,7 @@ func syncPass(ctx context.Context, mem *memory.Memory, opts SyncOptions, after f
 
 	// A scan that failed or was cancelled says nothing about the stored rows, so
 	// the run ends here with deletes withheld.
-	disc, err := Discover(ctx, opts.Projects)
+	disc, err := discover(ctx, opts.Projects, ex)
 	if err != nil {
 		res.DeletesWithheld = true
 		return res, syncState{}, err
@@ -219,11 +231,27 @@ func syncPass(ctx context.Context, mem *memory.Memory, opts SyncOptions, after f
 	projectOf := map[string]string{}
 	hashes, docs := desiredSet(disc.Docs, projectOf)
 	rowSlug := map[Key]string{}
-	actual, err := actualSet(mem, projectOf, rowSlug, opts.OnlySlug)
+	rows, err := actualRows(mem, opts.OnlySlug)
 	if err != nil {
 		return res, syncState{}, err
 	}
-	plan := withholdFailed(BuildPlan(hashes, actual, opts.Rebuild), rowSlug, disc.FailedSlugs)
+	actual := splitRows(rows, projectOf, rowSlug)
+	// Rows of excluded projects are deleted whatever the scan saw, so they are
+	// taken out of the diff before it: a withheld delete must not keep them.
+	purged := takeExcludedRows(actual, rowSlug, ex)
+	archivedExcluded, err := excludedArchiveKeys(mem, opts.OnlySlug, ex)
+	if err != nil {
+		return res, syncState{}, err
+	}
+	purged = append(purged, archivedExcluded...)
+	// A scoped rebuild is the explicit forget of one project: it archives nothing.
+	forget := opts.Rebuild && opts.OnlySlug != ""
+	plan := withholdFailed(BuildPlan(hashes, actual, opts.Rebuild), rowSlug, disc, opts.Rebuild)
+	// Archives are chosen before the purged rows join the deletes, so an
+	// excluded row can never be archived.
+	plan.Archives = archiveKeys(plan.Deletes, hashes, forget)
+	plan.Deletes = append(plan.Deletes, purged...)
+	sortKeys(plan.Deletes)
 
 	res.Documents = len(disc.Docs)
 	res.Upserted = len(plan.Upserts)
@@ -236,7 +264,7 @@ func syncPass(ctx context.Context, mem *memory.Memory, opts SyncOptions, after f
 	if opts.DryRun {
 		return res, st, nil
 	}
-	if err := apply(ctx, mem, plan, hashes, docs); err != nil {
+	if err := apply(ctx, mem, plan, hashes, docs, rows); err != nil {
 		return res, st, err
 	}
 	if err := compactCentral(ctx, mem); err != nil {
@@ -256,7 +284,7 @@ func scopeDiscovery(disc Discovery, projectsRoot, slug string) Discovery {
 	if slug == "" {
 		return disc
 	}
-	scoped := Discovery{RootMissing: disc.RootMissing}
+	scoped := Discovery{RootMissing: disc.RootMissing, Seen: disc.Seen}
 	for _, d := range disc.Docs {
 		if d.Slug == slug {
 			scoped.Docs = append(scoped.Docs, d)
@@ -319,11 +347,22 @@ func desiredSet(docs []Doc, projectOf map[string]string) (map[Key]string, map[Ke
 // of other projects are left out too, so a scoped run never plans their deletion.
 // rowSlug receives the project slug stored on each row it returns.
 func actualSet(mem *memory.Memory, projectOf map[string]string, rowSlug map[Key]string, onlySlug string) (map[Key]string, error) {
+	rows, err := actualRows(mem, onlySlug)
+	if err != nil {
+		return nil, err
+	}
+	return splitRows(rows, projectOf, rowSlug), nil
+}
+
+// actualRows reads the rows of every cc- bank, keyed by bank and document id,
+// under the same rules as actualSet. The rows are kept whole so an archive copy
+// can be made of a row that is about to be deleted.
+func actualRows(mem *memory.Memory, onlySlug string) (map[Key]memory.Entry, error) {
 	banks, err := mem.Banks()
 	if err != nil {
 		return nil, err
 	}
-	actual := map[Key]string{}
+	out := map[Key]memory.Entry{}
 	// Rows store the slug masked by memory.Redact, so the scope is matched in that form.
 	scope := memory.Redact(onlySlug)
 	for _, bank := range banks {
@@ -343,14 +382,63 @@ func actualSet(mem *memory.Memory, projectOf map[string]string, rowSlug map[Key]
 			if onlySlug != "" && slug != scope {
 				continue
 			}
-			hash, _ := row.Metadata["source_hash"].(string)
-			key := Key{Bank: bank, DocID: id}
-			actual[key] = hash
-			rowSlug[key] = slug
-			noteProject(projectOf, bank, slug)
+			out[Key{Bank: bank, DocID: id}] = row
 		}
 	}
-	return actual, nil
+	return out, nil
+}
+
+// splitRows returns the source hash of each row, fills rowSlug with the project
+// slug stored on each row and records the slug of every project bank in projectOf.
+func splitRows(rows map[Key]memory.Entry, projectOf map[string]string, rowSlug map[Key]string) map[Key]string {
+	actual := make(map[Key]string, len(rows))
+	for key, row := range rows {
+		slug, _ := row.Metadata["project"].(string)
+		hash, _ := row.Metadata["source_hash"].(string)
+		actual[key] = hash
+		rowSlug[key] = slug
+		noteProject(projectOf, key.Bank, slug)
+	}
+	return actual
+}
+
+// takeExcludedRows removes from actual the rows of excluded projects and returns
+// their keys, sorted. Such a row is hard-deleted by the plan: DeleteDocuments
+// rewrites the bank file and prunes the row's vectors from the index.
+func takeExcludedRows(actual map[Key]string, rowSlug map[Key]string, ex excludeList) []Key {
+	var keys []Key
+	for key := range actual {
+		if ex.excludes(rowSlug[key]) {
+			keys = append(keys, key)
+			delete(actual, key)
+		}
+	}
+	sortKeys(keys)
+	return keys
+}
+
+// excludedArchiveKeys returns the keys of the ArchiveBank rows of excluded
+// projects, sorted. ArchiveBank is not a cc- bank, so the diff never sees them:
+// they are hard-deleted here, with the same scope as the cc- rows.
+func excludedArchiveKeys(mem *memory.Memory, onlySlug string, ex excludeList) ([]Key, error) {
+	rows, _, err := mem.List(ArchiveBank, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	scope := memory.Redact(onlySlug)
+	var keys []Key
+	for _, row := range rows {
+		slug := metaString(row, "project")
+		if onlySlug != "" && slug != scope {
+			continue
+		}
+		if ex.excludes(slug) {
+			id, _ := row.Metadata["document_id"].(string)
+			keys = append(keys, Key{Bank: ArchiveBank, DocID: id})
+		}
+	}
+	sortKeys(keys)
+	return keys, nil
 }
 
 // failedRows returns the keys of the rows that belong to a project whose scan
@@ -370,11 +458,24 @@ func failedRows(rowSlug map[Key]string, failed []string) map[Key]bool {
 	return out
 }
 
-// withholdFailed drops from plan.Deletes every row of a project whose scan
-// failed this run. The scan did not see those documents, so their absence says
-// nothing about them: the rows stay and the plan reports deletes withheld.
-func withholdFailed(plan Plan, rowSlug map[Key]string, failed []string) Plan {
-	held := failedRows(rowSlug, failed)
+// withholdFailed drops from plan.Deletes every row a run must keep. A row of a
+// project whose scan failed is kept: the scan did not see its documents. Unless
+// rebuild is set, a row of a project whose memory directory was not seen is kept
+// too, because an absent directory is not a deletion. In both cases the plan
+// reports deletes withheld.
+func withholdFailed(plan Plan, rowSlug map[Key]string, disc Discovery, rebuild bool) Plan {
+	held := failedRows(rowSlug, disc.FailedSlugs)
+	if !rebuild {
+		seen := make(map[string]bool, len(disc.Seen))
+		for slug := range disc.Seen {
+			seen[memory.Redact(slug)] = true
+		}
+		for key, slug := range rowSlug {
+			if !seen[slug] {
+				held[key] = true
+			}
+		}
+	}
 	kept := plan.Deletes[:0]
 	for _, key := range plan.Deletes {
 		if held[key] {
@@ -431,11 +532,45 @@ func rowFor(d Doc, hash string) memory.Entry {
 	}
 }
 
-// apply writes the plan one bank at a time: one RetainReplacing with the
-// bank's upserts, then one DeleteDocuments with its deletes. A document being
-// upserted is not deleted in the same bank, because RetainReplacing already
-// drops its old row; deleting it afterwards would remove the new row too.
-func apply(ctx context.Context, mem *memory.Memory, plan Plan, hashes map[Key]string, docs map[Key]Doc) error {
+// archiveKeys returns the deletes that keep a copy in ArchiveBank: rows whose
+// document is no longer desired. A row whose document is still desired moved to
+// another bank and is not archived. A forget archives nothing.
+func archiveKeys(deletes []Key, desired map[Key]string, forget bool) []Key {
+	if forget {
+		return nil
+	}
+	docs := make(map[string]bool, len(desired))
+	for key := range desired {
+		docs[key.DocID] = true
+	}
+	var out []Key
+	for _, key := range deletes {
+		if !docs[key.DocID] {
+			out = append(out, key)
+		}
+	}
+	return out
+}
+
+// archivedRow is the copy of a deleted row that ArchiveBank keeps: the same
+// content and metadata, stamped with the time sync deleted it. The ID is left
+// empty so the bank assigns a fresh one and no archive copy shares a live row's ID.
+func archivedRow(row memory.Entry, deletedAt string) memory.Entry {
+	meta := make(map[string]any, len(row.Metadata)+1)
+	maps.Copy(meta, row.Metadata)
+	meta["deleted_at"] = deletedAt
+	row.ID = ""
+	row.Metadata = meta
+	return row
+}
+
+// apply writes the plan one bank at a time: one RetainRaw of the archive copies
+// of the bank's archived deletes, one RetainReplacing with the bank's upserts,
+// then one DeleteDocuments with its deletes. A document being upserted is not
+// deleted in the same bank, because RetainReplacing already drops its old row;
+// deleting it afterwards would remove the new row too. An archive copy is written
+// before its row is deleted, so a failed archive leaves the row in place.
+func apply(ctx context.Context, mem *memory.Memory, plan Plan, hashes map[Key]string, docs map[Key]Doc, rows map[Key]memory.Entry) error {
 	entries := map[string][]memory.Entry{}
 	replace := map[string][]string{}
 	upserting := make(map[Key]bool, len(plan.Upserts))
@@ -444,10 +579,20 @@ func apply(ctx context.Context, mem *memory.Memory, plan Plan, hashes map[Key]st
 		replace[key.Bank] = append(replace[key.Bank], key.DocID)
 		upserting[key] = true
 	}
+	archive := make(map[Key]bool, len(plan.Archives))
+	for _, key := range plan.Archives {
+		archive[key] = true
+	}
+	deletedAt := time.Now().UTC().Format(time.RFC3339)
 	deletes := map[string][]string{}
+	archives := map[string][]memory.Entry{}
 	for _, key := range plan.Deletes {
-		if !upserting[key] {
-			deletes[key.Bank] = append(deletes[key.Bank], key.DocID)
+		if upserting[key] {
+			continue
+		}
+		deletes[key.Bank] = append(deletes[key.Bank], key.DocID)
+		if archive[key] {
+			archives[key.Bank] = append(archives[key.Bank], archivedRow(rows[key], deletedAt))
 		}
 	}
 
@@ -471,6 +616,11 @@ func apply(ctx context.Context, mem *memory.Memory, plan Plan, hashes map[Key]st
 		bctx := context.WithoutCancel(ctx)
 		if len(entries[bank]) > 0 {
 			if _, err := mem.RetainReplacing(bctx, bank, entries[bank], replace[bank]); err != nil {
+				return err
+			}
+		}
+		if len(archives[bank]) > 0 {
+			if err := mem.RetainRaw(bctx, ArchiveBank, archives[bank]); err != nil {
 				return err
 			}
 		}
@@ -504,7 +654,7 @@ func bankSummary(actual map[Key]string, plan Plan, projectOf map[string]string) 
 		rows[key.Bank]++
 	}
 	for _, key := range plan.Deletes {
-		if _, ok := rows[key.Bank]; !ok {
+		if _, ok := rows[key.Bank]; !ok && strings.HasPrefix(key.Bank, CentralBankPrefix) {
 			rows[key.Bank] = 0
 		}
 	}

@@ -9,9 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/FreePeak/LeanKG/internal/sessionlink/claudecode"
 )
 
 const fixedMTime = 1_700_000_000
@@ -284,5 +287,35 @@ func TestDiscoverExpiredContextReadsNothing(t *testing.T) {
 	}
 	if len(got.Docs) != 0 || len(got.Skipped) != 0 || len(got.FailedSlugs) != 0 {
 		t.Errorf("an expired context read files: %+v", got)
+	}
+}
+
+// TestDiscoverSkipsExcludedSlug adds a memory directory for an excluded project.
+// Discover must neither return its documents nor report it as scanned or failed.
+func TestDiscoverSkipsExcludedSlug(t *testing.T) {
+	root := buildFixture(t)
+	excluded := claudecode.Slug(syntheticExcluded)
+	writeFile(t, filepath.Join(root, excluded, "memory", "secret-note.md"), "---\ntype: user\n---\nsynthetic excluded body\n")
+	setExcludeFile(t, syntheticExcluded+"\n")
+
+	got, err := Discover(context.Background(), root)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(got.Docs) != 6 {
+		t.Errorf("docs = %d, want the 6 fixture documents without the excluded project", len(got.Docs))
+	}
+	for _, d := range got.Docs {
+		if d.Slug == excluded {
+			t.Errorf("Discover returned a document of the excluded slug %s: %s", excluded, d.File)
+		}
+	}
+	for _, s := range got.Skipped {
+		if slugOf(root, s.Path) == excluded {
+			t.Errorf("excluded slug appears in Skipped: %+v", s)
+		}
+	}
+	if slices.Contains(got.FailedSlugs, excluded) {
+		t.Errorf("excluded slug appears in FailedSlugs: %v", got.FailedSlugs)
 	}
 }

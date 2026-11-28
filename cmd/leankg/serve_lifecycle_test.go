@@ -189,3 +189,24 @@ func TestServeStdioEOFDoesNotWaitForTheFleet(t *testing.T) {
 		t.Fatalf("serve waited out the fleet join budget:\n%s", stderr.String())
 	}
 }
+
+// TestServeStdioLogsCentralMemoryRoot pins the one stderr line that names the
+// central memory root agent_recall reads, so an operator can see which
+// <home>/.leankg/memory serve is pointed at.
+func TestServeStdioLogsCentralMemoryRoot(t *testing.T) {
+	bin := cliBinary(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("LEANKG_HOME", t.TempDir())
+	cmd := exec.Command(bin, "serve", "--stdio", "--project", t.TempDir())
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("serve --stdio after EOF: %v\n%s", err, stderr.String())
+	}
+	want := "leankg central memory root " + filepath.Join(home, ".leankg", "memory")
+	if !strings.Contains(stderr.String(), want) {
+		t.Fatalf("serve stderr lacks the central memory root line %q:\n%s", want, stderr.String())
+	}
+}

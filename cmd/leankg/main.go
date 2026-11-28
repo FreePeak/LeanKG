@@ -663,6 +663,7 @@ afterSidecars:
 				global = mem
 			}
 			agentMem = ccmemory.NewHandle(home, global)
+			log.Printf("leankg central memory root %s", memory.GlobalRoot(home))
 			defer agentMem.Close()
 		}
 	}

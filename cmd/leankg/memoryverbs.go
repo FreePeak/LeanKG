@@ -45,8 +45,9 @@ func withMemoryTelemetryFlush(ctx context.Context, id telemetry.Identity, flush 
 // memorySynopsis is the usage of `leankg memory`, one subcommand per line. The
 // main usage and memoryUsage both print it, so each subcommand is listed once.
 var memorySynopsis = []string{
-	"leankg memory sync [--dry-run] [--rebuild] [--json]",
+	"leankg memory sync [--dry-run] [--rebuild] [--project SLUG] [--json]",
 	"leankg memory migrate [--project SLUG] [--dry-run] [--json]",
+	"leankg memory restore --into DIR [--project SLUG] [--deleted] [--json]",
 	"leankg memory recall <query...> [--scope project|global|all] [--type KIND ...] [--limit N] [--dir DIR] [--json] (keyword search)",
 	"leankg memory hook (SessionStart: reads the hook JSON on stdin; always exits 0)",
 }
@@ -61,6 +62,7 @@ func memoryUsageText(indent string) string {
 var memorySubcommands = map[string]verbFunc{
 	"sync":    cmdMemorySync,
 	"migrate": cmdMemoryMigrate,
+	"restore": cmdMemoryRestore,
 	"recall":  cmdMemoryRecall,
 	"hook":    cmdMemoryHook,
 }
@@ -88,7 +90,8 @@ func memoryUsage() error {
 func cmdMemorySync(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("memory sync", flag.ContinueOnError)
 	dryRun := flags.Bool("dry-run", false, "report the plan; write nothing")
-	rebuild := flags.Bool("rebuild", false, "delete every cc- row, then sync from scratch")
+	rebuild := flags.Bool("rebuild", false, "delete every cc- row, then sync from scratch; rows of vanished files are archived")
+	slug := flags.String("project", "", "limit the sync to this project slug; with --rebuild, forget that project's rows without archiving")
 	jsonOut := flags.Bool("json", false, "print the result as JSON")
 	if _, err := parseInterspersed("memory sync", flags, args, 0); err != nil {
 		return err
@@ -108,6 +111,7 @@ func cmdMemorySync(ctx context.Context, args []string) error {
 			DryRun:      *dryRun,
 			Rebuild:     *rebuild,
 			WaitForLock: true,
+			OnlySlug:    *slug,
 		})
 		return err
 	})
@@ -166,6 +170,45 @@ func cmdMemoryMigrate(ctx context.Context, args []string) error {
 	if code := migrateExitCode(res); code != 0 {
 		return cliexit.Code(code)
 	}
+	return nil
+}
+
+// cmdMemoryRestore rebuilds Claude Code memory files under --into from the
+// central cc- banks, and from the archive bank with --deleted. It only reads the
+// central root, so an absent root is an empty scratch root and is never created.
+func cmdMemoryRestore(ctx context.Context, args []string) error {
+	flags := flag.NewFlagSet("memory restore", flag.ContinueOnError)
+	into := flags.String("into", "", "directory to write the memory files under (required; never the Claude Code projects directory)")
+	slug := flags.String("project", "", "restore only this project slug")
+	deleted := flags.Bool("deleted", false, "also restore rows kept in the archive bank")
+	jsonOut := flags.Bool("json", false, "print the counts as JSON")
+	if _, err := parseInterspersed("memory restore", flags, args, 0); err != nil {
+		return err
+	}
+	if *into == "" {
+		return cliexit.Usage(errors.New("memory restore: --into DIR is required"))
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return verbFatal(err)
+	}
+	var res ccmemory.RestoreResult
+	if _, err := runOnCentral(ctx, home, true, func(mem *memory.Memory) error {
+		var err error
+		res, err = ccmemory.Restore(ctx, mem, ccmemory.RestoreOptions{
+			Projects: claudecode.ProjectsRoot(home),
+			Into:     *into,
+			OnlySlug: *slug,
+			Deleted:  *deleted,
+		})
+		return err
+	}); err != nil {
+		return verbFatal(err)
+	}
+	if *jsonOut {
+		return printOrgJSON(res)
+	}
+	fmt.Printf("memory restore: %d written, %d skipped, %d archived-included\n", res.Written, res.Skipped, res.ArchivedIncluded)
 	return nil
 }
 
@@ -299,7 +342,7 @@ func printMemorySyncSummary(res ccmemory.SyncResult, dryRun bool) {
 	fmt.Printf("%s: %d documents, %d upserted, %d deleted, %d skipped\n",
 		prefix, res.Documents, res.Upserted, res.Deleted, res.Skipped)
 	if res.DeletesWithheld {
-		fmt.Println("  WARNING: deletes withheld; the projects root is missing or holds no memories while central rows exist. Use --rebuild to clear them.")
+		fmt.Println("  WARNING: deletes withheld: a project's memory directory was not found, so its rows were kept (a missing projects root gives the same result). memory sync --rebuild (unscoped) archives them; memory sync --rebuild --project SLUG forgets that project without an archive.")
 	}
 	if len(res.FailedProjects) > 0 {
 		fmt.Printf("  WARNING: scan failed for %s; their rows were kept.\n", strings.Join(res.FailedProjects, ", "))
